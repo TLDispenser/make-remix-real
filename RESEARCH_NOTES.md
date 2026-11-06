@@ -1,0 +1,159 @@
+# RESEARCH_NOTES
+
+All sources read **2026-11-05** by the build agent. Rule: docs beat the spec; discrepancies are noted inline.
+
+## Environment (verified on the target machine)
+
+| Item | Value | Consequence |
+|---|---|---|
+| OS | Linux, Arch-family | sensors via `/sys/class/hwmon`; community docs assume X11 less and less |
+| Display server | **Wayland (Hyprland 0.56.2)** | see Wayland section |
+| GPU | none (Intel i7-4310M-class iGPU, i5-4310M CPU, 8 GB RAM) | whisper on CPU only; keep Godot visuals light |
+| Python | 3.14.7 system; project venv at `core/brain/.venv` | pin deps `<8.0` where noted |
+| Godot | **not installed yet** | user installs Godot 4.7; see install note in README |
+
+User constraints locked in (Nov 5 2026):
+- LLM (right brain): must be **$0, no cost of any kind** → no Anthropic, no OpenAI. Default is a permanent free tier (see "Right brain").
+- Godot: ship **base project only**; user authors all visuals and reports scene structure afterwards.
+- TTS: **no AI/neural voices.** espeak-ng/pyttsx3 only (formant synthesis, zero neural models — verified fit for this constraint).
+
+---
+
+## TypeSafe / Jev (left brain) — VERIFIED, spec's guess mostly right
+
+**URLs read:** https://typesafe.ai (home), /blog/introducing-system-one-models-and-jev (Sep 15 2026, Diogo Almeida), /manifesto, official docs https://docs.typesafe.ai, API reference https://docs.typesafe.ai/api/system-one, OpenAPI 3.1 spec `https://api.typesafe.ai/openapi.json`, console https://console.typesafe.ai (keys at `/keys`, playground). Third-party: OpenRouter `~typesafe/jev-latest`, Cloudflare `typesafe/jev`, LiteLLM gateway. (An HF-blog pointer to `thejevai.com` looked unofficial; disregarded.)
+
+**Endpoint & auth (from OpenAPI spec):**
+- `POST https://api.typesafe.ai/v1/systemone`, header `Authorization: Bearer $JEV_API_KEY`
+- Request core (all top-level): `model`, `state`, `questions`
+- `state`: string | object | array (images need `assets` + a `TypeSafe-Danger-Zone-Images: true` header — not needed here)
+- `model`: `jev-latest` alias confirmed (concrete version in responses, e.g. `jev-1.13.0`); a `jev-preview` also exists
+
+**Question primitives: 4 documented, not 3 (SPEC CORRECTION).**
+| Primitive | Returns | Use for this project |
+|---|---|---|
+| `noul` | probability of "yes" 0–1 | `should_speak`, `needs_deep_reply` |
+| `choice` | `{choice, confidence, probabilities}` | `mood`, `event_importance`, `user_intent` |
+| `score` | rubric score + legend + confidence | optional quality scoring (not v1) |
+| `box` | visual localization (newer, gated) | not needed |
+
+- Example request body verified from docs:
+```json
+{"model":"jev-latest",
+ "state":"I was charged twice. Please refund the extra charge.",
+ "questions":{"billing":{"type":"noul","instructions":"Is this message about billing?"}}}
+```
+- Response shape: `{"model":..., "answers":{"<key>":{"type":...,...typed value, confidence, probabilities}}, "usage":{"input_tokens":..., "output_tokens":...}}`
+- Pricing page claims output tokens free, ~$42/M input tokens (re-verify at integration time; we already rate-limit calls ourselves).
+- Status: **early access** — the user holds early access and supplies `JEV_API_KEY`; smoke test command ships in `.env.example` / README until the key exists.
+- "OpenAI-style dispatch" is right in spirit (Bearer, `model` field, `/v1/`, JSON) but there is **no messages array, no chat facade, no streaming** — a purpose-built decisions endpoint.
+
+---
+
+## Godot (body)
+
+**Version: stable is 4.7** (all fetched docs pages say "Godot Engine 4.7 documentation"). Target 4.7.
+
+**Window setup — exact setting names (from class_projectsettings + class_window):**
+- `display/window/size/borderless = true`
+- `display/window/size/transparent = true` (hint only; needs the two below to actually be see-through)
+- `display/window/per_pixel_transparency/allowed = true`
+- `rendering/viewport/transparent_background = true` (sets `Viewport.transparent_bg` on root)
+- Runtime: set flags on the root `Window` (`borderless`, `transparent`); check support with `DisplayServer.is_window_transparency_available()` and degrade to a solid borderless window if false.
+
+**Wayland implementation matrix (per 4.7 class Window docs, quoted impl lists):**
+| Capability | Wayland |
+|---|---|
+| `borderless` | ✅ implemented |
+| per-pixel transparency | ✅ implemented ("availability might vary by GPU driver, display manager, compositor") |
+| `always_on_top` | ❌ **not implemented** (X11 only) |
+| `DisplayServer.window_set_mouse_passthrough(PackedVector2Array)` | ❌ **not implemented** (Linux impl list says X11 only) — NOTE: polygon semantics = region that *accepts* input; `[]` resets to intercept-everything |
+| drag | ✅ `Window.start_drag()` / `DisplayServer.window_start_drag()` implemented on X11+Wayland; docs recommend calling on press (Under Wayland the compositor must own repositioning — manual move-to is unreliable) |
+| `WebSocketPeer` | platform-neutral |
+
+**Hyprland recoveries for the ❌ items (our compositor, 0.56.2 present on machine):**
+- Always-on-top: pin the window — window rule `windowrulev2 = pin on, float on, class:^(godot)$` (or runtime `hyprctl dispatch pin float`). **Untested yet — verify Godot's actual window class under Hyprland (`hyprctl clients | grep class`) the first time it runs.**
+- Click-through: no Wayland equivalent in Godot. Mitigation: keep the window small and hug the avatar's bounding box so "empty areas" barely exist; drop the click-through requirement out-of-the-box, or run under XWayland (`env -u WAYLAND_DISPLAY godot ...`) where X11-based always-on-top AND mouse passthrough both work. Document both modes in README; ask user to compare.
+- Window title: set `Window.title = "Core"` at runtime so hyprland window rules can match `title:^(Core)` reliably.
+
+**Client WebSocket (`WebSocketPeer` in 4.7):** `connect_to_url(url)` (non-blocking) → per-frame `poll()` → `get_ready_state()` (`STATE_CONNECTING/OPEN/CLOSING/CLOSED`) → text via `send_text(msg)`, receive via `get_available_packet_count()` + `get_packet()` (PacketPeer). Use `ws://localhost:8765` plain — TLS checks only apply to `wss://`.
+
+**Speech bubble basics (verified):** `PanelContainer` (or backgroundless `Control`) + `Label` with `autowrap_mode > TextServer.AUTOWRAP_OFF` and a width via `custom_maximum_size`.
+
+---
+
+## Python (brain)
+
+**psutil 7.2.2 current** (2026-01-28); **psutil 8.0 is unreleased & breaking — pin `psutil>=7.2,<8`.**
+- CPU%: `psutil.cpu_percent(interval=1)` blocking (1 Hz loop OK) — first call meaningless; discard.
+- RAM%: `psutil.virtual_memory().percent`.
+- Disk: `psutil.disk_usage('/').percent`.
+- Battery: `psutil.sensors_battery()` → `.percent`, `.power_plugged` (None on desktops — handle).
+- Temp (Linux): `psutil.sensors_temperatures()['coretemp'][0].current`; wrap in try/except (hwmon may be absent).
+
+**websockets 17.x current (17.4, 2026-10-30 — includes a security fix; require `>=17.4`).**
+Modern asyncio API — the shape we use (two-arg `(websocket, path)` handler is long REMOVED):
+```python
+from websockets.asyncio.server import serve
+async def handler(websocket):          # single connection arg
+    ...
+async with serve(handler, "127.0.0.1", 8765):
+    await asyncio.Future()             # run forever
+```
+Broadcast: `from websockets.asyncio.server import broadcast`.
+- **Client `connect()` gives up fast (no retry loop) if the server socket isn't
+  bound yet** — hit during smoke testing; Godot-side must treat connect
+  failures as retryable with its own delay (main.gd already does: 2 s interval).
+- `serve()` alias-imported as `_ws_serve` inside `ws_server.py` — classic
+  shadowing pitfall found in practice: a project function named `serve()`
+  silently called itself.
+
+**Active window on Hyprland (verified live on the machine):**
+- `hyprctl activewindow -j` returns JSON incl. `class`, `title`, `at`, `size`, `floating`. Poll via `asyncio.create_subprocess_exec` at low Hz.
+- Content titles (browser origins like `brave-origin` are FMSharer-disguised at IPC level still show class) — redaction allowlist still applies per spec.
+
+**Idle time on Wayland:** compositor protocol `ext-idle-notify-v1` gives only idled/resumed *edge events* (no numeric duration) — accumulate user-idle seconds by counting state transitions; Hyprland implements it (Hyprland ships `hypridle`, same protocol). Deferred to Phase 6 — X11 fallback: `xprintidle`.
+
+**Global push-to-talk hotkey (Wayland):** `pynput`/`keyboard` are confirmed **X11-only in practice** (maintainer statement: no Wayland backend). Compositors own global keys. Two viable patterns, both planned:
+1. **Hyprland binds → exec a one-liner → Unix socket to the brain.** Hyprland supports release-triggers (`bindr`), so true hold-to-talk = press bind + release bind. Permission-light, zero extra daemons.
+2. **evdev passive listener** (`python-evdev`, reading `/dev/input/event*`) — compositor-agnostic, gives press AND release, needs `input` group only.
+Cap: mic open only while held (spec's privacy rule is non-negotiable).
+
+**STT (Phase 5, CPU-only box):** whisper.cpp release line ~1.9.5 or faster-whisper 1.2.1. Benchmark on a near-identical 2010-era 2c/4t CPU (whisper.cpp discussion #3752): `tiny` q4_0 ≈ 1.58× realtime, `base` q4_0 ≈ 0.86× realtime, q4_0 fastest quant by far (f16 ~4× slower). Haswell adds AVX → expect ~1–3× realtime either way for short clips. Decide then: fastest + lightest = **whisper.cpp as subprocess with `base.en`-class ggml q4_0 model**; fallback = tiny. Both strictly local; first-run model download noted.
+
+**Mic capture:** sounddevice 0.5.6 (2026-08-17). Pattern for hold-to-talk: `sd.InputStream(samplerate=16000, channels=1, dtype="int16", blocksize=...)`, append `indata` copies in the callback, `np.concatenate` on release (repo's `rec_unlimited.py` pattern). Whispers wants 16 kHz mono int16 — no resample needed. Never run blocking calls on the asyncio loop — stream callback + `run_in_executor` for transcribe.
+
+**TTS (Phase 7):** pyttsx3 v2.99 (2025-07-08; maintenance weak-but-alive) → **espeak-ng backend on Linux** (`pyttsx3.init("espeak")`, needs `espeak-ng` + libespeak package — **not installed on the machine yet; install then**). Formant synthesis = classic robotic voice, zero neural models → satisfies "no AI voice." Fully offline. Property keys verified: `rate`, `volume`, `voice`.
+
+---
+
+## Right brain (LLM) — user constraint: $0 total
+
+Spec named Anthropic as example, but the user cannot pay anything. Verified free tiers (pricing pages checked 2026-10/11 via web):
+
+| Provider | Free reality | Note |
+|---|---|---|
+| **Z.ai — GLM-4.7-Flash** | **$0 permanently** on input/output/cached-input; no card; no published request-count ceiling (reported ~1 req/s); docs page says "Completely Free" | **DEFAULT — best free personality** (GLM Flash models are the most free-tier character/lively; user's stated priority) |
+| Google Gemini Flash free tier | $0 | outer limits ~15 RPM / 1500 RPD; **free-tier content trains Google products** |
+| Groq free plan | $0, 30 RPM / 1K RPD / 200K token-day (gpt-oss-120b) | fast, but personality-neutral |
+| OpenRouter `:free` | $0 but capped at 50 req/day | too tight for chat |
+| Anthropic | **pay-per-token only — LOCKED OUT** by user constraint | removed from default path |
+
+**Config-made swappable:** `right_brain.py` speaks generic **OpenAI-compatible chat completions** (base URL + model from config), because Z.ai (`https://api.z.ai/api/paas/v4`, model `glm-4.7-flash`), Groq (`https://api.groq.com/openai/v1`), Gemini's compat endpoint, and OpenRouter all expose that shape. Switching = one config edit. No SDK hardcoding; auth: `Authorization: Bearer $LLM_API_KEY`.
+- Z.ai free-model caveat (verified from error docs): **1 concurrent request per model** on free Flash → serialize LLM calls (one in flight at a time), 429 backoff on codes 1302/1305, and send an explicit `User-Agent`.
+- Free tiers can rotate models: model id is config, never hardcoded.
+
+---
+
+## Protocol / layout deltas vs spec
+
+- Spec's protocol block, folder layout, phases, `v1` message versioning, privacy rules — adopted as-is, except:
+- Sonnet-referencing line replaced by provider-agnostic config (above).
+- `Godot -> Python` `ui` action and `user_typing` unchanged; push-to-talk handled Python-side via Hyprland binds (see above).
+- Godot 4.7 not older; project targets 4.7 stable so doc-verified names hold exactly.
+
+## Open items to confirm with the user (as they come up)
+1. Jev smoke test once `JEV_API_KEY` is supplied (curl in README).
+2. Hyprland window-class string for the built avatar (`hyprctl clients`) → finalize `pin` window rule test.
+3. Whether transparency renders on Hyprland as expected (Godot side) and whether XWayland fallback is preferred for click-through — user advices after first run.
+4. espeak-ng install (Phase 7): `pacman -S espeak-ng` (or distro equiv).

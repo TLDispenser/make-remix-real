@@ -1,0 +1,10 @@
+# Machine-generated / secrets
+core/brain/.venv/
+core/.env
+core/brain/memory.json
+__pycache__/
+*.pyc
+
+# Godot editor state
+.godot/
+*.tmp
