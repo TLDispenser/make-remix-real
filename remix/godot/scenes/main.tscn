@@ -1,0 +1,58 @@
+[gd_scene format=3 uid="uid://cjik1jdww7qbd"]
+
+[ext_resource type="Script" uid="uid://d3rqbind6dy5q" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" uid="uid://b3biagt3kkxs1" path="res://scripts/avatar.gd" id="2_avatar"]
+
+[sub_resource type="StyleBoxFlat" id="bubble_style"]
+content_margin_left = 10.0
+content_margin_top = 8.0
+content_margin_right = 10.0
+content_margin_bottom = 8.0
+bg_color = Color(0.06, 0.06, 0.1, 0.82)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[node name="Main" type="Control" unique_id=653666455]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("1_main")
+
+[node name="Avatar" type="Node2D" parent="." unique_id=568004603]
+unique_name_in_owner = true
+position = Vector2(229, 93)
+script = ExtResource("2_avatar")
+
+[node name="Bubble" type="PanelContainer" parent="." unique_id=1286611103]
+unique_name_in_owner = true
+layout_mode = 0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = -96.0
+offset_right = -8.0
+offset_bottom = -8.0
+grow_vertical = 0
+mouse_filter = 2
+theme_override_styles/panel = SubResource("bubble_style")
+
+[node name="Text" type="Label" parent="Bubble" unique_id=2121591470]
+layout_mode = 2
+autowrap_mode = 3
+
+[node name="Debug" type="Label" parent="." unique_id=531690322]
+unique_name_in_owner = true
+layout_mode = 0
+anchor_right = 1.0
+offset_left = 8.0
+offset_top = 4.0
+offset_right = -8.0
+offset_bottom = 22.0
+grow_horizontal = 2
+theme_override_font_sizes/font_size = 11
+text = "brain offline"
+horizontal_alignment = 2

@@ -1,0 +1,30 @@
+[gd_scene format=3 uid="uid://cfh45ptllnkm2"]
+
+[node name="Node2D" type="Control" unique_id=1808852817]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="EyeMarkerL" type="Marker2D" parent="." unique_id=1173048780]
+position = Vector2(272, 96)
+metadata/_edit_group_ = true
+
+[node name="Polygon2D2" type="Polygon2D" parent="EyeMarkerL" unique_id=1908442282]
+polygon = PackedVector2Array(16, 32, 16, -24, 24, -32, -16, -32, -16, 32)
+
+[node name="EyeMarkerR" type="Marker2D" parent="." unique_id=1994332616]
+position = Vector2(176, 96)
+metadata/_edit_group_ = true
+
+[node name="Polygon2D" type="Polygon2D" parent="EyeMarkerR" unique_id=156673933]
+polygon = PackedVector2Array(16, 32, 16, -32, -24, -32, -16, -24, -16, 32)
+
+[node name="MouthMarker" type="Marker2D" parent="." unique_id=563389659]
+position = Vector2(224, 160)
+metadata/_edit_group_ = true
+
+[node name="Polygon2D" type="Polygon2D" parent="MouthMarker" unique_id=1323048743]
+polygon = PackedVector2Array(-64, 8, 64, 8, 64, -8, -64, -8)

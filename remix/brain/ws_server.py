@@ -53,5 +53,5 @@ async def send(msg: dict) -> None:
 async def serve() -> None:
     async with _ws_serve(_handler, config.WS_HOST, config.WS_PORT,
                      max_size=None, ping_interval=20):
-        print(f"core-brain: ws server on ws://{config.WS_HOST}:{config.WS_PORT} (v{PROTOCOL_VERSION})")
+        print(f"remix-brain: ws server on ws://{config.WS_HOST}:{config.WS_PORT} (v{PROTOCOL_VERSION})")
         await asyncio.Future()

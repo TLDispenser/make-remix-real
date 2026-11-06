@@ -1,7 +1,7 @@
 # Machine-generated / secrets
-core/brain/.venv/
-core/.env
-core/brain/memory.json
+remix/brain/.venv/
+remix/.env
+remix/brain/memory.json
 __pycache__/
 *.pyc
 

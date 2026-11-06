@@ -1,4 +1,4 @@
-# CORE — a PC-as-avatar with a two-brain architecture
+# REMIX — a PC-as-avatar with a two-brain architecture
 
 Godot window = **body** (display/input only). Python process = **brain**
 (left brain: instant typed decisions; right brain: an $0 LLM writes the words).
@@ -23,11 +23,11 @@ verified against live docs, and the user's constraints locked in on 2026-11-05:
 
 ```bash
 # 1) brain (this hosts ws://127.0.0.1:8765 with the Phase 1 mock feed)
-core/brain/run.sh
+remix/brain/run.sh
 #    -> "ws server on ws://127.0.0.1:8765 (v1)"
 
 # 2) body (Godot 4.7 — install it from godotengine.org/download if missing)
-godot --path core/godot          # or open core/godot/project.godot in the editor
+godot --path remix/godot          # or open remix/godot/project.godot in the editor
 ```
 
 First-run checklist (Hyprland):
@@ -68,7 +68,7 @@ Mood vocabulary (fixed): `idle, happy, stressed, sleepy, thinking, listening, al
 
 ## Keys & env
 
-Copy `core/.env.example` → `core/.env` and fill:
+Copy `remix/.env.example` → `remix/.env` and fill:
 - `JEV_API_KEY` — from https://console.typesafe.ai/keys (left brain; optional,
   `RuleBrain` runs without it)
 - `CORE_LLM_API_KEY` — **free** key from z.ai (right brain, default

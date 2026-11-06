@@ -157,3 +157,43 @@ Spec named Anthropic as example, but the user cannot pay anything. Verified free
 2. Hyprland window-class string for the built avatar (`hyprctl clients`) → finalize `pin` window rule test.
 3. Whether transparency renders on Hyprland as expected (Godot side) and whether XWayland fallback is preferred for click-through — user advices after first run.
 4. espeak-ng install (Phase 7): `pacman -S espeak-ng` (or distro equiv).
+
+---
+
+# NEW_SPEC.md addendum (read 2026-11-05)
+
+NEW_SPEC renames the project to **Remix** (she/her) and adds a character spec.
+Deltas applied:
+- Folder `core/` → `remix/` (git mv); window title, project name, docs, and
+  log prefixes all say **Remix**. No "Core" anywhere.
+- Character reference material lives in **`references/`** (the spec writes
+  `reference/` singular — using the folder the user actually created:
+  Faces.png, Anger.png present; **character scripts NOT yet provided** — ask
+  the user, since the spec says to read them before designing the character).
+- Mood vocabulary, protocol `v1`, thresholds — unchanged from verification.
+
+**Right-brain conflict (spec vs user constraint, user wins):** NEW_SPEC still
+lists Anthropic/Claude as the right brain and mentions Piper (neural TTS).
+The user's standing constraints from the Phase-0 clarification (2026-11-05)
+override both: right brain must be **$0 of any kind** (→ GLM-4.7-Flash via
+Z.ai, OpenAI-compatible, config-swappable), and TTS must be **non-AI**
+(→ espeak-ng/pyttsx3; Piper is neural — excluded). Logged here as a
+deliberate doc-vs-user resolution, per the "user's asks win" precondition
+they set in this repo's history.
+
+**Face rendering system (NEW work, spec'd):**
+- Face = glyph vocabulary adapted from `references/Faces.png`, NOT Mech's
+  green — Remix uses **red**, one theme-variable color (shader uniform,
+  settings-exposed) since her laptop palette may clash.
+- Eyes: polygons with a FIXED point count; mouth: polyline with a FIXED point
+  count. An expression = target points + per-feature scale/rotation; springs
+  glide every point toward targets so any expression morphs into any other and
+  interrupted morphs stay smooth. Unmorphable shapes (hollow outlines, the
+  scribble/static face) transition via short glitchy crossfade / static burst.
+- CRT shader: phosphor glow/bloom, faint scanlines, subtle flicker, slight
+  edge bleed — each effect adjustable and cheap (weak iGPU machine).
+- Additive idle life: blinking (eyes collapse to a line), breathing glow, gaze
+  drift, occasional flicker. Body posing is a later polish phase; face first.
+
+Build order respected: Phase 0-1 already done (research + body). The face
+system slots into Phase 1/2 Godot work before Phase 3 brain work.

@@ -51,7 +51,7 @@ async def main() -> None:
         pass
     finally:
         body_task.cancel()
-        print(f"core-brain: stopped after {time.monotonic() - started:.0f}s")
+        print(f"remix-brain: stopped after {time.monotonic() - started:.0f}s")
 
 
 if __name__ == "__main__":

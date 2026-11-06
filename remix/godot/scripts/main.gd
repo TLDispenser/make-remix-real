@@ -1,4 +1,4 @@
-# main.gd — Core's display/body layer.
+# main.gd — Remix's display/body layer.
 # Godot rule (spec): this file only (1) sets up the window, (2) connects the
 # WebSocket to the Python brain, (3) re-broadcasts brain messages as signals,
 # (4) starts a window drag. NO logic beyond that.
@@ -42,7 +42,7 @@ func _ready() -> void:
 
 
 func _setup_window() -> void:
-	get_window().title = "Core"
+	get_window().title = "Remix"
 	get_window().borderless = true
 	# Docs list always_on_top as X11-only; harmless no-op under Wayland.
 	# On Hyprland we pin from the compositor side instead (see README).
