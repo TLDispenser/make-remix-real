@@ -25,6 +25,7 @@ const RECONNECT_DELAY := 2.0
 var _ws := WebSocketPeer.new()
 var _open := false
 var _reconnect_timer := 0.0
+var _moods_seen: Array = []  # debug/test instrumentation
 
 @onready var bubble: PanelContainer = %Bubble
 @onready var bubble_text: Label = %Bubble/Text
@@ -35,10 +36,12 @@ func _ready() -> void:
 	_setup_window()
 	_ws.connect_to_url(WS_URL)
 	bubble.hide()
-	var avatar := get_node("%Avatar")
-	vitals.connect(avatar.set_vitals)
+	var face := get_node("%Face")
 	mood_changed.connect(func(mood_name: String, _conf: float) -> void:
-		avatar.set_mood(mood_name))
+		face.set_expression(mood_name)
+		_moods_seen.append(mood_name)
+		if _moods_seen.size() > 20:
+			_moods_seen.pop_front())
 
 
 func _setup_window() -> void:
@@ -148,3 +151,16 @@ func _gui_input(event: InputEvent) -> void:
 			and event.button_index == MOUSE_BUTTON_LEFT:
 		start_window_drag()
 		accept_event()
+
+
+# Expression debug keys (only while the window is focused):
+#   F8 next expression / F9 previous / F10 force the static face
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		match event.keycode:
+			KEY_F8:
+				get_node("%Face").debug_cycle(1)
+			KEY_F9:
+				get_node("%Face").debug_cycle(-1)
+			KEY_F10:
+				get_node("%Face").set_expression("glitch")

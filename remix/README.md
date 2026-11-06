@@ -11,13 +11,34 @@ verified against live docs, and the user's constraints locked in on 2026-11-05:
 | Phase | State |
 |---|---|
 | 0 Research | ✅ done — see `../RESEARCH_NOTES.md` |
-| 1 The body | ✅ built — mock feed on, awaiting your visuals + first run |
+| 1 The body | ✅ built + headless-tested: glyph face engine (mock feed on, awaiting head-art) |
 | 2 Nervous system (real vitals) | not started (flip `CORE_MOCK=0`) |
 | 3 Left brain (RuleBrain + JevBrain) | not started |
 | 4 Right brain (LLM words) | not started |
 | 5 Push-to-talk (local STT) | not started (Hyprland binds chosen, see notes) |
 | 6 Awareness | not started (`hyprctl activewindow -j` verified working) |
 | 7 Voice out + polish | not started (espeak-ng via pyttsx3; **not AI voice**) |
+
+## The face (NEW_SPEC character work, Phase 1)
+
+- `shaders/crt_screen.gdshader` — scanlines / flicker / phosphor halo / edge
+  bleed, all adjustable via shader params; `theme_color` uniform + the face's
+  exported `theme_color` are ONE value (change Remix red in one place).
+- `scripts/face_atlas.gd` — starter glyph vocabulary adapted from
+  `references/Faces.png` (Mech's language, Remix's red): bars, wedges,
+  chevrons, hollow squint, doubled bar, hooked idle mouth, arc smile,
+  scribble/static glitch face. **Contract: every feature = 16 points = 4
+  quads.** Edit shapes HERE.
+- `scripts/face.gd` — engine: per-point springs morph any expression into
+  any other (interruption-safe), blink-to-line, breathing glow, gaze drift,
+  jitter, static bursts. Draws each quad as 2 convexity-checked triangles so
+  mid-morph geometry can never crash the rasterizer (research-documented).
+- Debug keys while the window is focused: **F8/F9** cycle expressions,
+  **F10** forces the static face.
+- Headless tests (run with `remix/brain/run.sh` live):
+  `Godot_v4.7 --headless --path remix/godot --script res://tests/smoke.gd`
+  (WS + springs + moods), `... --script res://tests/probe_exprs.gd`
+  (render errors must be 0), `... --script res://tests/atlas_audit.gd`.
 
 ## Run it
 

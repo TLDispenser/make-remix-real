@@ -49,6 +49,12 @@ async def main() -> None:
         await ws_server.serve()  # runs forever
     except KeyboardInterrupt:
         pass
+    except OSError as e:
+        if getattr(e, "errno", None) == 98:  # EADDRINUSE
+            print(f"remix-brain: FATAL — port {config.WS_PORT} already in use "
+                  f"(is another brain running?) 'pkill -f brain.main' then retry.")
+            return
+        print(f"remix-brain: FATAL — {e!r}")
     finally:
         body_task.cancel()
         print(f"remix-brain: stopped after {time.monotonic() - started:.0f}s")

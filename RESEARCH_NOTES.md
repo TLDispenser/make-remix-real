@@ -197,3 +197,22 @@ they set in this repo's history.
 
 Build order respected: Phase 0-1 already done (research + body). The face
 system slots into Phase 1/2 Godot work before Phase 3 brain work.
+
+## Face-system engine findings (2026-11-05, from headless validation)
+
+- **Padded/degenerate point runs + springs = broken polygons.** Repeating the
+  final vertex to fill a fixed point budget is NOT spring-safe: each
+  duplicate carries its own velocity, so mid-morph they diverge by fractions
+  of a pixel and the rendered polygon self-intersects (bowtie) → Godot's
+  earcut fails ("Invalid polygon data, triangulation failed").
+- **Two disjoint sub-shapes concatenated into ONE polygon path** (the doubled
+  bar) also fail triangulation regardless of morphs.
+- Solution implemented: glyph vocabulary = compositions of ≤4 REAL quads
+  (unused budget slots get hidden duplicates of real geometry, not zeros);
+  face.gd draws each quad as TWO triangles with an |area|-maximizing diagonal
+  and skips ~zero-area triangles. Springs now can never produce an invalid
+  draw. Atlas contract: 16 pts = 4 quads per feature (`tests/atlas_audit.gd`).
+- Websockets client gotcha: `connect()` gives up fast (no retry) if the
+  server socket isn't bound yet — Godot side retries on its own 2 s timer.
+- venv viability after folder renames: venv scripts embed absolute paths —
+  recreated `remix/.venv`; removed the stale duplicate.
