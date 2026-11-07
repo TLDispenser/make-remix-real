@@ -5,9 +5,10 @@
 import asyncio
 import time
 
-from . import config, rules, speech, vitals, ws_server
+from . import config, jev, rules, speech, vitals, ws_server
 
 _rule: rules.RuleBrain | None = None
+_jev: jev.JevBrain | None = None
 _seq = 0
 _latest_snapshot: dict = {}
 
@@ -30,14 +31,27 @@ async def _on_user_text(m: dict) -> None:
     if not text:
         return
 
-    # Instant reaction: eyes up toward the typist, before any words exist.
-    await ws_server.send({"type": "pose", "pose": "default",
-                          "look": [0.0, -0.15]})
     # She's visibly alive while upstream thinks (storms can last ~1 min).
     await ws_server.send({"type": "notice", "text": "// one sec //",
                           "seconds": 3.0})
 
-    reply = await speech.generate_reply(text, vitals=_latest_snapshot)
+    # Left brain: ONE Jev call -> stance + instant pose + beat arc. Any
+    # budget/exhaustion/failure means None and we fall back to the $0 path.
+    decision = None
+    if _jev is not None:
+        decision = await _jev.decide(text, _latest_snapshot)
+    if decision:
+        await ws_server.send({"type": "pose", "pose": decision.pose,
+                              "look": [0.0, -0.15]})
+        stance = decision.stance
+    else:
+        # Instant reaction: eyes up toward the typist, before words exist.
+        await ws_server.send({"type": "pose", "pose": "default",
+                              "look": [0.0, -0.15]})
+        stance = None
+
+    reply = await speech.generate_reply(text, vitals=_latest_snapshot,
+                                        stance=stance)
     if reply is None:
         text_line = ("// heart present, words absent: no llm key //"
                  if not config.LLM_API_KEY else
@@ -47,17 +61,23 @@ async def _on_user_text(m: dict) -> None:
         print("remix-brain: no reply available for a typed line")
         return
 
-    # Beat acting (local, $0 — Jev takes over this role once keyed).
+    # Acting: Jev's per-beat arc if it answered, else the local $0 arc.
     beat_list = speech.beats(reply)
-    cues = [{"t": 0.0, "pose": "default", "look": [0.0, 0.0]}]
+    if decision:
+        arc = decision.beats or ["default"]
+        rest = decision.resting
+    else:
+        arc = ["default", "smirk"]
+        rest = "default"
     look_pool = [[-0.35, 0.1], [0.35, -0.1], [0.0, 0.2]]
+    cues = []
     for i, _beat in enumerate(beat_list):
-        cues.append({"t": 0.0 if i == 0 else float(i),
-                     "pose": "smirk" if i % 2 else "default",
+        cues.append({"t": float(i),
+                     "pose": arc[min(i, len(arc) - 1)],
                      "look": look_pool[i % len(look_pool)]})
     _seq += 1
     await ws_server.send({"type": "perform", "id": f"t{_seq}", "cues": cues,
-                          "then": {"pose": "default"}})
+                          "then": {"pose": rest}})
     # Subtitle: notice is the ONLY text channel (godot contract). No espeak
     # yet (Phase 7), so words ride subtitles while cues act them out.
     secs = min(14.0, max(3.5, len(reply) * 0.045))
@@ -70,7 +90,10 @@ async def main() -> None:
     started = time.monotonic()
     global _rule
     _rule = rules.RuleBrain()
-    ws_server.on_ready(lambda m: _rule.set_available_poses(m.get("poses") or []))
+    _jev = jev.JevBrain()
+    ws_server.on_ready(lambda m: (
+        _rule.set_available_poses(m.get("poses") or []),
+        _jev.set_available_poses(m.get("poses") or [])))
     ws_server.on_perform_done(lambda m: _rule.pause_for_speech(0.6))
     ws_server.on_user_text(lambda m: asyncio.create_task(_on_user_text(m)))
     body_task = asyncio.create_task(body_loop(_rule))

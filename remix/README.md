@@ -13,7 +13,7 @@ verified against live docs, and the user's constraints locked in on 2026-11-05:
 | 0 Research | ✅ done — see `../RESEARCH_NOTES.md` |
 | 1 The body | ✅ **user-built**: SVG-driven ribbon face, CRT shader, protocol v2 (see `godot/README.md`, `godot/PROTOCOL.md`) |
 | 2 Nervous system (real vitals) | ✅ done — psutil feed verified on her host (`CORE_MOCK=0` is now the default) |
-| 3 Left brain | ✅ RuleBrain (vitals → poses, $0) live • JevBrain = key-gated, budget policy below |
+| 3 Left brain | ✅ RuleBrain ($0 vitals→poses) live • ✅ JevBrain live (typed input only, 1 call/reaction: stance + pose + beat arc; budget policy below; smoke-tested 2026-11-06) |
 | 4 Right brain (LLM words) | pending `CORE_LLM_API_KEY` (free, z.ai — how-to below) |
 | 5 Push-to-talk (local STT) | not started (Hyprland binds chosen, see notes) |
 | 6 Awareness | not started (`hyprctl activewindow -j` verified working) |

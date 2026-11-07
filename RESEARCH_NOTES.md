@@ -283,3 +283,18 @@ User's constraint: Jev credits are FINITE. Policy encoded in config.py:
 6. ONE Jev call per reaction covers stance AND the full per-beat acting plan
    (pose list for each beat) — never per-beat calls.
 7. Every failure path (timeout/error/over-budget) falls back to RuleBrain.
+
+**JevBrain live (2026-11-06).** Re-verified the OpenAPI schema before any
+call: `choice` criteria = {name: "when it applies"}; answers carry
+confidence + probabilities; one request = many named questions. ONE real
+call burned (user-authorized): "pc has been running slow... thirty tabs
+open" → 0.18 s round trip, 1619/485 tokens, stance=playful (0.51), pose
+smirk, smirk beat arc, rest smirk. Offline (faked transport) tests pass:
+parsing + bogus-pose drop, cooldown block, cache hit = 0 calls, hourly cap,
+transport failure → None, disabled → None. In production, during a real
+z.ai 1305 storm the pool rotated to backup1 (failover machinery verified
+live) but the user's `.env` still carried the dead `gemini-2.5-flash`
+string -> 404 -> no reply available. Lesson: rotation code was right, the
+config was stale; `.env` now says `gemini-3.5-flash-lite`. Brain restarts
+need `setsid` — nohup'd children die when the harness reaps the process
+group.
