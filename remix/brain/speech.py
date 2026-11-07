@@ -64,7 +64,10 @@ def _llm_once_sync(messages: list) -> str:
     body = json.dumps({
         "model": config.LLM_MODEL,
         "temperature": 0.9,
-        "max_tokens": 220,
+        # NOTE: glm-4.7's reasoning_content is written BEFORE content on the
+        # same budget; 500 was starved during tonight's load storms
+        # (2026-11-06), 2048 survived. If content comes back empty, we retry.
+        "max_tokens": 2048,
         "messages": messages,
     }).encode()
     req = urllib.request.Request(url, data=body, headers={
@@ -74,17 +77,22 @@ def _llm_once_sync(messages: list) -> str:
     try:
         with urllib.request.urlopen(req, timeout=config.LLM_TIMEOUT_S) as r:
             data = json.loads(r.read())
-        return (data["choices"][0]["message"]["content"] or "").strip()
+        content = (data["choices"][0]["message"]["content"] or "").strip()
+        if not content:
+            raise RuntimeError("empty content (reasoning ate the budget?)")
+        return content
     except urllib.error.HTTPError as e:
         detail = (e.read().decode(errors="replace") or "")[:120]
         raise RuntimeError(f"HTTP {e.code}: {detail}") from e
 
 
-async def _call_llm(messages: list, attempts: int = 3) -> str | None:
+async def _call_llm(messages: list, attempts: int = 4) -> str | None:
     if not config.LLM_API_KEY:
         print("remix-brain: no CORE_LLM_API_KEY — wordless mode")
         return None
-    delay = 20.0
+    # Empty-content (short) vs 1305 overload (long): keep the first retry
+    # snappy so a shed request still returns while you're at the keyboard.
+    delay = 8.0
     for i in range(attempts):
         try:
             reply = await asyncio.to_thread(_llm_once_sync, messages)
@@ -92,7 +100,7 @@ async def _call_llm(messages: list, attempts: int = 3) -> str | None:
                 return reply
         except Exception as e:
             print(f"remix-brain: LLM attempt {i + 1}/{attempts} failed: {e}")
-            # jittered long backoff: Z.ai 1305 needs patience, not hammering
+            # jittered backoff; Z.ai 1305 needs patience, not hammering
             await asyncio.sleep(delay + random.uniform(0, delay * 0.3))
-            delay *= 1.7
+            delay = min(delay * 2.2, 60.0)
     return None

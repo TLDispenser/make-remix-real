@@ -30,6 +30,10 @@ async def _on_user_text(m: dict) -> None:
     # Instant reaction: eyes up toward the typist, before any words exist.
     await ws_server.send({"type": "pose", "pose": "default",
                           "look": [0.0, -0.15]})
+    # She's visibly alive while upstream thinks (storms can last ~1 min).
+    await ws_server.send({"type": "notice",
+                          "text": "// one sec. booting the rest of mind //",
+                          "seconds": 3.0})
 
     reply = await speech.generate_reply(text)
     if reply is None:
