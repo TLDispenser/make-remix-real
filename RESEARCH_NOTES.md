@@ -216,3 +216,47 @@ system slots into Phase 1/2 Godot work before Phase 3 brain work.
   server socket isn't bound yet — Godot side retries on its own 2 s timer.
 - venv viability after folder renames: venv scripts embed absolute paths —
   recreated `remix/.venv`; removed the stale duplicate.
+
+## Protocol v2 score (2026-11-06, user rebuilt the Godot half)
+
+The user authored her face: SVG poses -> 10-pt ribbons (`svg_to_shapes.py`),
+per-pose motion limits (`face_config.gd`), CRT shader rewrite, and a
+performance contract: brain sends ONE `perform` with audio path + cue times;
+Godot fires cues off the audio's own playback clock (face/voice can't drift).
+Full contract: `godot/PROTOCOL.md` (single source of truth). Brain side was
+rebuilt to v2 this session: pose decisions live in `brain/rules.py`
+(RuleBrain), stream verified by `brain/tools/selftest.py` (invariants only —
+organic pose changes on a live host are nondeterministic; the pose-CHANGE
+path is validated by synthetic-feed unit tests instead, which passed:
+alarm/spike -> immediate spooked, sustained -> streak+hold gating, noisy
+single samples -> no flip).
+
+Real-host sensor readings (2026-11-06): coretemp works (57-72 °C), CPU idles
+10-25% with compile bursts to 100, RAM ~84%, battery present, **disk 99%
+full** (added a notices branch; user should know). Threshold dangers on a
+live host: idle CPU sits right around 12-18% so ANY threshold testing must
+come from synthetic feeds, not live runs.
+
+## GLM (right brain) key — how the user gets one (verified 2026-11-06)
+
+1. Account at **z.ai** (chat signup works; no card required).
+2. Profile menu -> **API Keys** -> Create a new API key.
+3. Put it in `remix/.env` as `CORE_LLM_API_KEY`.
+4. Endpoint/model already defaulted: `https://api.z.ai/api/paas/v4` +
+   `glm-4.7-flash` (free variant; supports ONE concurrent request — config
+   already caps concurrency at 1).
+OpenAI-compatible chat/completions shape (curl smoke test in remix/README.md).
+
+## Jev credit budget policy (locked 2026-11-06; enforced by JevBrain)
+
+User's constraint: Jev credits are FINITE. Policy encoded in config.py:
+1. **Silent life NEVER calls Jev** — RuleBrain ($0) owns all vitals->pose.
+2. Jev fires on user input arrival or events the rules flag — never a timer.
+3. Cooldown `CORE_JEV_COOLDOWN_S` between any two calls (default 3 s).
+4. Hard hourly cap `CORE_JEV_MAX_PER_HOUR` (default 60) — over the cap the
+   RuleBrain answer ships silently instead (no errors, no retry spam).
+5. State-signature cache `CORE_JEV_CACHE_TTL_S` (default 300 s): unchanged
+   state = cached decision, zero calls.
+6. ONE Jev call per reaction covers stance AND the full per-beat acting plan
+   (pose list for each beat) — never per-beat calls.
+7. Every failure path (timeout/error/over-budget) falls back to RuleBrain.

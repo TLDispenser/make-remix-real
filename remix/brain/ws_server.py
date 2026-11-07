@@ -1,11 +1,13 @@
-# ws_server.py — protocol v1 bridge. Python"brain" -> Godot"display".
-# Shapes verified 2026-11-05 (websockets 17.x modern asyncio API):
-#   handler takes exactly ONE connection argument, serve() from websockets.asyncio.server
+# ws_server.py — protocol v2 bridge (see godot/PROTOCOL.md). brain -> Godot.
+# Python hosts ws://127.0.0.1:8765; Godot connects and sends `ready` (poses)
+# and `perform_done`. Brain broadcasts pose/perform/notice/... messages.
+# API shapes verified 2026-11-05 (websockets 17.x): handler takes ONE
+# connection arg, serve() from websockets.asyncio.server.
 import asyncio
 import json
-from typing import Set
+from typing import Callable, Optional, Set
 
-from websockets.asyncio.server import (  # noqa: E501 -- `serve` is alias-imported so our own serve() can't shadow it
+from websockets.asyncio.server import (
     ServerConnection,
     broadcast as _broadcast,
     serve as _ws_serve,
@@ -13,8 +15,22 @@ from websockets.asyncio.server import (  # noqa: E501 -- `serve` is alias-import
 
 from . import config
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 _clients: Set[ServerConnection] = set()
+
+# Single-callback hooks (main.py wires them; None = ignore).
+_cb_ready: Optional[Callable[[dict], None]] = None
+_cb_perform_done: Optional[Callable[[dict], None]] = None
+
+
+def on_ready(cb: Callable[[dict], None]) -> None:
+    global _cb_ready
+    _cb_ready = cb
+
+
+def on_perform_done(cb: Callable[[dict], None]) -> None:
+    global _cb_perform_done
+    _cb_perform_done = cb
 
 
 def _wrap(msg: dict) -> str:
@@ -22,13 +38,24 @@ def _wrap(msg: dict) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+async def _handle_incoming(raw: str) -> None:
+    try:
+        m = json.loads(raw)
+    except (TypeError, ValueError):
+        return
+    kind = m.get("type")
+    if kind == "ready" and _cb_ready:
+        _cb_ready(m)
+    elif kind == "perform_done" and _cb_perform_done:
+        _cb_perform_done(m)
+    # future brain-visible kinds (user_text / user_typing / ui) land here.
+
+
 async def _handler(websocket: ServerConnection) -> None:
     _clients.add(websocket)
     try:
-        # v1: Godot -> Python (user_text / user_typing / ui) is Phase 4+;
-        # consume so the socket stays healthy, log only.
         async for raw in websocket:
-            print(f"[ws] godot -> brain: {raw}")
+            await _handle_incoming(raw)
     except Exception:
         pass
     finally:
@@ -45,7 +72,9 @@ async def send(msg: dict) -> None:
     if not _clients:
         return
     try:
-        _broadcast(_clients, _wrap(msg))
+        live = {c for c in _clients if _valid_writer(c)}
+        if live:
+            await _broadcast(live, _wrap(msg))
     except Exception:
         pass
 

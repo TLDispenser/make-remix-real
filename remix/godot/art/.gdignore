@@ -1,0 +1,1 @@
+art/ is source-only for tools/svg_to_shapes.py; keep it out of Godot's importer

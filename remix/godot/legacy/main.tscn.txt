@@ -1,0 +1,87 @@
+[gd_scene load_steps=6 format=3]
+
+; Remix's body. Screen = dark CRT panel (shader), Face = glyph engine.
+; Your custom head/body art will wrap around Screen later; the Speech
+; bubble + status line stay as-is. Drag window by clicking the screen.
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/face.gd" id="2_face"]
+[ext_resource type="Shader" path="res://shaders/crt_screen.gdshader" id="3_crt"]
+
+[sub_resource type="ShaderMaterial" id="crt_mat"]
+shader = ExtResource("3_crt")
+shader_parameter/theme_color = Color(0.95, 0.12, 0.1, 1)
+shader_parameter/glow_strength = 0.38
+shader_parameter/scanline_strength = 0.14
+shader_parameter/flicker_strength = 0.05
+shader_parameter/bleed = 0.25
+
+[sub_resource type="StyleBoxFlat" id="bubble_style"]
+bg_color = Color(0.06, 0.06, 0.1, 0.82)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+content_margin_left = 10.0
+content_margin_right = 10.0
+content_margin_top = 8.0
+content_margin_bottom = 8.0
+
+[node name="Main" type="Control"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 0
+script = ExtResource("1_main")
+
+[node name="Screen" type="ColorRect" parent="."]
+unique_name_in_owner = true
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 24.0
+offset_top = 30.0
+offset_right = -24.0
+offset_bottom = -164.0
+mouse_filter = 2
+color = Color(0.02, 0.02, 0.03, 0.94)
+material = SubResource("crt_mat")
+
+[node name="Face" type="Node2D" parent="Screen"]
+unique_name_in_owner = true
+position = Vector2(136, 116)
+script = ExtResource("2_face")
+screen_path = NodePath("..")
+
+[node name="Bubble" type="PanelContainer" parent="."]
+unique_name_in_owner = true
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = -96.0
+offset_right = -8.0
+offset_bottom = -8.0
+grow_vertical = 0
+mouse_filter = 2
+theme_override_styles/panel = SubResource("bubble_style")
+
+[node name="Text" type="Label" parent="Bubble"]
+layout_mode = 2
+autowrap_mode = 3
+text = ""
+
+[node name="Debug" type="Label" parent="."]
+unique_name_in_owner = true
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 8.0
+offset_top = 4.0
+offset_right = -8.0
+offset_bottom = 22.0
+grow_horizontal = 2
+mouse_filter = 2
+text = "brain offline"
+horizontal_alignment = 2
+theme_override_font_sizes/font_size = 11

@@ -11,41 +11,28 @@ verified against live docs, and the user's constraints locked in on 2026-11-05:
 | Phase | State |
 |---|---|
 | 0 Research | ✅ done — see `../RESEARCH_NOTES.md` |
-| 1 The body | ✅ built + headless-tested: glyph face engine (mock feed on, awaiting head-art) |
-| 2 Nervous system (real vitals) | not started (flip `CORE_MOCK=0`) |
-| 3 Left brain (RuleBrain + JevBrain) | not started |
-| 4 Right brain (LLM words) | not started |
+| 1 The body | ✅ **user-built**: SVG-driven ribbon face, CRT shader, protocol v2 (see `godot/README.md`, `godot/PROTOCOL.md`) |
+| 2 Nervous system (real vitals) | ✅ done — psutil feed verified on her host (`CORE_MOCK=0` is now the default) |
+| 3 Left brain | ✅ RuleBrain (vitals → poses, $0) live • JevBrain = key-gated, budget policy below |
+| 4 Right brain (LLM words) | pending `CORE_LLM_API_KEY` (free, z.ai — how-to below) |
 | 5 Push-to-talk (local STT) | not started (Hyprland binds chosen, see notes) |
 | 6 Awareness | not started (`hyprctl activewindow -j` verified working) |
 | 7 Voice out + polish | not started (espeak-ng via pyttsx3; **not AI voice**) |
 
-## The face (NEW_SPEC character work, Phase 1)
+## The face (user's Godot work)
 
-- `shaders/crt_screen.gdshader` — scanlines / flicker / phosphor halo / edge
-  bleed, all adjustable via shader params; `theme_color` uniform + the face's
-  exported `theme_color` are ONE value (change Remix red in one place).
-- `scripts/face_atlas.gd` — starter glyph vocabulary adapted from
-  `references/Faces.png` (Mech's language, Remix's red): bars, wedges,
-  chevrons, hollow squint, doubled bar, hooked idle mouth, arc smile,
-  scribble/static glitch face. **Contract: every feature = 16 points = 4
-  quads.** Edit shapes HERE.
-- `scripts/face.gd` — engine: per-point springs morph any expression into
-  any other (interruption-safe), blink-to-line, breathing glow, gaze drift,
-  jitter, static bursts. Draws each quad as 2 convexity-checked triangles so
-  mid-morph geometry can never crash the rasterizer (research-documented).
-- Debug keys while the window is focused: **F8/F9** cycle expressions,
-  **F10** forces the static face.
-- Headless tests (run with `remix/brain/run.sh` live):
-  `Godot_v4.7 --headless --path remix/godot --script res://tests/smoke.gd`
-  (WS + springs + moods), `... --script res://tests/probe_exprs.gd`
-  (render errors must be 0), `... --script res://tests/atlas_audit.gd`.
+The Godot half was rebuilt by the user 2026-11-06: faces are authored as SVGs
+(`godot/art/faces/*.svg -> scripts/face_shapes.gd` via `godot/tools/svg_to_shapes.py`),
+every feature is a 10-point ribbon, poses carry per-pose motion limits, and the
+playback contract is audio-clock-synced `perform` cues. **Read** `godot/README.md`
+and `godot/PROTOCOL.md` — the protocol lives THERE (single source of truth).
 
 ## Run it
 
 ```bash
 # 1) brain (this hosts ws://127.0.0.1:8765 with the Phase 1 mock feed)
 remix/brain/run.sh
-#    -> "ws server on ws://127.0.0.1:8765 (v1)"
+#    -> "ws server on ws://127.0.0.1:8765 (v2)"
 
 # 2) body (Godot 4.7 — install it from godotengine.org/download if missing)
 godot --path remix/godot          # or open remix/godot/project.godot in the editor
@@ -62,38 +49,46 @@ First-run checklist (Hyprland):
   (`env -u WAYLAND_DISPLAY godot ...` gets passthrough + always-on-top), or
   keep the window tight around the avatar. Tell me which you prefer.
 
-## Message protocol `v1` (JSON over ws://localhost:8765)
+## Message protocol `v2` (see `godot/PROTOCOL.md` for the full contract)
 
-Every message carries `"v":1`. From Python to Godot:
-
-```jsonc
-{"v":1,"type":"vitals","cpu":42,"ram":61,"temp":58,"battery":80,"disk":12}
-{"v":1,"type":"mood","mood":"stressed","confidence":0.91,"source":"mock|jev|rule"}
-{"v":1,"type":"reflex_line","text":"Ow, easy on the CPU."}
-{"v":1,"type":"say","text":"...","mood":"happy","final":true}   // final:false = streaming chunk
-{"v":1,"type":"event","name":"download_done"}
-{"v":1,"type":"speaking_audio","path":"..."}   // Phase 7
-{"v":1,"type":"listening","state":"start"}      // Phase 5 mic indicator
-{"v":1,"type":"transcript","text":"...","final":true}
-```
-
-From Godot to Python:
+The user's Godot half defines the protocol; the brain speaks it. What the brain
+currently sends (silent life):
 
 ```jsonc
-{"v":1,"type":"user_text","text":"..."}
-{"v":1,"type":"user_typing"}                    // instant "thinking" reflex trigger
-{"v":1,"type":"ui","action":"mute|quit|toggle_input"}
+{"v":2,"type":"vitals","cpu":42,"ram":61,"temp":58,"battery":80,"disk":12}  // pass-through
+{"v":2,"type":"pose","pose":"anger","look":[0.2,-0.3]}   // RuleBrain decisions (debounced)
+{"v":2,"type":"look","look":[0.7,0.2]}                   // gaze drift, no pose change
+{"v":2,"type":"twitch"}                                   // allowed in anger/pout
+{"v":2,"type":"notice","text":"// ... //","seconds":3.0}  // rare flavor (>=4 min gap)
 ```
 
-Mood vocabulary (fixed): `idle, happy, stressed, sleepy, thinking, listening, alert, bored`.
+Godot sends `ready` (poses list) and `perform_done`; the brain holds the poses
+list for name validation and pauses silent posing across performances.
+
+## Jev credit budget (user: limited credits — enforced from Phase 3 on)
+
+**Silent life NEVER calls Jev.** The RuleBrain does all vitals->pose work for
+free. Jev fires only on (a) user input arriving (typed/voice, Phase 5) and
+(b) notable events the rules flag. Enforced knobs (env, see `config.py`):
+
+- `CORE_JEV_COOLDOWN_S` (3) — minimum seconds between any two Jev calls
+- `CORE_JEV_MAX_PER_HOUR` (60) — hard hourly cap; over cap -> RuleBrain answer, silently
+- `CORE_JEV_CACHE_TTL_S` (300) — identical state signature = cached decision, no call
+- One Jev call carries BOTH the reaction stance AND the per-beat acting plan
+  (pose list per beat) — no per-beat calls.
 
 ## Keys & env
 
-Copy `remix/.env.example` → `remix/.env` and fill:
+Copy `remix/.env.example` -> `remix/.env` and fill:
 - `JEV_API_KEY` — from https://console.typesafe.ai/keys (left brain; optional,
   `RuleBrain` runs without it)
 - `CORE_LLM_API_KEY` — **free** key from z.ai (right brain, default
   `glm-4.7-flash`, $0; Groq/Gemini/OpenRouter drop-in via two lines)
+
+Getting the GLM key (free, no card): 1) make an account at z.ai; 2) profile
+menu -> **API Keys** -> Create a new API key; 3) paste it in `remix/.env`
+above. The free flash model allows one concurrent request (config already
+respects that).
 
 Smoke tests (only after adding a key):
 

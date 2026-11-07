@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1920 1080">
+  <defs>
+    <style>
+      .cls-1{fill:#0d1018}
+      .cls-2{fill:#ff5148}
+      .cls-3{fill:none;stroke:#ff5148;stroke-width:6;stroke-miterlimit:10}
+    </style>
+  </defs>
+  <title>Tired/Trauma</title>
+  <g id="Layer_8" data-name="Layer 8">
+  </g>
+  <g id="Layer_7" data-name="Layer 7">
+    <rect x="0" y="0" width="1920" height="1080" class="cls-1"/>
+    <polygon points="762.36,540 762.36,456.88 762.36,373.205 762.36,288.891 717.733,266.081 872.262,266.081 872.262,288.891 872.262,373.205 872.262,456.88 872.262,540" class="cls-2"/>
+    <polygon points="1157.64,540 1157.64,456.88 1157.64,373.205 1157.64,288.891 1202.267,266.081 1047.738,266.081 1047.738,288.891 1047.738,373.205 1047.738,456.88 1047.738,540" class="cls-2"/>
+    <polygon points="848.418,814.838 917.386,814.838 984.975,814.838 1055.911,814.838 1126.601,814.838 1126.601,793.513 1055.911,793.513 984.975,793.513 917.386,793.513 848.418,793.513" class="cls-2"/>
+    <line x1="772.281" y1="552.75" x2="859.699" y2="552.75" class="cls-3"/>
+    <line x1="783.562" y1="571.477" x2="848.418" y2="571.477" class="cls-3"/>
+    <line x1="1055.383" y1="554.75" x2="1142.801" y2="554.75" class="cls-3"/>
+    <line x1="1066.664" y1="573.477" x2="1131.519" y2="573.477" class="cls-3"/>
+  </g>
+  <g id="Layer_6" data-name="Layer 6">
+  </g>
+  <g id="Layer_5" data-name="Layer 5">
+  </g>
+  <g id="Layer_4" data-name="Layer 4">
+  </g>
+  <g id="Layer_3" data-name="Layer 3">
+  </g>
+  <g id="Layer_1" data-name="Layer 1">
+    <g id="Layer_2" data-name="Layer 2" data-vc-layer="sublayer">
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1920 1080">
+  <defs>
+    <style>
+      .cls-1{fill:#0d1018}
+      .cls-2{fill:none;stroke:#ff5148;stroke-width:7;stroke-miterlimit:10}
+      .cls-3{fill:none;stroke:#ff5148;stroke-width:3;stroke-miterlimit:10}
+    </style>
+  </defs>
+  <title>Spooked</title>
+  <g id="Layer_8" data-name="Layer 8">
+  </g>
+  <g id="Layer_7" data-name="Layer 7">
+  </g>
+  <g id="Layer_6" data-name="Layer 6">
+  </g>
+  <g id="Layer_5" data-name="Layer 5">
+  </g>
+  <g id="Layer_4" data-name="Layer 4">
+    <rect x="0" y="0" width="1920" height="1080" class="cls-1"/>
+    <polygon points="762.36,540 762.36,456.88 762.36,373.205 762.36,288.891 717.733,266.081 872.262,266.081 872.262,288.891 872.262,373.205 872.262,456.88 872.262,540" class="cls-2"/>
+    <line x1="738.172" y1="494.461" x2="738.172" y2="339.406" class="cls-3"/>
+    <line x1="748.773" y1="518.938" x2="748.773" y2="314.93" class="cls-3"/>
+    <polygon points="1157.64,540 1157.64,456.88 1157.64,373.205 1157.64,288.891 1202.267,266.081 1047.738,266.081 1047.738,288.891 1047.738,373.205 1047.738,456.88 1047.738,540" class="cls-2"/>
+    <line x1="1181.828" y1="494.461" x2="1181.828" y2="339.406" class="cls-3"/>
+    <line x1="1171.227" y1="518.938" x2="1171.227" y2="314.93" class="cls-3"/>
+  </g>
+  <g id="Layer_3" data-name="Layer 3">
+  </g>
+  <g id="Layer_1" data-name="Layer 1">
+    <g id="Layer_2" data-name="Layer 2" data-vc-layer="sublayer">
+    </g>
+  </g>
+</svg>
