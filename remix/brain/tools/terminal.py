@@ -46,7 +46,11 @@ async def run() -> int:
             task.cancel()
             return 0
         while True:
-            line = await asyncio.to_thread(input, "you> ")
+            try:
+                line = await asyncio.to_thread(input, "you> ")
+            except EOFError:  # Ctrl-D
+                task.cancel()
+                return 0
             line = line.strip()
             if not line:
                 continue

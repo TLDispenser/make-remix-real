@@ -2,6 +2,7 @@
 remix/brain/.venv/
 remix/.env
 remix/brain/memory.json
+remix/brain/brain.log
 __pycache__/
 *.pyc
 

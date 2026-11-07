@@ -30,12 +30,16 @@ and `godot/PROTOCOL.md` — the protocol lives THERE (single source of truth).
 ## Run it
 
 ```bash
-# 1) brain (this hosts ws://127.0.0.1:8765 with the Phase 1 mock feed)
-remix/brain/run.sh
-#    -> "ws server on ws://127.0.0.1:8765 (v2)"
+# Easiest — chat with her right in a terminal (starts the brain if needed):
+./talk.sh
+#    Type; Enter to send; "exit" or Ctrl-C to stop (brain keeps running).
+#    Her words show here AND on her face if she's displayed.
+# One-liner instead of a REPL:
+./talk.sh "hey there"
 
-# 2) body (Godot 4.7 — install it from godotengine.org/download if missing)
-godot --path remix/godot          # or open remix/godot/project.godot in the editor
+# Manual two-terminal run (if you'd rather start pieces yourself):
+#   remix/brain/run.sh      -> "ws server on ws://127.0.0.1:8765 (v2)"
+#   godot --path remix/godot   # or open remix/godot/project.godot in the editor
 ```
 
 First-run checklist (Hyprland):
