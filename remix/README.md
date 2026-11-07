@@ -90,6 +90,12 @@ menu -> **API Keys** -> Create a new API key; 3) paste it in `remix/.env`
 above. The free flash model allows one concurrent request (config already
 respects that).
 
+**Provider failover:** `speech.py` rotates a pool of providers if the
+primary proves stuck (z.ai's free tier intermittently sheds load). Add
+backups with `CORE_LLM_BACKUP1_URL/_MODEL/_API_KEY` in `.env` — AI Studio's
+free `gemini-2.5-flash` via its OpenAI-compatible endpoint is the natural
+second. Losers cool down 10 minutes; the winner stays until it fails.
+
 Smoke tests (only after adding a key):
 
 ```bash

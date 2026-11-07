@@ -237,6 +237,20 @@ full** (added a notices branch; user should know). Threshold dangers on a
 live host: idle CPU sits right around 12-18% so ANY threshold testing must
 come from synthetic feeds, not live runs.
 
+## Provider failover (added 2026-11-06, user request)
+
+speech.py's right brain is a POOL: primary (z.ai) + `CORE_LLM_BACKUPn_*`.
+Verified semantics with fakes: sticky winner, immediate rotation after 2
+failed attempts, 10-min circuit breaker (cooling providers skipped),
+all-cooling -> graceful None. All providers must be $0 (ground rule).
+Gotcha found + fixed in the same session: `_current` needed a `global`
+declaration in `_call_llm` (assigned and read in the same scope).
+
+Gemini as backup: OpenAI-compatible endpoint is
+`https://generativelanguage.googleapis.com/v1beta/openai` + model
+`gemini-2.5-flash` + AI Studio key (aistudio.google.com, free). To be
+smoke-tested the moment the user drops the key in `.env`.
+
 ## GLM (right brain) key — how the user gets one (verified 2026-11-06)
 
 1. Account at **z.ai** (chat signup works; no card required).

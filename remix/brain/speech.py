@@ -1,12 +1,16 @@
-# speech.py — the right brain ($0 GLM via Z.ai) + the typed-input pipeline.
-# Rules: the key must never be logged; errors degrade to None (caller falls
-# back to a notice, never a crash). Z.ai's free flash tier periodically
-# sheds load with 429/code 1305 — that is THEIR overload, so we retry with
-# LONG waits and give up gracefully (remeasured 2026-11-06).
+# speech.py — the right brain ($0 via a provider POOL) + typed-input pipeline.
+# Primary: Z.ai GLM-4.7-Flash (free). Its free tier sheds load intermittently
+# (HTTP 429 / code 1305, verified 2026-11-06), so on repeated failures we
+# rotate to backups (e.g. free Gemini via its OpenAI-compatible endpoint).
+# Failover policy: a provider stays sticky while it answers; after 2 failed
+# attempts it cools down (circuit breaker) and rotation happens IMMEDIATELY;
+# wait-for-cooldown only if ALL providers are cooling (then fail gracefully
+# — the caller ships a notice, never a crash).
 import asyncio
 import collections
 import json
 import random
+import time
 import urllib.error
 import urllib.request
 
@@ -24,6 +28,21 @@ PERSONA = (
 _history: collections.deque = collections.deque(maxlen=8)
 _lock = asyncio.Lock()
 
+_current = 0            # index into config.PROVIDERS of the sticky winner
+_failures: dict = {}    # name -> consecutive failed attempts
+_cool_until: dict = {}  # name -> monotonic time until which we don't ask
+
+
+def _cooling(name: str) -> bool:
+    return time.monotonic() < _cool_until.get(name, 0.0)
+
+
+def _pool_order() -> list:
+    """Current winner first, then the rest in config order (cooling skipped)."""
+    providers = config.PROVIDERS
+    order = providers[_current:] + providers[:_current]
+    return [p for p in order if not _cooling(p["name"])]
+
 
 def beats(text: str, max_beats: int = 4) -> list:
     """Split a reply into speakable beats (sentences), capped."""
@@ -39,11 +58,11 @@ def beats(text: str, max_beats: int = 4) -> list:
 
 
 async def generate_reply(user_text: str) -> str | None:
-    """One conversational exchange with the persona. None on failure."""
-    if not _lock.locked():
-        async with _lock:
-            return await _generate(user_text)
-    return None  # busy: caller decides the UX
+    """One conversational exchange. None on failure/busy."""
+    if _lock.locked():
+        return None  # busy: caller decides the UX
+    async with _lock:
+        return await _generate(user_text)
 
 
 async def _generate(user_text: str) -> str | None:
@@ -59,19 +78,19 @@ async def _generate(user_text: str) -> str | None:
     return reply
 
 
-def _llm_once_sync(messages: list) -> str:
-    url = config.LLM_BASE_URL.rstrip("/") + "/chat/completions"
+def _llm_once_sync(provider: dict, messages: list) -> str:
+    url = provider["url"].rstrip("/") + "/chat/completions"
     body = json.dumps({
-        "model": config.LLM_MODEL,
+        "model": provider["model"],
         "temperature": 0.9,
-        # NOTE: glm-4.7's reasoning_content is written BEFORE content on the
-        # same budget; 500 was starved during tonight's load storms
-        # (2026-11-06), 2048 survived. If content comes back empty, we retry.
+        # glm-4.7's reasoning_content is written BEFORE content on the same
+        # token budget; 500 was starved during tonight's load storms
+        # (2026-11-06), 2048 survived. Empty content is retried.
         "max_tokens": 2048,
         "messages": messages,
     }).encode()
     req = urllib.request.Request(url, data=body, headers={
-        "Authorization": "Bearer " + config.LLM_API_KEY,
+        "Authorization": "Bearer " + provider["key"],
         "Content-Type": "application/json",
     })
     try:
@@ -86,21 +105,41 @@ def _llm_once_sync(messages: list) -> str:
         raise RuntimeError(f"HTTP {e.code}: {detail}") from e
 
 
-async def _call_llm(messages: list, attempts: int = 4) -> str | None:
-    if not config.LLM_API_KEY:
-        print("remix-brain: no CORE_LLM_API_KEY — wordless mode")
+_PER_PROVIDER_ATTEMPTS = 2
+
+
+async def _call_llm(messages: list) -> str | None:
+    """Rotate across the provider pool, healthy providers first."""
+    global _current
+    usable = _pool_order()
+    if not usable:
+        names = ", ".join(str(p["name"]) for p in config.PROVIDERS)
+        print(f"remix-brain: all providers cooling down ({names}) — "
+              f"sitting out ~{config.LLM_PROVIDER_COOLDOWN_S:.0f}s")
         return None
-    # Empty-content (short) vs 1305 overload (long): keep the first retry
-    # snappy so a shed request still returns while you're at the keyboard.
-    delay = 8.0
-    for i in range(attempts):
-        try:
-            reply = await asyncio.to_thread(_llm_once_sync, messages)
-            if reply:
-                return reply
-        except Exception as e:
-            print(f"remix-brain: LLM attempt {i + 1}/{attempts} failed: {e}")
-            # jittered backoff; Z.ai 1305 needs patience, not hammering
-            await asyncio.sleep(delay + random.uniform(0, delay * 0.3))
-            delay = min(delay * 2.2, 60.0)
+    overall_delay = 3.0
+    for p in usable:
+        for i in range(_PER_PROVIDER_ATTEMPTS):
+            try:
+                reply = await asyncio.to_thread(_llm_once_sync, p, messages)
+                if reply:
+                    if p["name"] != config.PROVIDERS[_current]["name"]:
+                        print(f"remix-brain: right brain answered via "
+                              f"{p['name']}")
+                    _failures[p["name"]] = 0
+                    _cool_until[p["name"]] = 0.0
+                    _current = config.PROVIDERS.index(p)  # winner is sticky
+                    return reply
+            except Exception as e:
+                _failures[p["name"]] = _failures.get(p["name"], 0) + 1
+                print(f"remix-brain: LLM {p['name']} attempt "
+                      f"{i + 1}/{_PER_PROVIDER_ATTEMPTS} failed: {e}")
+                await asyncio.sleep(min(overall_delay, 15.0)
+                                    + random.uniform(0, overall_delay))
+                overall_delay = overall_delay * 1.6
+        if _failures.get(p["name"], 0) >= _PER_PROVIDER_ATTEMPTS:
+            _cool_until[p["name"]] = (time.monotonic()
+                                      + config.LLM_PROVIDER_COOLDOWN_S)
+            print(f"remix-brain: {p['name']} cooling down "
+                  f"({config.LLM_PROVIDER_COOLDOWN_S:.0f}s)")
     return None

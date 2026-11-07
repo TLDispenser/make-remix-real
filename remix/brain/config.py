@@ -1,5 +1,6 @@
 # config.py — thresholds, ports, model names. Env vars win over defaults.
 # Keys NEVER enter code (spec ground rule); .env is loaded if present.
+import itertools
 import os
 from pathlib import Path
 
@@ -57,10 +58,33 @@ JEV_MAX_PER_HOUR = int(os.environ.get("CORE_JEV_MAX_PER_HOUR", "60"))
 JEV_CACHE_TTL_S = float(os.environ.get("CORE_JEV_CACHE_TTL_S", "300.0"))
 
 # ---- Right brain (System 2) — OpenAI-compatible chat, $0 default ----
-# Default: Z.ai GLM-4.7-Flash, permanent free tier, best personality per user
-# pick. Swap Provider by editing base model URL only. See RESEARCH_NOTES.md.
+# Primary: Z.ai GLM-4.7-Flash (permanent free tier). Its free tier sheds load
+# intermittently (HTTP 429 / code 1305, verified 2026-11-06), so speech.py
+# rotates to BACKUP providers when the primary proves stuck. All providers in
+# the pool must be $0 (user ground rule).
 LLM_API_KEY = os.environ.get("CORE_LLM_API_KEY", "")
 LLM_BASE_URL = os.environ.get("CORE_LLM_BASE_URL", "https://api.z.ai/api/paas/v4")
 LLM_MODEL = os.environ.get("CORE_LLM_MODEL", "glm-4.7-flash")
-LLM_TIMEOUT_S = float(os.environ.get("CORE_LLM_TIMEOUT_S", "30.0"))
+LLM_TIMEOUT_S = float(os.environ.get("CORE_LLM_TIMEOUT_S", "45.0"))
+
+
+def _providers() -> list:
+    """Ordered provider pool: primary first, then CORE_LLM_BACKUPn_*."""
+    pool = [{"name": "zai", "url": LLM_BASE_URL, "model": LLM_MODEL,
+             "key": LLM_API_KEY} if LLM_API_KEY else None]
+    for i in itertools.count(1):
+        url = os.environ.get(f"CORE_LLM_BACKUP{i}_URL", "")
+        if not url:
+            break
+        model = os.environ.get(f"CORE_LLM_BACKUP{i}_MODEL", "")
+        key = os.environ.get(f"CORE_LLM_BACKUP{i}_API_KEY", "")
+        if model and key:
+            pool.append({"name": f"backup{i}", "url": url, "model": model,
+                         "key": key})
+    return [p for p in pool if p]
+
+
+PROVIDERS = _providers()
+LLM_PROVIDER_COOLDOWN_S = float(os.environ.get(
+    "CORE_LLM_PROVIDER_COOLDOWN_S", "600.0"))
 LLM_MAX_CONCURRENT = 1  # z.ai free Flash models allow ONE concurrent request
