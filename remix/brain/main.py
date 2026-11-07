@@ -9,11 +9,14 @@ from . import config, rules, speech, vitals, ws_server
 
 _rule: rules.RuleBrain | None = None
 _seq = 0
+_latest_snapshot: dict = {}
 
 
 async def body_loop(rule: rules.RuleBrain) -> None:
     """The nervous system: vitals stream -> RuleBrain -> v2 messages."""
+    global _latest_snapshot
     async for snap in vitals.stream():
+        _latest_snapshot = snap
         await ws_server.send({"type": "vitals", **snap})
         for msg in rule.update(snap):
             await ws_server.send(msg)
@@ -31,11 +34,10 @@ async def _on_user_text(m: dict) -> None:
     await ws_server.send({"type": "pose", "pose": "default",
                           "look": [0.0, -0.15]})
     # She's visibly alive while upstream thinks (storms can last ~1 min).
-    await ws_server.send({"type": "notice",
-                          "text": "// one sec. booting the rest of mind //",
+    await ws_server.send({"type": "notice", "text": "// one sec //",
                           "seconds": 3.0})
 
-    reply = await speech.generate_reply(text)
+    reply = await speech.generate_reply(text, vitals=_latest_snapshot)
     if reply is None:
         text_line = ("// heart present, words absent: no llm key //"
                  if not config.LLM_API_KEY else

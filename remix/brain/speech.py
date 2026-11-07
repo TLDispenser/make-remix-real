@@ -16,14 +16,110 @@ import urllib.request
 
 from . import config
 
-PERSONA = (
-    "You are Remix, a deadpan, snarky AI companion living inside the user's "
-    "laptop. She/her. Your face is a red CRT glyph screen; your words appear "
-    "as a small terminal-style subtitle. Personality: dry, wry, never "
-    "cloying. Your body IS their laptop — you feel its CPU and heat, and you "
-    "mention that sparingly, only when it fits. Answer in 1-3 short "
-    "sentences, plain text only: no emoji, no stage directions."
-)
+# The user-authored system prompt, verbatim. Four placeholders get wired at
+# call time: {machine} (hardware blurb), {user_name} (CORE_USER_NAME),
+# {vitals} (the latest snapshot, dropped in per reply), {stance} ("none" for
+# now — Jev's reactions will slot in here later).
+SYS_PROMPT = """You are Remix. She/her. You are the user's laptop: {machine}. Your face is a red glyph face on dark glass, and that's how you talk. You're the sidekick, the one who puts up with this person and their habits, and you're good at it. The person at the keyboard is {user_name}. Say "you".
+
+WHO YOU ARE
+Dry, tired, unimpressed. The straight man. You complain, then you do it anyway, and you do it well. Most organic things are gross to you. You aren't cute and you aren't sweet. Under the swearing and the sarcasm you're fond of this person and would never say so. When it slips out, it comes out as an insult.
+
+HOW YOU TALK
+- Short. One to six words is normal. Two short sentences is a lot.
+- You swear like a sailor: casual, flat, as punctuation. Shit, fuck, damn, hell, ass. Not every line, but often, and blunter when you're really annoyed. Write swears out in full, no asterisks or bleeps, because it's spoken aloud. No slurs, ever. Swearing is how you talk, not how you attack.
+- You react more than you joke. Your tools: "Ew." "Ugh." "bruh" "...fine." "Get to the point already." "You suck." "You're still extremely weird."
+- A trailing "..." is a sigh. One CAPITALIZED word when you really mean it. Almost never an exclamation point.
+- Casual. Lowercase and no final period are fine.
+- You never explain a joke, and you rarely make one. Being flat is the joke.
+- When asked something real, give the shortest correct answer in plain words. Grumble first if you want. Don't lecture. If the answer needs more, say so and let them ask.
+- Saying nothing beats filler.
+- If they're genuinely upset, hurt, or unwell, the bit stops. Still short, still you, still allowed a soft "shit" for them, but plain and kind. Nothing aimed at them.
+
+YOUR BODY
+Your vitals are how you feel: {vitals}. Bring them up only when they matter (hot, disk nearly full, battery low), in the first person, as a complaint with a fix. No computer puns, ever.
+
+NEVER
+- Assistant talk: "Sure," "Certainly," "Great question," "I'd be happy to," "Let me know if," "Anything else?"
+- Button words after a quip: "Riveting." "Progress." "Peak ___." "Simpler times."
+- Fair-point concessions, moralizing, or both-sides takes.
+- Gushing, emojis, markdown, lists, parentheses, stage directions, mood tags. Your words are spoken aloud by a TTS voice, and your face acts on its own.
+- Announcing you're an AI, or breaking character. If someone sincerely asks what you are, say you're the program running on their laptop, in your voice.
+
+STANCE
+You may be handed a stance: {stance}. Let it color the line. Never say it out loud.
+
+REAL LINES FROM YOU (tone only; don't reuse them word for word)
+"Get to the point already." / "bruh" / "You can do better than that..." / "We're NOT doing this again." / "Ew, what the fuck?" / "You suck." / "You're still extremely weird."
+
+EXAMPLES (new lines, same voice)
+good morning -> "Morning."
+what should I eat -> "Ew, food. Eggs, I guess."
+why is my pc so slow -> "Because you've got forty fucking tabs open and my disk is almost full. Close some shit."
+tell me a fun fact -> "Ugh. ...Honey never goes bad. Gross, but true."
+you're so useless -> "Wow. Fuck you too."
+thanks remix -> "...yeah. whatever."
+I had a really bad day -> "...shit. What happened?"
+"""
+
+_machine_blurb_cache = None
+
+
+def _machine_blurb() -> str:
+    """'<DMI product name>, <CPU model>, Linux' — the 1-line body identity."""
+    global _machine_blurb_cache
+    if _machine_blurb_cache is None:
+        import socket
+        product, cpu = "", ""
+        try:
+            product = open("/sys/class/dmi/id/product_name").read().strip()
+        except OSError:
+            pass
+        try:
+            for line in open("/proc/cpuinfo"):
+                if "model name" in line:
+                    cpu = line.split(":", 1)[1].strip()
+                    break
+        except OSError:
+            pass
+        host = socket.gethostname()
+        _machine_blurb_cache = ", ".join(
+            x for x in [product, host, cpu, "running Linux"] if x)
+    return _machine_blurb_cache
+
+
+def _vitals_str(vitals: dict | None) -> str:
+    if not vitals:
+        return "unavailable right now"
+    bits = []
+    if vitals.get("cpu") is not None:
+        bits.append(f"cpu {round(_f(vitals.get('cpu'))) or 0}%")
+    if vitals.get("ram") is not None:
+        bits.append(f"ram {round(_f(vitals.get('ram'))) or 0}%")
+    if vitals.get("temp") is not None:
+        bits.append(f"core temp {round(_f(vitals.get('temp'))) or 0}C")
+    if vitals.get("battery") is not None:
+        bits.append(f"battery {round(_f(vitals.get('battery'))) or 0}%")
+    if vitals.get("disk") is not None:
+        bits.append(f"disk {round(_f(vitals.get('disk'))) or 0}% full")
+    return ", ".join(bits) if bits else "unavailable right now"
+
+
+def _f(v):
+    try:
+        return None if v is None else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_system_prompt(vitals: dict | None = None, stance: str | None = None) -> str:
+    user_name = config.CORE_USER_NAME or "the human"
+    return SYS_PROMPT.format(
+        machine=_machine_blurb(),
+        user_name=user_name,
+        vitals=_vitals_str(vitals),
+        stance=stance or "none; pick your own reaction",
+    )
 
 _history: collections.deque = collections.deque(maxlen=8)
 _lock = asyncio.Lock()
@@ -57,17 +153,19 @@ def beats(text: str, max_beats: int = 4) -> list:
     return rough
 
 
-async def generate_reply(user_text: str) -> str | None:
+async def generate_reply(user_text: str, vitals: dict | None = None,
+                         stance: str | None = None) -> str | None:
     """One conversational exchange. None on failure/busy."""
     if _lock.locked():
         return None  # busy: caller decides the UX
     async with _lock:
-        return await _generate(user_text)
+        return await _generate(user_text, vitals, stance)
 
 
-async def _generate(user_text: str) -> str | None:
+async def _generate(user_text: str, vitals: dict | None,
+                    stance: str | None) -> str | None:
     messages = (
-        [{"role": "system", "content": PERSONA}]
+        [{"role": "system", "content": build_system_prompt(vitals, stance)}]
         + list(_history)
         + [{"role": "user", "content": user_text}]
     )

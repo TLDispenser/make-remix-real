@@ -26,6 +26,10 @@ _load_dotenv()
 WS_HOST = os.environ.get("CORE_WS_HOST", "127.0.0.1")
 WS_PORT = int(os.environ.get("CORE_WS_PORT", "8765"))
 
+# The person at the keyboard, for the system prompt ("Say \"you\""). Set
+# CORE_USER_NAME in .env to what she should call you in instruction context.
+CORE_USER_NAME = os.environ.get("CORE_USER_NAME", "")
+
 # ---- Body / vitals ----
 VITALS_INTERVAL_S = float(os.environ.get("CORE_VITALS_INTERVAL_S", "1.0"))
 CORE_MOCK = os.environ.get("CORE_MOCK", "0") == "1"  # real vitals verified 2026-11-06; set CORE_MOCK=1 for demo feeds
