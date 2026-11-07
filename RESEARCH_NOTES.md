@@ -254,7 +254,11 @@ deprecated 2.5-flash routes into), **gemini-3.8-flash** (smartest Flash) and
 **gemini-3.6-flash** are all "Free of charge" on the Free tier for input AND
 output. gemini-2.5-flash is dead for new users (API limited to existing
 users since ~2026-10). Grounding/search is paid-only on free tier — we don't
-use it. To be smoke-tested the moment the user drops the key in `.env`.
+use it. Smoke-tested 2026-11-06: raw curl to `v1beta/openai/chat/completions`
+with `gemini-3.5-flash-lite` -> HTTP 200, clean content, finish_reason stop.
+Full code path verified too (throwaway process, z.ai simulated-cooling):
+rotation picked `backup1` through the real sysprompt and answered in voice.
+Gemini leg is LIVE.
 
 ## GLM (right brain) key — how the user gets one (verified 2026-11-06)
 
