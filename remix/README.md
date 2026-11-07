@@ -97,8 +97,10 @@ respects that).
 **Provider failover:** `speech.py` rotates a pool of providers if the
 primary proves stuck (z.ai's free tier intermittently sheds load). Add
 backups with `CORE_LLM_BACKUP1_URL/_MODEL/_API_KEY` in `.env` — AI Studio's
-free `gemini-2.5-flash` via its OpenAI-compatible endpoint is the natural
-second. Losers cool down 10 minutes; the winner stays until it fails.
+free `gemini-3.5-flash-lite` via its OpenAI-compatible endpoint is the
+natural second (2.5-flash is dead for new users; 3.5-flash-lite / 3.8-flash
+/ 3.6-flash are the free-tier models as of 2026-11-06). Losers cool down 10
+minutes; the winner stays until it fails.
 
 Smoke tests (only after adding a key):
 

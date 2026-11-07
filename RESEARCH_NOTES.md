@@ -247,9 +247,14 @@ Gotcha found + fixed in the same session: `_current` needed a `global`
 declaration in `_call_llm` (assigned and read in the same scope).
 
 Gemini as backup: OpenAI-compatible endpoint is
-`https://generativelanguage.googleapis.com/v1beta/openai` + model
-`gemini-2.5-flash` + AI Studio key (aistudio.google.com, free). To be
-smoke-tested the moment the user drops the key in `.env`.
+`https://generativelanguage.googleapis.com/v1beta/openai` + an AI Studio key
+(aistudio.google.com, free). Verified 2026-11-06 from the Gemini pricing page:
+**gemini-3.5-flash-lite** (recommended — cost-efficient, high-volume; what
+deprecated 2.5-flash routes into), **gemini-3.8-flash** (smartest Flash) and
+**gemini-3.6-flash** are all "Free of charge" on the Free tier for input AND
+output. gemini-2.5-flash is dead for new users (API limited to existing
+users since ~2026-10). Grounding/search is paid-only on free tier — we don't
+use it. To be smoke-tested the moment the user drops the key in `.env`.
 
 ## GLM (right brain) key — how the user gets one (verified 2026-11-06)
 
