@@ -21,6 +21,7 @@ _clients: Set[ServerConnection] = set()
 # Single-callback hooks (main.py wires them; None = ignore).
 _cb_ready: Optional[Callable[[dict], None]] = None
 _cb_perform_done: Optional[Callable[[dict], None]] = None
+_cb_user_text: Optional[Callable[[dict], None]] = None
 
 
 def on_ready(cb: Callable[[dict], None]) -> None:
@@ -31,6 +32,12 @@ def on_ready(cb: Callable[[dict], None]) -> None:
 def on_perform_done(cb: Callable[[dict], None]) -> None:
     global _cb_perform_done
     _cb_perform_done = cb
+
+
+def on_user_text(cb: Callable[[dict], None]) -> None:
+    """Text from the terminal REPL (tools/terminal.py) or Godot typing."""
+    global _cb_user_text
+    _cb_user_text = cb
 
 
 def _wrap(msg: dict) -> str:
@@ -48,7 +55,9 @@ async def _handle_incoming(raw: str) -> None:
         _cb_ready(m)
     elif kind == "perform_done" and _cb_perform_done:
         _cb_perform_done(m)
-    # future brain-visible kinds (user_text / user_typing / ui) land here.
+    elif kind == "user_text" and _cb_user_text:
+        _cb_user_text(m)  # long pipelines MUST schedule their own task
+    # future kinds (user_typing / ui) land here.
 
 
 async def _handler(websocket: ServerConnection) -> None:
