@@ -11,16 +11,28 @@ BRAIN_DIR = Path(__file__).resolve().parent
 
 
 def _load_dotenv() -> None:
-    """Tiny .env loader (no third-party dependency)."""
+    """Tiny .env loader (no third-party dependency).
+    Duplicate keys: the FIRST definition wins (os.environ is never
+    overwritten) and later ones get named out loud — a twice-set knob that
+    silently loses is exactly the kind of thing that wastes an evening."""
     env_file = BRAIN_DIR.parent / ".env"
     if not env_file.exists():
         return
+    seen: set = set()
     for line in env_file.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        os.environ.setdefault(key.strip(), value.strip())
+        key, value = key.strip(), value.strip()
+        if not key:
+            continue
+        if key in seen:
+            print(f"remix-brain: .env: '{key}' defined more than once — the "
+                  f"first definition won")
+            continue
+        seen.add(key)
+        os.environ.setdefault(key, value)
 
 
 _load_dotenv()
