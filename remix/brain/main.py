@@ -114,10 +114,27 @@ def _local_arc(first: Face, beat_list: list) -> list:
     return out
 
 
-async def _play_silent(face_list: list, beat_list: list) -> None:
+def _beat_looks(beat_list: list, lead: list | None = None) -> list:
+    """One gaze per beat. If a beat NAMES a window she can see (\"firefox\",
+    \"your terminal\"), her eyes turn toward it for that beat; otherwise the
+    ambient drift. `lead` (what she was asked about) holds for beat 0 when
+    that beat doesn't name anything itself. Without this the per-beat cues
+    overwrote the gaze the instant her voice started."""
+    out = []
+    for i, b in enumerate(beat_list):
+        look = awareness.look_for_text(b)
+        if look is None and i == 0 and lead:
+            look = lead
+        out.append(look or LOOK_POOL[i % len(LOOK_POOL)])
+    return out
+
+
+async def _play_silent(face_list: list, beat_list: list,
+                       looks: list | None = None) -> None:
     """No audio, so Godot can't pace the beats: step through them on reading time."""
+    looks = looks or _beat_looks(beat_list)
     for i, (f, b) in enumerate(zip(face_list, beat_list)):
-        await ws_server.send(f.msg(look=LOOK_POOL[i % len(LOOK_POOL)]))
+        await ws_server.send(f.msg(look=looks[i]))
         if i < len(beat_list) - 1:
             await asyncio.sleep(max(0.8, len(b) * 0.06))
     _schedule_settle()
@@ -146,16 +163,12 @@ async def _on_user_text(m: dict) -> None:
         face, stance = faces.guess_face(text), None   # $0 fallback
         if _jev:
             _jev.note_face(face)
-    # (5) she gestures toward the app she's being asked about, if it IS the
-    # focused one: named in the text while it owns the screen.
-    look = [0.0, -0.15]
-    app = (awareness.current().get("app") or "").lower()
-    if app and app in text.lower():
-        aimed = awareness.gaze_toward()
-        if aimed:
-            look = aimed
-            print(f"remix-brain: gazing toward {app}")
-    await ws_server.send(face.msg(look=look))
+    # (5) she looks toward whichever visible window the human just named
+    # (any window on her screen, not only the focused one).
+    aimed = awareness.look_for_text(text)
+    if aimed:
+        print(f"remix-brain: gazing toward {awareness.find_mentioned(text)['app']} {aimed}")
+    await ws_server.send(face.msg(look=aimed or [0.0, -0.15]))
 
     # Right brain. Only say "one sec" if she is actually slow.
     task = asyncio.create_task(speech.generate_reply(
@@ -174,27 +187,38 @@ async def _on_user_text(m: dict) -> None:
         print("remix-brain: no reply available")
         return
 
-    # Acting plan (Jev, once her words exist) and her voice, in parallel.
+    # Acting plan (Jev, once her words exist), then her voice. With the
+    # expressive voice on, the voice FOLLOWS the faces she is about to make, so the
+    # plan comes first (espeak is quick); with it off they run in parallel as before.
     beat_list = speech.beats(reply)
     plan_coro = _jev.act(text, beat_list) if _jev else asyncio.sleep(0, None)
-    plan, spoken = await asyncio.gather(
-        plan_coro, tts.synthesize(beat_list, f"p{_seq + 1}"))
-    face_list = list(plan.faces) if plan else _local_arc(face, beat_list)
+    tag = f"p{_seq + 1}"
+    if config.TTS_EXPRESSIVE and tts.available():
+        plan = await plan_coro
+        face_list = list(plan.faces) if plan else _local_arc(face, beat_list)
+        spoken = await tts.synthesize(
+            beat_list, tag, faces=face_list,
+            strain=tts.strain_from(_latest_snapshot))
+    else:
+        plan, spoken = await asyncio.gather(
+            plan_coro, tts.synthesize(beat_list, tag))
+        face_list = list(plan.faces) if plan else _local_arc(face, beat_list)
     if _jev and not plan:
         for f in face_list:
             _jev.note_face(f)
 
     _seq += 1
     pid = f"t{_seq}"
+    looks = _beat_looks(beat_list, lead=aimed)
     await ws_server.send({"type": "say", "text": reply, "final": True})
     if spoken:
-        cues = [f.cue(spoken.starts[i], LOOK_POOL[i % len(LOOK_POOL)])
+        cues = [f.cue(spoken.starts[i], looks[i])
                 for i, f in enumerate(face_list)]
         _rule.pause_for_speech(spoken.total + 1.0)
         await ws_server.send({"type": "perform", "id": pid, "audio": spoken.path,
                               "cues": cues, "then": face_list[-1].spec()})
     else:
-        _silent_task = asyncio.create_task(_play_silent(face_list, beat_list))
+        _silent_task = asyncio.create_task(_play_silent(face_list, beat_list, looks))
         _rule.pause_for_speech(sum(max(0.8, len(b) * 0.06) for b in beat_list))
 
     if config.SUBTITLES == "always" or (config.SUBTITLES == "auto" and not spoken):
@@ -218,11 +242,12 @@ async def _deliver_proactive(line: dict) -> None:
     _cancel(_settle_task)
     _cancel(_silent_task)
     look = line.get("look") or [0.0, -0.1]
+    lead = None
     if line.get("trigger") == "app_stuck":
         # (5) gesture toward the app she's commenting on
-        aimed = awareness.gaze_toward()
-        if aimed:
-            look = aimed
+        lead = awareness.gaze_toward()
+        if lead:
+            look = lead
             print("remix-brain: gazing toward the stuck app")
     await ws_server.send(face.msg(look=look))
 
@@ -230,18 +255,21 @@ async def _deliver_proactive(line: dict) -> None:
     _seq += 1
     pid = f"t{_seq}"
     audible = audio.quiet() is False      # None (can't tell) counts audible
-    spoken = None if audible else await tts.synthesize(beat_list, pid)
+    spoken = None if audible else await tts.synthesize(
+        beat_list, pid, faces=[face] * len(beat_list),
+        strain=tts.strain_from(_latest_snapshot))
     await ws_server.send({"type": "say", "text": text, "final": True,
                           "proactive": True})
     face_list = [face] * len(beat_list)          # $0 acting: one mood, gaze varies
+    looks = _beat_looks(beat_list, lead=lead)
     if spoken:
-        cues = [f.cue(spoken.starts[i], LOOK_POOL[i % len(LOOK_POOL)])
+        cues = [f.cue(spoken.starts[i], looks[i])
                 for i, f in enumerate(face_list)]
         _rule.pause_for_speech(spoken.total + 1.0)
         await ws_server.send({"type": "perform", "id": pid, "audio": spoken.path,
                               "cues": cues, "then": face.spec()})
     else:
-        _silent_task = asyncio.create_task(_play_silent(face_list, beat_list))
+        _silent_task = asyncio.create_task(_play_silent(face_list, beat_list, looks))
         _rule.pause_for_speech(sum(max(0.8, len(b) * 0.06) for b in beat_list))
 
     # On-screen text rule: a caption is flavor, so it shows only when the
@@ -330,8 +358,9 @@ async def _on_command(text: str) -> None:
             await ws_server.send({"type": "notice", "seconds": 4.0,
                                   "text": "// nothing came out. poke again //"})
     elif cmd == "/aware":
-        line = f"// {awareness.describe()} //"
-        await ws_server.send({"type": "notice", "text": line, "seconds": 6.0})
+        lines = awareness.describe().split("\n")
+        line = "// " + " | ".join(x.strip(" ·") for x in lines) + " //"
+        await ws_server.send({"type": "notice", "text": line, "seconds": 9.0})
         print(f"remix-brain: awareness: {awareness.describe()}")
     elif cmd == "/quiet" and _pro:
         _pro.enabled = not _pro.enabled

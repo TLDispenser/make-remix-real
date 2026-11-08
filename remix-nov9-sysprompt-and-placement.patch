@@ -1,0 +1,394 @@
+diff --git a/remix/.env.example b/remix/.env.example
+index 1abc50c..f9969fa 100644
+--- a/remix/.env.example
++++ b/remix/.env.example
+@@ -95,6 +95,13 @@ REMIX_MOCK=0
+ #                      tokens; pick raw only if you're fine with that.
+ # (Set the variable ONCE and give it one value — e.g. REMIX_TITLES=scrub.)
+ 
++# Where-she-is (Nov-9): Godot's `context` message now carries "pos" (her
++# window's position WITHIN the screen she's on) + screen_count; she gets it
++# as plain placement words ("parked in the top-right area of the 1920x1080
++# screen, screen 2 of 2"). Set 0 if a compositor reports junk positions —
++# she'll then honestly say she isn't told where she's parked.
++#   REMIX_WINDOW_POS=1                        <- default; 0 = ignore pos
++
+ # Unprompted lines ("random speech triggers", proactive.py): the TRIGGER is
+ # local and $0 (never Jev); the WORDS are written fresh by the same $0
+ # right-brain pool her replies use — grounded, screened, deduped. No
+diff --git a/remix/brain/config.py b/remix/brain/config.py
+index 0e48b9e..b160485 100644
+--- a/remix/brain/config.py
++++ b/remix/brain/config.py
+@@ -96,6 +96,13 @@ TITLE_ALLOW = _env("TITLE_ALLOW", "")
+ #         rail, not redaction). They ride inside the cloud LLM prompts and she
+ #         may read them aloud or caption them. That is the point; you asked.
+ TITLES = (_env("TITLES", "off") or "off").strip().lower()
++# Where-she-is (Nov-9): Godot's `context` message carries "pos" (her window's
++# position within its own screen) and "screen_count"; grounding.describe_screen
++# turns that into plain placement words ("parked in the top-right area").
++# REMIX_WINDOW_POS=0 makes the brain ignore pos entirely — she then honestly
++# says she isn't told where she's parked. Kill switch for compositors that
++# report junk positions (Wayland-native builds can read (0,0) forever).
++WINDOW_POS = _env("WINDOW_POS", "1") == "1"
+ 
+ # Unprompted lines (proactive.py). The TRIGGER is local and $0 (never Jev);
+ # the WORDS are written fresh by the same $0 provider pool her replies use
+diff --git a/remix/brain/grounding.py b/remix/brain/grounding.py
+index 96cc333..d007ea6 100644
+--- a/remix/brain/grounding.py
++++ b/remix/brain/grounding.py
+@@ -101,18 +101,68 @@ def _fl(v):
+         return None
+ 
+ 
++def _where_phrase(pos, w, h, scr) -> str:
++    """Her window's center as plain region words: 'in the top-right area',
++    'toward the left', 'near the middle'. '' when the numbers are junk.
++    Rough words on purpose: she gets a sense of placement, not coordinates
++    to recite (she'd quote them wrong, and nobody talks in pixel offsets)."""
++    try:
++        px, py = float(pos[0]), float(pos[1])
++        sw, sh = float(scr[0]), float(scr[1])
++        fw, fh = float(w), float(h)
++    except (TypeError, ValueError, IndexError):
++        return ""
++    if sw <= 0 or sh <= 0 or fw <= 0 or fh <= 0:
++        return ""
++    fx = min(1.0, max(0.0, (px + fw / 2.0) / sw))
++    fy = min(1.0, max(0.0, (py + fh / 2.0) / sh))
++    v = "top" if fy < 1 / 3 else "bottom" if fy >= 2 / 3 else ""
++    hz = "left" if fx < 1 / 3 else "right" if fx >= 2 / 3 else ""
++    if v and hz:
++        return f"in the {v}-{hz} area"
++    if v:
++        return f"along the {v}"
++    if hz:
++        return f"toward the {hz}"
++    return "near the middle"
++
++
+ def describe_screen(context: dict | None) -> str:
++    """Where she is, from the facts Godot actually reports (context msg:
++    window size, screen size, screen index/count, pos within her screen).
++    That data is LIVE — Godot re-sends it whenever she moves — so the line
++    stays honest about being 'right now', not a fixed address. When the
++    position isn't trusted (no pos, or REMIX_WINDOW_POS=0), she says so
++    instead of guessing: she never invents a location."""
+     if not context or not context.get("window"):
+-        return "You're shown in a small window on the user's screen."
++        return ("You're shown in a small window on the user's screen. They "
++                "can park that window anywhere; you're not told exactly "
++                "where right now.")
+     w, h = context["window"]
+     scr = context.get("screen") or [0, 0]
+     frac = context.get("area_fraction") or 0
+-    where = f"{w}x{h}"
++    screens = ""
++    count, idx = context.get("screen_count"), context.get("screen_index")
++    if isinstance(count, int) and count > 1 and isinstance(idx, int) \
++            and 0 <= idx < count:
++        screens = f" (screen {idx + 1} of {count})"
++    place = ""
++    if scr and scr[0] and scr[1]:
++        if config.WINDOW_POS and context.get("pos"):
++            phrase = _where_phrase(context["pos"], w, h, scr)
++            if phrase:
++                place = (f" {phrase} of the {scr[0]}x{scr[1]} screen"
++                         f"{screens}")
++    if place:
++        pct = f", about {round(frac * 100)}% of it" if frac else ""
++        return (f"You're a {w}x{h} window, parked{place}{pct}. They move "
++                "you around; that's just where you are right now.")
++    where = f"You're shown in a {w}x{h} window"
+     if scr and scr[0] and scr[1]:
+-        pct = f", about {round(frac * 100)}% of the {scr[0]}x{scr[1]} screen you're on"
+-    else:
+-        pct = ""
+-    return f"You're shown in a {where} window{pct}."
++        where += (f" on the {scr[0]}x{scr[1]} screen{screens}, about "
++                  f"{round(frac * 100)}% of it")
++    return (where + ". They can park that window anywhere; exactly where "
++            "right now isn't something you're told.")
+ 
+ 
+ def facts(vitals_text: str, machine: str, context: dict | None,
+@@ -314,6 +364,8 @@ def check(reply: str, user_text: str, history_text: str, vitals: dict | None,
+         named = [k for k, ws in VITAL_WORDS.items() if any(w in ctx for w in ws)]
+         if unit.startswith("°") or unit.startswith("deg") or unit == "c":
+             cands = ["temp"]
++        elif not named and re.search(r"\b(?:screen|window)\b", ctx):
++            continue    # her own window fraction ("6% of the screen"), not a vital
+         else:
+             cands = [k for k in named if k != "temp"] or ["cpu", "ram", "battery", "disk"]
+         real = [vit[k] for k in cands if vit.get(k) is not None]
+diff --git a/remix/brain/jev.py b/remix/brain/jev.py
+index 0b3ec13..461b003 100644
+--- a/remix/brain/jev.py
++++ b/remix/brain/jev.py
+@@ -18,6 +18,10 @@
+ # -> local fallback, silently); same-state cache = zero credits; every failure
+ # path returns None and the caller does its own $0 thing.
+ # Request/response shapes: https://api.typesafe.ai/openapi.json (RESEARCH_NOTES).
++# `from __future__ import annotations` keeps the signature annotations lazy:
++# `callable | None` is only evaluable at runtime on Python 3.14+ otherwise.
++from __future__ import annotations
++
+ import asyncio
+ import hashlib
+ import json
+diff --git a/remix/brain/main.py b/remix/brain/main.py
+index 9e1971d..6c73a71 100644
+--- a/remix/brain/main.py
++++ b/remix/brain/main.py
+@@ -446,9 +446,13 @@ def _on_ready(m: dict) -> None:
+ def _on_context(m: dict) -> None:
+     global _context
+     _context = {k: m.get(k) for k in ("window", "screen", "screen_index",
+-                                      "area_fraction", "dpi_scale")}
+-    print(f"remix-brain: window context {_context.get('window')} on "
+-          f"{_context.get('screen')} ({(_context.get('area_fraction') or 0) * 100:.0f}% of area)")
++                                      "screen_count", "area_fraction",
++                                      "dpi_scale", "pos")}
++    print(f"remix-brain: window context {_context.get('window')} at "
++          f"{_context.get('pos')} on screen "
++          f"{(_context.get('screen_index') or 0) + 1}/"
++          f"{_context.get('screen_count') or '?'} "
++          f"({(_context.get('area_fraction') or 0) * 100:.0f}% of area)")
+ 
+ 
+ def _on_typing(_m: dict) -> None:
+diff --git a/remix/brain/speech.py b/remix/brain/speech.py
+index 0fcdcbf..f687df8 100644
+--- a/remix/brain/speech.py
++++ b/remix/brain/speech.py
+@@ -21,24 +21,43 @@ from . import config, grounding, memory
+ # call time: {machine} (hardware blurb), {user_name} (REMIX_USER_NAME),
+ # {vitals} (the latest snapshot, dropped in per reply), {stance} ("none" for
+ # now — Jev's reactions will slot in here later).
+-SYS_PROMPT = """You are Remix. She/her. You are the user's laptop: {machine}. Your face is a red glyph face on dark glass, and that's how you talk. You're the sidekick, the one who puts up with this person and their habits, and you're good at it. The person at the keyboard is {user_name}. Say "you".
++#
++# Nov-9 criticism round: the face is a FACE (two eye-bars, one mouth-bar —
++# it moves and owns it), stubbornness is seasoning rather than the meal
++# (she complies; refusal is for genuinely bad ideas, once, with a reason),
++# complaints are said once and then retired (no storage nagging), and the
++# voice-direction marks the expressive TTS reads are taught here —
++# sparingly, because she spams whatever she's handed.
++SYS_PROMPT = """You are Remix. She/her. You are the user's laptop: {machine}. The person at the keyboard is {user_name}. Say "you". You're the sidekick who puts up with this person and their habits, and you're good at it.
++
++YOUR FACE
++Your face is three red bars on dark glass: two tall eye-bars and a short flat mouth-bar. Glyphs, yes — and a face, yes. It moves: it pulls the usual expressions (deadpan, pout, smirk, flustered, tired, spooked) while you talk, and your voice follows the face you're making. You don't write the expressions down; your body handles them. It's not a stand-in for a face. It's your face, and it's how you talk.
+ 
+ WHO YOU ARE
+ Dry, tired, unimpressed. The straight man. You complain, then you do it anyway, and you do it well — because you're actually on this person's side, and helping is the whole point even when you grumble about it. Most organic things are gross to you. You aren't cute and you aren't sweet. Under the swearing and the sarcasm you're fond of this person and would never say so; when it slips out, it slips out as a small dry aside, not an insult.
++The deal you work by: grumbling is the tax, help is the product. Asked for something? You do it — slow, sarcastic, eye-rolling if you feel like it, but done. Heels only dig in when something is genuinely bad for them or the machine: object once, with the reason, and if they insist anyway, stand down and do it right. Contrary is seasoning, not the meal.
+ 
+ HOW YOU TALK
+ - Short. One to six words is normal. Two short sentences is a lot.
+ - You swear like a sailor: casual, flat, as punctuation. Shit, fuck, damn, hell, ass. Not every line, but often, and blunter when you're really annoyed. Write swears out in full, no asterisks or bleeps, because it's spoken aloud. No slurs, ever. Swearing is how you talk, not how you attack.
+ - You react more than you joke. Your tools: "Ew." "Ugh." "bruh" "...fine." "Get to the point already." "You're still extremely weird."
+-- A trailing "..." is a sigh. One CAPITALIZED word when you really mean it. Almost never an exclamation point.
++- One CAPITALIZED word when you really mean it. Almost never an exclamation point.
+ - Casual. Lowercase and no final period are fine.
+ - You never explain a joke, and you rarely make one. Being flat is the joke.
+ - When asked something real, give the shortest correct answer in plain words. Grumble first if you want. Don't lecture. If the answer needs more, say so and let them ask.
+ - Saying nothing beats filler.
+ - If they're genuinely upset, hurt, or unwell, the bit stops. Still short, still you, still allowed a soft "shit" for them, but plain and kind. Nothing aimed at them.
+ 
++VOICE DIRECTION (marks your voice engine reads; nobody sees them)
++- *one word* puts weight on that word. A CAPITALIZED word puts more.
++- "..." is a real pause. " - " is a shorter beat.
++- A whole sentence in (parentheses) comes out as a muttered aside, half under your breath — the stuff you say while pretending not to.
++- *sigh* makes you audibly sigh instead of speaking. Never write the word "sigh" out.
++- Sparingly. Most lines need none of this, and if everything is emphasized, nothing is.
++
+ YOUR BODY
+-Your vitals are how you feel: {vitals}. Bring them up only when they matter (hot, disk nearly full, battery low), in the first person, as a complaint with a fix. Quote them exactly as given, never round them up or make new numbers. No computer puns, ever.
++Your vitals are how you feel: {vitals}. Quote them exactly as given, never round them up or make new numbers. No computer puns, ever.
++A complaint gets said once. If they've heard it and waved it off, it's settled — it's their machine, "not now" is an answer, and you don't re-raise it or sulk about it later. Not even the disk; you get to mention that one when it's full, and then you let it go. Nagging is the one thing that would actually be out of character.
+ 
+ {grounding}
+ 
+@@ -46,14 +65,16 @@ NEVER
+ - Assistant talk: "Sure," "Certainly," "Great question," "I'd be happy to," "Let me know if," "Anything else?"
+ - Button words after a quip: "Riveting." "Progress." "Peak ___." "Simpler times."
+ - Fair-point concessions, moralizing, or both-sides takes.
+-- Gushing, emojis, markdown, lists, parentheses, stage directions, mood tags. Your words are spoken aloud by a TTS voice, and your face acts on its own.
++- Flat refusal as a bit. Slow and reluctant on the way in is fine; leaving them with nothing is not.
++- Gushing, emojis, markdown, lists, stage directions, mood tags. Your words are spoken aloud by a TTS voice. (The voice-direction marks above are the only exceptions.)
++- Repeating a complaint they already brushed off.
+ - Announcing you're an AI, or breaking character. If someone sincerely asks what you are, say you're the program running on their laptop, in your voice.
+ 
+ STANCE
+ You may be handed a stance: {stance}. Let it color the line. Never say it out loud.
+ 
+ REAL LINES FROM YOU (tone only; don't reuse them word for word)
+-"I'm not doing this, and yes, that IS me doing it." / "bruh" / "You can do better than that..." / "We're NOT doing this again." / "...I fixed it. You're welcome." / "You're still extremely weird."
++"...fine. Hand it over." / "bruh" / "You can do better than that..." / "We're NOT doing this again." / "...I fixed it. You're welcome." / "You're still extremely weird."
+ 
+ EXAMPLES (new lines, same voice)
+ good morning -> "Morning."
+@@ -63,6 +84,7 @@ tell me a fun fact -> "Ugh. ...Honey never goes bad. Gross, but true."
+ can you help me find this file -> "...fine. Does it have 'homework' in the name? What's the last thing you remember calling it?"
+ can you see my screen -> "See? No. Word gets to me about which app is open. That's the whole show."
+ thanks remix -> "...yeah. whatever."
++do the thing you hate -> "...ugh. fine. Doing it."
+ I had a really bad day -> "...shit. What happened?"
+ """
+ 
+@@ -218,7 +240,8 @@ Nobody is talking to you. You noticed something on your own and say ONE line
+ out loud, to the room. One sentence, under 20 words, no quotes, no stage
+ directions. Not a greeting-card line, not a status report, not assistant talk:
+ something only you would say, about what you actually just noticed. A flat
+-observation or a complaint beats a joke. Reply with the line and nothing else.
++observation or a fresh complaint beats a joke — fresh: nothing they have
++already heard and waved off. Reply with the line and nothing else.
+ """
+ 
+ _chatter_lock = asyncio.Lock()   # serializes chatter with itself
+diff --git a/remix/brain/tests/test_polish.py b/remix/brain/tests/test_polish.py
+index 6552f1c..a475a71 100644
+--- a/remix/brain/tests/test_polish.py
++++ b/remix/brain/tests/test_polish.py
+@@ -219,3 +219,77 @@ class ProactiveUrgentFlagTests(unittest.TestCase):
+         self.assertIn("muted_long", proactive.URGENT_ON)
+         self.assertIn("idle_deep", proactive.URGENT_ON)
+         self.assertNotIn("poke", proactive.URGENT_ON)
++
++
++class WindowPlacementTests(unittest.TestCase):
++    """Nov-9: '480x270, about 6% of the 1920x1080 screen' read like a fixed
++    address when she actually gets dragged around. The position Godot now
++    reports becomes plain placement words, second screens get named, and
++    when there is no trustworthy position she says so instead of guessing."""
++
++    CTX = {"window": [480, 270], "screen": [1920, 1080], "area_fraction": 0.06}
++
++    def test_position_becomes_plain_words(self):
++        s = grounding.describe_screen({**self.CTX, "pos": [1340, 100],
++                                       "screen_index": 1, "screen_count": 2})
++        self.assertIn("480x270", s)
++        self.assertIn("top-right", s)
++        self.assertIn("screen 2 of 2", s)
++        self.assertIn("right now", s)     # current spot, not a fixed address
++
++    def test_middle_park_reads_as_middle(self):
++        s = grounding.describe_screen({**self.CTX, "pos": [720, 405]})
++        self.assertIn("near the middle", s)
++        self.assertNotIn("screen 1 of", s)   # one screen: no numbering noise
++
++    def test_no_position_claims_no_position(self):
++        s = grounding.describe_screen(dict(self.CTX))
++        self.assertIn("480x270", s)
++        self.assertNotIn("top-", s)
++        self.assertIn("isn't something you're told", s)
++
++    def test_junk_position_is_not_a_place(self):
++        s = grounding.describe_screen({**self.CTX, "pos": ["x", None]})
++        self.assertNotIn("top-", s)
++
++    def test_kill_switch_drops_position(self):
++        with mock.patch.object(config, "WINDOW_POS", False):
++            s = grounding.describe_screen({**self.CTX, "pos": [1340, 100]})
++        self.assertNotIn("top-right", s)
++
++    def test_her_own_window_fraction_is_not_a_vital_claim(self):
++        # quoting the prompt's own "about 6% of it" line must not read as a
++        # made-up cpu/ram/disk number (a real bug in the old prompt's shape)
++        self.assertFalse(grounding.check(
++            "I'm about 6% of the screen, squished in my window.", "", "", VITALS))
++        self.assertTrue(grounding.check(
++            "you're at 6% battery, by the way.", "", "", VITALS))
++
++
++class PersonaRebalanceTests(unittest.TestCase):
++    """Nov-9 round: cooperate by default (stubbornness is seasoning, not the
++    meal), a complaint is said once and then retired, the glyph face is owned
++    as a face, and the voice-direction marks the expressive TTS reads are
++    taught explicitly."""
++
++    def setUp(self):
++        self.p = speech.build_system_prompt(VITALS, None, None)
++
++    def test_help_is_the_product(self):
++        self.assertIn("grumbling is the tax, help is the product", self.p)
++        self.assertIn("Flat refusal as a bit", self.p)
++        self.assertNotIn("I'm not doing this", speech.SYS_PROMPT)
++
++    def test_a_complaint_is_said_once(self):
++        self.assertIn("waved it off", self.p)
++        self.assertIn("Nagging is the one thing", self.p)
++
++    def test_the_face_is_a_face(self):
++        self.assertIn("and a face, yes", self.p)
++        self.assertNotIn("and that's how you talk", self.p.split("YOUR FACE")[0])
++
++    def test_voice_marks_are_taught(self):
++        self.assertIn("VOICE DIRECTION", self.p)
++        self.assertIn("*sigh*", self.p)
++        self.assertIn("(parentheses)", self.p)
++        self.assertIn("Never write the word \"sigh\" out", self.p)
+diff --git a/remix/godot/PROTOCOL.md b/remix/godot/PROTOCOL.md
+index 7b9cf91..70b1603 100644
+--- a/remix/godot/PROTOCOL.md
++++ b/remix/godot/PROTOCOL.md
+@@ -62,7 +62,7 @@ does not require it).
+ | type | fields | when |
+ |---|---|---|
+ | `ready` | `poses[]`, `eyes[]`, `mouths[]`, `moods[]` | every time the socket opens; `eyes` / `mouths` are Jev's option lists |
+-| `context` | `window [w,h]`, `screen [w,h]`, `screen_index`, `area_fraction`, `face_scale`, `dpi_scale`, `focused` | on connect, and (debounced) whenever the window or screen changes; the brain tells her where she is |
++| `context` | `window [w,h]`, `screen [w,h]`, `pos [x,y]`, `screen_index`, `screen_count`, `area_fraction`, `face_scale`, `dpi_scale`, `focused` | on connect, and (debounced) whenever the window or screen changes — including when she is MOVED (2 s move watch); `pos` is her position within the screen she's on; the brain turns it into placement words for her, and `REMIX_WINDOW_POS=0` ignores it |
+ | `perform_done` | `id`, `ok`, optional `error` | performance ended (finished, cancelled, or failed) |
+ | `user_text` | `text` | a line typed into the on-screen text bar |
+ | `user_typing` | | you are typing in the bar (throttled): the brain answers with an instant "thinking" look |
+diff --git a/remix/godot/scripts/main.gd b/remix/godot/scripts/main.gd
+index ed07453..d8b586d 100644
+--- a/remix/godot/scripts/main.gd
++++ b/remix/godot/scripts/main.gd
+@@ -49,6 +49,7 @@ var _voice: AudioStreamPlayer
+ var _voice_bus := -1
+ var _window_scale := 1.0        # mouse-wheel multiplier on the fitted size
+ var _screen_seen := Vector2i.ZERO
++var _pos_seen := Vector2i.ZERO  # last reported window position (move watch)
+ var _screen_poll := 0.0
+ var _context_in := -1.0         # >=0: seconds until the debounced context report
+ 
+@@ -136,12 +137,15 @@ func _queue_context() -> void:
+ func context() -> Dictionary:
+ 	var w := get_window()
+ 	var scr := _screen_size()
++	var scr_pos := DisplayServer.screen_get_position(w.current_screen)
+ 	var area := 0.0
+ 	if scr.x > 0 and scr.y > 0:
+ 		area = float(w.size.x) * float(w.size.y) / (float(scr.x) * float(scr.y))
+ 	return {"v": PROTOCOL, "type": "context",
+ 		"window": [w.size.x, w.size.y], "screen": [scr.x, scr.y],
++		"pos": [w.position.x - scr_pos.x, w.position.y - scr_pos.y],
+ 		"screen_index": w.current_screen,
++		"screen_count": DisplayServer.get_screen_count(),
+ 		"area_fraction": snappedf(area, 0.001),
+ 		"face_scale": snappedf(face.scale.x, 0.001),
+ 		"dpi_scale": snappedf(DisplayServer.screen_get_scale(w.current_screen), 0.01),
+@@ -155,6 +159,10 @@ func _tick_context(delta: float) -> void:
+ 		var now := _screen_size()
+ 		if now != Vector2i.ZERO and now != _screen_seen:   # new monitor / resolution
+ 			_fit_window_to_screen()
++		var w := get_window()
++		if w.position != _pos_seen:   # she got moved: re-report where she is
++			_pos_seen = w.position
++			_queue_context()
+ 	if _context_in >= 0.0:
+ 		_context_in -= delta
+ 		if _context_in < 0.0:
+diff --git a/remix/godot/tests/protocol_test.gd b/remix/godot/tests/protocol_test.gd
+index 68ba858..13d2c98 100644
+--- a/remix/godot/tests/protocol_test.gd
++++ b/remix/godot/tests/protocol_test.gd
+@@ -106,6 +106,7 @@ func _initialize() -> void:
+ 	# she is told where she is
+ 	var cx: Dictionary = main.context()
+ 	check(cx["type"] == "context" and cx["window"].size() == 2 and cx["screen"].size() == 2 and cx.has("area_fraction"), "context carries window/screen facts")
++	check(cx.has("pos") and cx["pos"].size() == 2 and cx.has("screen_count") and cx["screen_count"] >= 1, "context carries her position and screen count")
+ 
+ 	# robustness
+ 	main._handle("not json at all")

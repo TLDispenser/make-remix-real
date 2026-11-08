@@ -4,6 +4,10 @@
 #     (muted / volume low / subtitles when she has no voice)
 #   - a dim "heard" line at the top: what the mic caught, or what you just typed
 #   - a text-input bar (Enter opens it, Enter sends, Esc closes)
+#   - an orange pulsing FRAME around her whole window while she is "urgent" (the
+#     brain raises it when she has been muted or ignored too long). It is the
+#     in-window twin of a taskbar button turning orange; main.gd also asks the OS
+#     for the real thing (window_request_attention).
 # Remix does not otherwise show text. Everything is square-cornered (pixel art).
 extends Control
 
@@ -24,6 +28,11 @@ var _edit: LineEdit
 var _t := 0.0
 var _theme := Color("#ff5148")
 var _last_typing_ms := -100000
+const URGENT_COLOR := Color("#ff9a1f")   # taskbar-orange, deliberately NOT the face theme
+const URGENT_BORDER := 8.0
+
+var _urgent_on := false
+var _urgent_t := 0.0
 
 
 func _ready() -> void:
@@ -105,6 +114,18 @@ func _restyle_input() -> void:
 	_edit.add_theme_color_override("selection_color", Color(_theme.r, _theme.g, _theme.b, 0.35))
 
 
+## Orange pulsing frame around her window while she needs attention. `reason`
+## is the brain's trigger name ("muted_long", "idle_deep"); the frame has no text.
+func set_urgent(on: bool, _reason: String = "") -> void:
+	_urgent_on = on
+	_urgent_t = 0.0
+	queue_redraw()
+
+
+func urgent_visible() -> bool:
+	return _urgent_on
+
+
 func set_mic(on: bool) -> void:
 	_mic_on = on
 	queue_redraw()
@@ -178,7 +199,9 @@ func _process(delta: float) -> void:
 	_t += delta
 	_notice_left = _fade(_notice, _notice_left, delta)
 	_heard_left = _fade(_heard, _heard_left, delta)
-	if _mic_on:
+	if _urgent_on:
+		_urgent_t += delta
+	if _mic_on or _urgent_on:
 		queue_redraw()
 
 
@@ -193,10 +216,16 @@ func _fade(label: Label, left: float, delta: float) -> float:
 
 
 func _draw() -> void:
+	if _urgent_on:
+		var a := 0.45 + 0.55 * (0.5 + 0.5 * sin(_urgent_t * 4.0))
+		var c := Color(URGENT_COLOR.r, URGENT_COLOR.g, URGENT_COLOR.b, a)
+		# Inset by half the stroke so the whole border stays inside the window.
+		draw_rect(Rect2(Vector2.ONE * URGENT_BORDER * 0.5, size - Vector2.ONE * URGENT_BORDER),
+				c, false, URGENT_BORDER)
 	if not _mic_on:
 		return
 	var pulse := 0.75 + 0.25 * sin(_t * 6.0)
-	var c := Color(MIC_COLOR.r, MIC_COLOR.g, MIC_COLOR.b, pulse)
+	var mc := Color(MIC_COLOR.r, MIC_COLOR.g, MIC_COLOR.b, pulse)
 	var p := Vector2(size.x - 34.0, 34.0)
-	draw_circle(p, 9.0, c)
-	draw_arc(p, 16.0, 0.0, TAU, 32, Color(c.r, c.g, c.b, 0.45), 2.0, true)
+	draw_circle(p, 9.0, mc)
+	draw_arc(p, 16.0, 0.0, TAU, 32, Color(mc.r, mc.g, mc.b, 0.45), 2.0, true)

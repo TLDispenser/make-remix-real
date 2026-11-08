@@ -54,6 +54,30 @@ func _initialize() -> void:
 	main._handle('{"type":"notice","text":"// you are muted //","seconds":2}')
 	check(hud.notice_visible(), "notice shows when asked")
 	check(hud._notice.text == "// you are muted //", "notice text")
+	# urgent: orange frame on her window + a real OS attention request (taskbar flash),
+	# raised/cleared by the brain. (Headless: nothing has focus, so the request goes out.)
+	check(not hud.urgent_visible(), "urgent frame starts off")
+	main.focus_probe = func() -> bool: return true     # you are looking at her
+	var asked_f: int = main.attention_requests
+	main._handle('{"type":"urgent","state":true,"reason":"idle_deep"}')
+	check(hud.urgent_visible(), "urgent frame shows even when she is focused")
+	check(main.attention_requests == asked_f, "no taskbar request while she is the focused window")
+	main._handle('{"type":"urgent","state":false}')
+	main.focus_probe = func() -> bool: return false    # she is in the background
+	var asked0: int = main.attention_requests
+	main._handle('{"type":"urgent","state":true,"reason":"muted_long"}')
+	check(hud.urgent_visible(), "urgent frame shows")
+	check(main.attention_requests == asked0 + 1, "urgent asks the OS for attention (taskbar)")
+	main._tick_attention(10.0)
+	check(main.attention_requests == asked0 + 1, "it does not nag every few seconds")
+	main._tick_attention(main.ATTENTION_REPEAT_S)
+	check(main.attention_requests == asked0 + 2, "it re-asks after the repeat interval while still ignored")
+	main._handle('{"type":"urgent","state":false}')
+	check(not hud.urgent_visible(), "urgent frame clears")
+	main._tick_attention(1000.0)
+	check(main.attention_requests == asked0 + 2, "no more requests once cleared")
+	main._handle('{"type":"urgent","state":false}')
+	check(main.attention_requests == asked0 + 2, "clearing never asks for attention")
 	# what the mic heard shows on the dim top line, and is not the notice
 	main._handle('{"type":"transcript","text":"hello there"}')
 	check(hud.heard_visible() and hud._heard.text == "you: hello there", "transcript shows on the heard line")

@@ -24,6 +24,25 @@ Shapes the wiki showed for recent versions (verify, don't trust):
 
 Find the real title/class if it doesn't match:  `hyprctl clients | grep -iA3 remix`
 
+## "Urgent" = the taskbar button turning orange
+When she has been muted or ignored too long the brain sends `urgent`; Godot then
+(1) pulses an orange frame around her own window and (2) calls
+`DisplayServer.window_request_attention()`, the same request any app makes to flash
+its taskbar entry. On Wayland that is an `xdg-activation-v1` request and **Hyprland
+decides what it means** (verify against the wiki for your version):
+
+- `misc { focus_on_activate = false }` (the default): she is marked **urgent** and
+  nothing moves. What you SEE depends on your bar, e.g. waybar's
+  `hyprland/workspaces` gives the workspace button an `urgent` class you can style
+  orange (`#workspaces button.urgent { background: #ff9a1f; }`).
+- `focus_on_activate = true`: the request **steals focus** to her window. If you
+  want that for other apps but not her, there's no per-app switch I could verify:
+  keep it `false`.
+- She is pinned (on every workspace), so a bar that only flags *other* workspaces
+  may show nothing: the orange frame on her window is the always-visible fallback.
+- Nothing flashes while she is the focused window, and the OS clears the request
+  when you focus her (there is no "cancel" call).
+
 ## Push-to-talk
 Hold-to-talk = two binds on the same key: press starts the mic, **release** stops it
 and transcribes. Both just run `remix/ptt.sh start|stop`, which pokes the brain.

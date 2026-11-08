@@ -30,10 +30,10 @@ does not require it).
 | `perform` | `id`, `audio` (absolute path to PCM WAV), `cues[]`, optional `then` | speak with acting (below) |
 | `stop` | | cancel the running performance (reports `ok:false`) |
 | `mouth` | `level` 0..1 | drive the mouth yourself (streaming TTS you measure); held for 0.25 s |
-| `twitch` | | one bottom-lid twitch now |
+| `twitch` | | one bottom-lid twitch now, on ONE eye (random side) |
 | `listening` | `state: "start"/"stop"` | mic-live marker (pale blue, top-right) while push-to-talk is held |
 | `notice` | `text`, optional `seconds` (4) | her one caption/status line (word-wrapped; muted, volume low, no-voice captions, mic problems) |
-| `urgent` | `state: true/false`, optional `reason` | persistent "urgent" marker on her window; raised when she has been muted or ignored too long (she said a line about it first). Ignored by older face builds (`_: pass`) |
+| `urgent` | `state: true/false`, optional `reason` | she needs attention (muted/ignored too long; she said a line first). Godot shows an orange pulsing frame on her window AND asks the OS for the real taskbar flash (`DisplayServer.window_request_attention`, re-asked every 45 s while still urgent, skipped while she is focused). The OS clears it when you focus her; ignored by older face builds |
 | `transcript` | `text`, optional `seconds` (4) | what the mic heard, on a dim line at the top (`you: ...`) |
 | `theme` | `color: "#rrggbb"` | face color |
 | `vitals`, `event`, `say` | any | passed through as signals; unused by the face (`say` carries her reply text for terminals/logs) |
@@ -78,6 +78,6 @@ mouth, `BottomEyeLid + SmirkMouth` = bottomlid eyes + smirk mouth.) A **pose** i
 named eyes+mouth pair (the original 7: default, anger, smirk, pout, spooked, tired,
 tsun) and mood words map to one (happy -> smirk, bored -> pout, ...; a few map to
 mixed faces: deadpan, skeptical, sheepish, numb). `none` = no mouth unless she makes
-sound. Gaze limits, mouth-widening caps, blink rules and trembling live in
+sound. Gaze limits (eye range x `GAZE_GAIN`), mouth-widening caps, blink rules and trembling live in
 `scripts/face_config.gd`, per eye shape and per mouth shape. The brain never sends
 coordinates; it picks eyes, a mouth and a look and the shapes decide how far things move.

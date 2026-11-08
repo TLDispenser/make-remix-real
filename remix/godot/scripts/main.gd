@@ -29,6 +29,7 @@ const WS_URL := "ws://localhost:8765"
 const PROTOCOL := 2
 const RECONNECT_DELAY := 2.0
 const VOICE_BUS := "Voice"
+const ATTENTION_REPEAT_S := 45.0     # re-ask the OS while she is still being ignored
 const EXTERNAL_LEVEL_HOLD := 0.25   # seconds an external {"type":"mouth"} level stays "live"
 
 ## The window is this fraction of the screen per axis: 0.5 = a quarter of the
@@ -63,6 +64,8 @@ var _perf_last_pos := 0.0
 var _ext_level := 0.0
 var _ext_level_left := 0.0
 var _fps_timer := 0.0
+var _attention_in := -1.0       # >=0: seconds until the next OS attention request (urgent only)
+var attention_requests := 0     # how many times she asked the OS (tests read this)
 
 var log_lines: Array = []   # last few protocol events, for tests/debug
 
@@ -181,10 +184,53 @@ func _process(delta: float) -> void:
 	_tick_context(delta)
 	_tick_performance()
 	_tick_external_level(delta)
+	_tick_attention(delta)
 	_fps_timer -= delta
 	if _fps_timer <= 0.0:
 		_fps_timer = 0.25
 		Engine.max_fps = fps_active if face.is_active() else fps_idle
+
+
+## Urgent = she has been muted/ignored too long. Two cues: the orange frame on her
+## own window (hud), and the REAL taskbar one: ask the OS for attention. On
+## Windows/macOS/X11 her taskbar entry flashes/blinks until you focus her; on
+## Wayland (Hyprland) it goes out as an xdg-activation request and the compositor
+## decides (focus_on_activate=false -> she is marked urgent, shown by your bar).
+## There is no "cancel attention" call: like any app, the OS clears it when you
+## focus her.
+func _set_urgent(on: bool, reason: String) -> void:
+	hud.set_urgent(on, reason)
+	if on:
+		_request_attention()
+		_attention_in = ATTENTION_REPEAT_S
+	else:
+		_attention_in = -1.0
+
+
+## Tests set this to fake focus (headless Godot reports a dummy window as focused).
+var focus_probe: Callable = Callable()
+
+
+func _window_focused() -> bool:
+	if focus_probe.is_valid():
+		return bool(focus_probe.call())
+	return DisplayServer.window_is_focused()
+
+
+func _request_attention() -> void:
+	if _window_focused():
+		return   # you are already looking at her: no taskbar flash for the focused window
+	attention_requests += 1
+	DisplayServer.window_request_attention()
+
+
+func _tick_attention(delta: float) -> void:
+	if _attention_in < 0.0:
+		return
+	_attention_in -= delta
+	if _attention_in <= 0.0:
+		_attention_in = ATTENTION_REPEAT_S
+		_request_attention()
 
 
 func _poll_socket(delta: float) -> void:
@@ -271,6 +317,8 @@ func _handle(raw: String) -> void:
 			var heard := String(d.get("text", "")).strip_edges()
 			if heard != "":
 				hud.show_heard("you: " + heard, float(d.get("seconds", 4.0)))
+		"urgent":
+			_set_urgent(bool(d.get("state", false)), String(d.get("reason", "")))
 		"notice":
 			hud.show_notice(String(d.get("text", "")), float(d.get("seconds", 4.0)))
 		"theme":

@@ -4,6 +4,7 @@ remix/.env
 remix/brain/memory.json
 remix/brain/sandbox/
 remix/brain/brain.log
+hypr-config-edit
 __pycache__/
 *.pyc
 

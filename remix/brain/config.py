@@ -97,6 +97,18 @@ TITLE_ALLOW = _env("TITLE_ALLOW", "")
 #         may read them aloud or caption them. That is the point; you asked.
 TITLES = (_env("TITLES", "off") or "off").strip().lower()
 
+# Surroundings (2026-11-08c): she knows what is AROUND her window, not just
+# what is focused. Hyprland `clients -j` gives every window's app CLASS and
+# geometry; she gets "firefox: to my left, partly behind me" — class names and
+# positions only. Titles of those windows pass only through the same redact()
+# gate as the focused title (REMIX_TITLES / REMIX_TITLE_ALLOW). 0 = off.
+SURROUNDINGS = _env("SURROUNDINGS", "1") == "1"
+SURROUNDINGS_MAX = int(_env("SURROUNDINGS_MAX", "8"))   # nearest N windows
+# How her own window is recognised in `hyprctl clients` (comma list, matched
+# against class OR title, case-insensitive, exact). Godot/Wayland may report
+# class "Remix" or "godot"; the title is "Remix" (your windowrule uses it).
+SELF_MATCH = _env("SELF_MATCH", "remix")
+
 # Unprompted lines (proactive.py). The TRIGGER is local and $0 (never Jev);
 # the WORDS are written fresh by the same $0 provider pool her replies use
 # (speech.generate_proactive_line), grounded + screened + deduped. No
@@ -172,6 +184,19 @@ TTS_BEAT_GAP_S = float(_env("TTS_BEAT_GAP_S", "0.2"))
 # Prosody (6.3): per-beat speed/pitch leaning from the beat's own text —
 # still espeak, NOT an AI voice; 0 disables and the fixed constants return.
 TTS_PROSODY = _env("TTS_PROSODY", "1") == "1"
+# Expressive voice (2026-11-08d): her voice follows the face she makes for each
+# beat (deadpan = near-monotone, smug = sing-song, spooked = fast/high/shaky,
+# tired = slow/low/muffled, ...), plus emphasis (*word* / CAPS), timed pauses,
+# whispered (asides), a synthesized sigh, and a stutter when flustered. All
+# formant synthesis + plain DSP: still NOT an AI voice. 0 = the old fixed voice.
+TTS_EXPRESSIVE = _env("TTS_EXPRESSIVE", "1") == "1"
+# How hard the moods lean (1.0 = as designed, 0.5 = half as dramatic, 1.5 = more).
+TTS_EXPRESSIVENESS = max(0.0, min(2.0, float(_env("TTS_EXPRESSIVENESS", "1.0"))))
+# The numpy DSP layer (tremble / muffle / glitch / breath). 0 = espeak only.
+TTS_DSP = _env("TTS_DSP", "1") == "1"
+# When the machine is genuinely strained (hot / pegged CPU) her voice gets
+# glitchy. Real vitals only; 0 = never.
+TTS_STRAIN = _env("TTS_STRAIN", "1") == "1"
 TTS_DIR = _env(
     "TTS_DIR",
     (os.environ.get("XDG_RUNTIME_DIR", "/tmp") + "/remix-voice"))

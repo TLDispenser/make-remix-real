@@ -1,3 +1,11 @@
+# APPLIED 2026-11-08 — both edits are in the Godot code (face.gd `twitch(side)`;
+# for (2) the text badge below was REPLACED by what was actually asked for: an
+# OS taskbar attention request + an orange frame, see main.gd `_set_urgent`), with tests in
+# engine_test.gd / protocol_test.gd. Kept for the reasoning. One correction to
+# the "overlap" note in (1): both eyes shift together as ONE unit, so their gap
+# never changes and a bigger gaze can't make them cross; the only ceiling is the
+# canvas. See FaceConfig.GAZE_GAIN.
+
 # PROPOSED face edits — Nov 8 criticism round (Godot side is YOURS; the brain
 # side of this round is already in and running. These are ready-to-paste
 # snippets for two things you asked for. Apply or ignore.)

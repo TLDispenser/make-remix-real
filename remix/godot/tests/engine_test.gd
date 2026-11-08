@@ -62,7 +62,7 @@ func _initialize() -> void:
 	#    corner; the shape decides)
 	for e: String in FaceConfig.EYES:
 		face.set_face(e, "default", Vector2(1, 0)); step(150)
-		var lim: Vector2 = FaceConfig.EYES[e]["range"]
+		var lim: Vector2 = FaceConfig.EYES[e]["range"] * FaceConfig.GAZE_GAIN
 		var s: Dictionary = face.snapshot()
 		check(absf(s["eye_off"].x) <= lim.x + 0.01, "eyes %s x within limit" % e)
 		check(absf(s["eye_off"].x) >= lim.x - 1.0, "eyes %s reach their limit" % e)
@@ -149,13 +149,27 @@ func _initialize() -> void:
 	face.set_face("spooked", "smirk"); step(600)
 	check(face._blink_p < 0.0, "spooked eyes stare (no blink in 10 s) even with a smirk")
 
-	# 7) twitch swaps the eye shape briefly, then returns
+	# 7) twitch: ONE eye swaps to the bottom-lid shape briefly, the other keeps her
+	#    expression; then it returns. (A tic, not a blink: random side when unspecified.)
 	var tw_src: String = FaceConfig.EYES[FaceConfig.TWITCH_EYES]["src"]
 	face.set_pose("anger"); step(120)
-	face.twitch(); step(6)
-	check(face._tgt["left_eye"] == shapes[tw_src]["left_eye"], "twitch targets the bottom-lid eyes")
+	face.twitch("left_eye"); step(6)
+	check(face._tgt["left_eye"] == shapes[tw_src]["left_eye"], "twitch targets the bottom-lid eye (left)")
+	check(face._tgt["right_eye"] == shapes["anger"]["right_eye"], "the OTHER eye does not twitch")
 	step(30)
 	check(face._tgt["left_eye"] == shapes["anger"]["left_eye"], "twitch returns to the eyes")
+	face.twitch("right_eye"); step(6)
+	check(face._tgt["right_eye"] == shapes[tw_src]["right_eye"], "twitch can be the right eye")
+	check(face._tgt["left_eye"] == shapes["anger"]["left_eye"], "...and then the left stays put")
+	step(30)
+	var sides := {}
+	for i in 40:
+		face.twitch(); sides[face._twitch_side] = true; step(30)
+	check(sides.size() == 2, "unspecified twitch picks either eye over time")
+	face.set_face("default", "default", Vector2(1, 0)); step(150)
+	check(absf(face.snapshot()["eye_off"].x) > FaceConfig.EYES["default"]["range"].x + 1.0
+			or FaceConfig.GAZE_GAIN <= 1.0, "GAZE_GAIN widens the eye gaze past the bare range")
+	check(face.snapshot()["eye_off"].x + 260.0 < 960.0, "gaze at full gain keeps the eyes on the canvas")
 
 	# 8) names: poses, moods, mixed-mood aliases, unknowns
 	check(FaceConfig.resolve("happy")["eyes"] == "bottomlid" and FaceConfig.resolve("happy")["mouth"] == "smirk", "happy -> smirk pose")

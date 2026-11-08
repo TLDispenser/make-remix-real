@@ -17,7 +17,7 @@ import random
 import re
 import time
 
-from . import config, memory
+from . import awareness, config, memory
 
 # Words that assert knowledge of the user's machine/life she does not have.
 # Only a problem if the USER didn't bring the word up first.
@@ -120,6 +120,11 @@ def facts(vitals_text: str, machine: str, context: dict | None,
     now = time.strftime("%A %H:%M")
     extra = ""
     sees_title = bool(aware and aware.get("title"))
+    around = (aware or {}).get("around") or {}
+    has_around = bool(around.get("self") and (around.get("windows")
+                                              or around.get("elsewhere")))
+    any_title = sees_title or any(w.get("title") for w in
+                                  around.get("windows", []))
     if aware:
         lines = []
         app = aware.get("app")
@@ -135,6 +140,18 @@ def facts(vitals_text: str, machine: str, context: dict | None,
                          'or anything being done in it — when it changes, '
                          'the change just arrives, like a label read '
                          'through a wall.')
+        if has_around:
+            lines.append(
+                "- The other windows around yours (the machine reports each "
+                "one's app NAME and where it sits relative to your window — "
+                "that's all; you can't see inside them):")
+            lines.extend("    · " + x for x in awareness.describe_around(around))
+            lines.append(
+                "  When you name one of these apps your eyes turn toward it "
+                "on their own, so you can say \"that one\", \"over there\", "
+                "\"to my left\" and the human can follow. Use those "
+                "directions exactly as listed; never invent a window that "
+                "isn't listed.")
         idle = aware.get("idle_s")
         if idle is not None:
             lines.append("- The user is actively using the machine."
@@ -164,16 +181,24 @@ def facts(vitals_text: str, machine: str, context: dict | None,
                              "YOU REMEMBER if it's present).")
         if lines:
             extra = "\n" + "\n".join(lines) + "\n"
-    denial = ("the user's screen, other windows, workspaces, processes, "
-              "files, history, camera, or anything they do in the focused "
-              "app beyond its name and title" if sees_title else
-              "the user's screen, tabs, window TITLES, workspaces, "
-              "processes, files, history, camera, or anything they do in "
-              "the focused app")
-    most = ("the focused app and its title, your vitals, and how long the "
-            "keyboard has been quiet" if sees_title else
-            "the app's NAME, your vitals, and how long the keyboard has "
-            "been quiet")
+    if has_around:
+        denial = ("what is INSIDE any window (the user's screen contents, "
+                  "tabs, " + ("" if any_title else "window TITLES, ") +
+                  "processes, files, history, camera, or anything they do "
+                  "in those apps) or any window not on your list")
+        most = ("which apps are open, where their windows sit around you, "
+                "your vitals, and how long the keyboard has been quiet")
+    else:
+        denial = ("the user's screen, other windows, workspaces, processes, "
+                  "files, history, camera, or anything they do in the "
+                  "focused app beyond its name and title" if sees_title else
+                  "the user's screen, tabs, window TITLES, workspaces, "
+                  "processes, files, history, camera, or anything they do in "
+                  "the focused app")
+        most = ("the focused app and its title, your vitals, and how long "
+                "the keyboard has been quiet" if sees_title else
+                "the app's NAME, your vitals, and how long the keyboard has "
+                "been quiet")
     # Her memory rule must MATCH what actually exists, or she'll deny the
     # journal to stay consistent with this text ("it starts with this
     # conversation" while a WHAT YOU REMEMBER block says otherwise).
@@ -279,6 +304,22 @@ def check(reply: str, user_text: str, history_text: str, vitals: dict | None,
         sensed.add(aware["app"].lower())
         sensed.add("app")
         sensed.add("apps")
+    ar = (aware or {}).get("around") or {}
+    if ar.get("self"):
+        # Every window she was told about is fair game, by its own name and
+        # by the category words (browser, terminal, ...) that name it.
+        for w in list(ar.get("windows", [])) + list(ar.get("elsewhere", [])):
+            nm = awareness._name_of(w["app"])
+            sensed.update({nm, w["app"].lower(), nm + "s"})
+            for word, apps in awareness._CATEGORY.items():
+                if nm in apps:
+                    sensed.update({word, word + "s"})
+        sensed.update({"app", "apps", "window", "windows"})
+        if ar.get("elsewhere"):
+            sensed.update({"workspace", "workspaces"})
+        for w in ar.get("windows", []):
+            for tw in re.findall(r"[a-z0-9']+", str(w.get("title") or "").lower()):
+                sensed.add(tw)
     if aware and aware.get("title"):
         # A title she legitimately sees may be quoted word-for-word — even
         # words like "tab" that would otherwise be flagged as invention.

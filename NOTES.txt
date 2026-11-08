@@ -1,3 +1,37 @@
+Remix update 2026-11-08c — surroundings + gesture fix (overwrite same paths)
+
+1) SURROUNDINGS: she now knows the windows around hers (app class + where they
+   sit relative to HER window: "to my left", "above me", "behind me", other
+   workspace/screen). Prompt + grounding widened to match; titles still gated by
+   REMIX_TITLES per window. config: REMIX_SURROUNDINGS / _MAX / REMIX_SELF_MATCH.
+2) GESTURING: gaze was measured from screen center and then overwritten by the
+   perform cues. Now measured from her window, and set PER BEAT (names a window
+   -> eyes turn to it). Works for any visible window, not just the focused one.
+3) Focus on her own window no longer replaces "the focused app".
+4) GODOT (permission granted): single-eye twitch (random side), urgent = real OS
+   taskbar attention (DisplayServer.window_request_attention, 45 s re-ask,
+   skipped when focused) + orange pulsing frame; see godot/tools/hyprland-setup.md
+   (focus_on_activate=true would STEAL focus), FaceConfig.GAZE_GAIN=1.6 so aimed gazes
+   are visible. Tests updated/added; full Godot 4.7 headless suite ALL GREEN,
+   new assertions mutation-checked.
+   Godot files: remix/godot/scripts/{face,face_config,hud,main}.gd
+                remix/godot/tests/{engine_test,protocol_test}.gd
+                remix/godot/tools/hyprland-setup.md
+                remix/godot/{PROTOCOL.md,PROPOSED_face_edits.md}
+5) EXPRESSIVE VOICE (still espeak, non-AI): per-beat mood from the face (intonation
+   RANGE was the missing lever), emphasis, pauses, whispered (asides), *sigh*,
+   stutter, strain glitch from real vitals. New: remix/brain/vocal_fx.py,
+   remix/brain/tests/test_voice.py (36 tests, mutation-checked). Changed: tts.py,
+   config.py, main.py (voice now synthesized after the acting plan, ~45 ms).
+   REMIX_TTS_EXPRESSIVE=0 restores the old voice exactly. Demo: remix-voice-demo.wav
+6) jev.py: `callable | None` annotation made py3.12-safe.
+   Files: remix/brain/{awareness,config,grounding,main,jev}.py
+          remix/brain/tests/{test_polish,test_surroundings}.py
+          remix/README.md remix/.env.example
+   139 offline tests green.
+
+--- previous notes ---
+
 Remix update 2026-11-08b — supersedes the earlier zip (has everything)
 
 1) GENERATED CHATTER (no more pre-written pools)

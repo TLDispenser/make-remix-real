@@ -47,55 +47,289 @@ _state = {
     "app_since": None,    # monotonic time the current app took focus
     "up_s": 0.0,          # brain session age
     "at": 0.0,            # monotonic time of this snapshot
+    "around": None,       # surroundings: {self, windows, elsewhere}
 }
 _last_cursor = None
 _last_app = None
 _active_at = _started      # last observed user activity (cursor or window)
 _quiet_since = None        # when audio turned quiet (for muted_s)
-_screen_wh = None          # [w, h] of the primary output (cached)
+_monitors: list = []        # cached `hyprctl monitors -j`
+_monitors_at = 0.0         # monotonic time of that cache
 
 
-def gaze_toward() -> list | None:
-    """A look [x, y] aimed at the focused window's center (the 5 gesture:
-    she can gesture toward the thing on screen she's commenting on). Public
-    geometry only — never the screen contents. None when unknown/offline."""
-    at = _state.get("win_at")
-    size = _state.get("win_size")
-    if not at or not size or len(at) != 2 or len(size) != 2:
-        return None
-    if _screen_wh is None:
-        _read_screen()
-    if not _screen_wh:
-        return None
-    sw, sh = _screen_wh
-    fx = at[0] + size[0] / 2.0
-    fy = at[1] + size[1] / 2.0
-    # She fills nearly the whole screen (her window is her world), so screen
-    # center is "straight ahead": offset = direction to look at.
-    dx = (fx - sw / 2.0) / (sw / 2.0)
-    dy = (fy - sh / 2.0) / (sh / 2.0)   # +y = down = compositor +y = look down
-    out = [max(-0.85, min(0.85, round(dx, 2))),
-           max(-0.85, min(0.85, round(dy, 2)))]
-    return out if abs(out[0]) + abs(out[1]) > 0.06 else None
+# ------------------------------------------------------------ surroundings
+#
+# She is a window on a desktop full of other windows. `hyprctl clients -j`
+# tells us each window's app CLASS and geometry (public compositor data), so
+# she can know "firefox is to my left, partly behind me" and her eyes can turn
+# toward it. Contents are never read: class names + rectangles, and a title
+# only when redact() lets that title through.
+
+import math
+
+_ODD_TRANSFORMS = {1, 3, 5, 7}     # rotated outputs swap width/height
+_CATEGORY = {                      # friendly words -> app classes she may mean
+    "browser": {"firefox", "chromium", "chrome", "google-chrome", "brave",
+                "brave-browser", "zen", "librewolf", "vivaldi", "floorp",
+                "qutebrowser", "epiphany", "microsoft-edge"},
+    "terminal": {"kitty", "alacritty", "foot", "footclient", "wezterm",
+                 "konsole", "ghostty", "gnome-terminal", "xterm", "st",
+                 "terminator", "tilix"},
+    "editor": {"code", "code-oss", "codium", "vscodium", "zed", "kate",
+               "gedit", "emacs", "sublime_text", "neovide", "obsidian"},
+    "music": {"spotify", "strawberry", "rhythmbox", "amberol", "lollypop",
+              "cider", "deadbeef"},
+    "chat": {"discord", "vesktop", "webcord", "telegram", "telegramdesktop",
+             "signal", "element", "slack", "thunderbird"},
+    "game": {"steam", "lutris", "heroic", "prismlauncher", "minecraft"},
+}
 
 
-def _read_screen() -> None:
-    """One `hyprctl monitors -j`; take the first monitor's width/height."""
-    global _screen_wh
-    import json as _json
-    raw = _hyprctl(["monitors", "-j"]) or ""
-    if not raw.startswith("[") and not raw.startswith("{"):
-        return
+def _name_of(app_class: str) -> str:
+    """'org.mozilla.firefox' -> 'firefox'. The short name she'd say aloud."""
+    c = (app_class or "").strip().lower()
+    return c.rsplit(".", 1)[-1] if "." in c else c
+
+
+def _self_names() -> set:
+    return {x.strip().lower() for x in (config.SELF_MATCH or "").split(",")
+            if x.strip()}
+
+
+def is_self(app_class: str | None, title: str | None = None) -> bool:
+    """Is this hyprctl client HER OWN window? (class or title, exact)."""
+    names = _self_names()
+    return ((app_class or "").strip().lower() in names
+            or (title or "").strip().lower() in names)
+
+
+def parse_monitors_json(text: str) -> list:
+    """`hyprctl monitors -j` -> [{id, name, x, y, w, h, ws, focused}] in LOGICAL
+    (layout) pixels: width/height are physical, so divide by scale, and a
+    rotated output swaps them. Window `at`/`size` are already logical."""
     try:
-        data = _json.loads(raw)
-        mons = data if isinstance(data, list) else [data]
-        for m in mons:
-            w, h = m.get("width"), m.get("height")
-            if w and h:
-                _screen_wh = [int(w), int(h)]
-                return
+        data = json.loads((text or "").strip() or "[]")
     except ValueError:
-        pass
+        return []
+    out = []
+    for m in (data if isinstance(data, list) else [data]):
+        try:
+            w, h = float(m["width"]), float(m["height"])
+            sc = float(m.get("scale") or 1.0) or 1.0
+            if int(m.get("transform") or 0) in _ODD_TRANSFORMS:
+                w, h = h, w
+            out.append({
+                "id": m.get("id"), "name": m.get("name"),
+                "x": float(m.get("x") or 0), "y": float(m.get("y") or 0),
+                "w": w / sc, "h": h / sc,
+                "ws": (m.get("activeWorkspace") or {}).get("id"),
+                "focused": bool(m.get("focused")),
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def parse_clients_json(text: str) -> list:
+    """`hyprctl clients -j` -> [{app, title(raw), x, y, w, h, ws, ws_name,
+    monitor, floating, pinned, focused, fullscreen}] for mapped, visible-ish
+    windows. Titles stay RAW here; build_around() runs them through redact()."""
+    try:
+        data = json.loads((text or "").strip() or "[]")
+    except ValueError:
+        return []
+    out = []
+    for c in (data if isinstance(data, list) else []):
+        try:
+            if not c.get("mapped", True) or c.get("hidden"):
+                continue
+            app = (c.get("class") or c.get("initialClass") or "").strip().lower()
+            at, size = c.get("at") or [], c.get("size") or []
+            if not app or len(at) != 2 or len(size) != 2:
+                continue
+            ws = c.get("workspace") or {}
+            out.append({
+                "app": app, "title": c.get("title") or "",
+                "x": float(at[0]), "y": float(at[1]),
+                "w": float(size[0]), "h": float(size[1]),
+                "ws": ws.get("id"), "ws_name": ws.get("name"),
+                "monitor": c.get("monitor"),
+                "floating": bool(c.get("floating")),
+                "pinned": bool(c.get("pinned")),
+                "focused": c.get("focusHistoryID") == 0,
+                "fullscreen": int(c.get("fullscreen") or 0) > 0,
+            })
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _overlap(a: dict, b: dict) -> float:
+    """Fraction of rect b that rect a covers (0..1)."""
+    ix = max(0.0, min(a["x"] + a["w"], b["x"] + b["w"]) - max(a["x"], b["x"]))
+    iy = max(0.0, min(a["y"] + a["h"], b["y"] + b["h"]) - max(a["y"], b["y"]))
+    area = max(1.0, b["w"] * b["h"])
+    return min(1.0, (ix * iy) / area)
+
+
+def _gap(a: dict, b: dict) -> float:
+    """Pixels of empty space between two rects (0 when touching/overlapping)."""
+    dx = max(0.0, max(a["x"], b["x"]) - min(a["x"] + a["w"], b["x"] + b["w"]))
+    dy = max(0.0, max(a["y"], b["y"]) - min(a["y"] + a["h"], b["y"] + b["h"]))
+    return math.hypot(dx, dy)
+
+
+_SECTORS = [  # angle (deg, 0 = right, 90 = DOWN since screen y grows down)
+    "to my right", "down and to my right", "below me", "down and to my left",
+    "to my left", "up and to my left", "above me", "up and to my right"]
+
+
+def _direction(dx: float, dy: float) -> str:
+    ang = math.degrees(math.atan2(dy, dx)) % 360.0
+    return _SECTORS[int(((ang + 22.5) % 360.0) // 45.0)]
+
+
+def look_vector(dx: float, dy: float, covered: float = 0.0) -> list | None:
+    """Gaze [x, y] (-1..1, +y = down) for a target at offset (dx, dy) from her
+    center. Direction only — her eyes can't reach, they point. A window mostly
+    under her is a downward glance. None when there's no direction to give."""
+    if covered >= 0.6 or math.hypot(dx, dy) < 8.0:
+        return [0.0, 0.45] if covered >= 0.6 else None
+    n = math.hypot(dx, dy)
+    return [round(0.85 * dx / n, 2), round(0.85 * dy / n, 2)]
+
+
+def build_around(clients: list, monitors: list, redactor=None,
+                 max_n: int = 8) -> dict:
+    """Pure: raw clients + monitors -> {self, windows, elsewhere}. `redactor`
+    is redact() — the SAME privacy gate the focused title goes through.
+    windows   = other windows on HER workspace+monitor (position known), nearest
+                first; each {app, dir, near, covered, size, focused, look,
+                [title]}
+    elsewhere = [{app, where}] — other workspaces / screens (no position)."""
+    me = next((c for c in clients if is_self(c["app"], c["title"])), None)
+    if me is None:
+        return {"self": None, "windows": [], "elsewhere": []}
+    mon = next((m for m in monitors if m["id"] == me["monitor"]), None)
+    area = (mon["w"] * mon["h"]) if mon else max(1.0, me["w"] * me["h"] * 4)
+    cx, cy = me["x"] + me["w"] / 2.0, me["y"] + me["h"] / 2.0
+    here, away = [], []
+    for c in clients:
+        if c is me or is_self(c["app"], c["title"]):
+            continue
+        if c["monitor"] == me["monitor"] and c["ws"] == me["ws"]:
+            dx, dy = c["x"] + c["w"] / 2.0 - cx, c["y"] + c["h"] / 2.0 - cy
+            # covered = how much of IT she hides; under = how much of HER sits
+            # on top of it (a big window behind her). Either way: "behind me".
+            cov = max(_overlap(me, c), _overlap(c, me))
+            gap = _gap(me, c)
+            ref = max(me["w"], me["h"])
+            w = {
+                "app": c["app"], "dir": _direction(dx, dy),
+                "near": ("right beside me" if gap < ref * 0.15 else
+                         "close" if gap < ref * 0.9 else "across the screen"),
+                "covered": round(cov, 2),
+                "size": ("huge" if c["w"] * c["h"] > area * 0.5 else
+                         "small" if c["w"] * c["h"] < area * 0.1 else "mid-sized"),
+                "focused": c["focused"],
+                "look": look_vector(dx, dy, cov),
+                "_dist": math.hypot(dx, dy),
+            }
+            t = redactor(c["app"], c["title"]) if redactor else None
+            if t:
+                w["title"] = t
+            here.append(w)
+        else:
+            if c["monitor"] != me["monitor"]:
+                where = "on the other screen"
+            elif (c["ws"] or 0) < 0:
+                where = "in the scratchpad"
+            else:
+                where = f"on workspace {c['ws_name'] or c['ws']}"
+            away.append({"app": c["app"], "where": where})
+    here.sort(key=lambda w: (not w["focused"], w["_dist"]))
+    for w in here:
+        w.pop("_dist", None)
+    seen, uniq = set(), []
+    for a in away:                       # one line per app+place
+        k = (a["app"], a["where"])
+        if k not in seen:
+            seen.add(k)
+            uniq.append(a)
+    return {"self": {"x": me["x"], "y": me["y"], "w": me["w"], "h": me["h"],
+                     "focused": me["focused"], "monitors": len(monitors)},
+            "windows": here[:max(0, max_n)], "elsewhere": uniq[:max(0, max_n)]}
+
+
+def around() -> dict:
+    """Her latest surroundings ({self, windows, elsewhere}); empty when unknown."""
+    return _state.get("around") or {"self": None, "windows": [], "elsewhere": []}
+
+
+def find_mentioned(text: str) -> dict | None:
+    """The visible window (on her screen) that `text` is talking about: a
+    window's app name, or a category word (browser/terminal/editor/music/
+    chat/game) that matches an app that's actually there. First mention in
+    the text wins; among duplicates, the focused/nearest. None if nothing."""
+    low = (text or "").lower()
+    if not low:
+        return None
+    best = None                          # (position in text, window)
+    for w in around().get("windows", []):
+        names = {_name_of(w["app"])}
+        for word, apps in _CATEGORY.items():
+            if _name_of(w["app"]) in apps:
+                names.add(word)
+        for n in names:
+            if len(n) < 3:
+                continue
+            m = re.search(r"(?<![a-z0-9])" + re.escape(n) + r"s?(?![a-z0-9])", low)
+            if m and (best is None or m.start() < best[0]):
+                best = (m.start(), w)
+    return best[1] if best else None
+
+
+def look_for_text(text: str) -> list | None:
+    """Gaze toward whatever window `text` names — per beat, so her eyes follow
+    her sentence. None when it names nothing she can point at."""
+    w = find_mentioned(text)
+    return list(w["look"]) if w and w.get("look") else None
+
+
+def gaze_toward(app: str | None = None) -> list | None:
+    """Gaze at the focused window (or the one named `app`), measured from HER
+    window — not from the screen center (she is a floating window, not the
+    whole screen). None when it can't be known (not Hyprland, she isn't found,
+    she's on top of it, no such window)."""
+    ws = around().get("windows", [])
+    want = (app or "").lower()
+    for w in ws:
+        if (want and _name_of(w["app"]) == _name_of(want)) or \
+                (not want and w["focused"]):
+            return list(w["look"]) if w.get("look") else None
+    return None
+
+
+def describe_around(a: dict | None = None) -> list:
+    """Plain-English lines for the system prompt and /aware (already redacted)."""
+    a = a if a is not None else around()
+    if not a.get("self"):
+        return []
+    lines = []
+    for w in a.get("windows", []):
+        bits = [w["dir"], w["near"]]
+        if w["covered"] >= 0.6:
+            bits = ["right behind me (I'm sitting on top of it)"]
+        elif w["covered"] >= 0.1:
+            bits.append("partly behind me")
+        bits.append(w["size"])
+        s = f'{w["app"]}{" (focused)" if w["focused"] else ""}: ' + ", ".join(bits)
+        if w.get("title"):
+            s += f' — title "{w["title"]}"'
+        lines.append(s)
+    for e in a.get("elsewhere", []):
+        lines.append(f'{e["app"]}: {e["where"]} (out of sight)')
+    return lines
 
 
 # ------------------------------------------------------------- redaction
@@ -231,14 +465,17 @@ def _hyprctl(args: list) -> str | None:
 
 def _observe_window(now: float) -> None:
     """Poll the focused window; fold it into the activity/idle tracking."""
-    global _last_app, _active_at, _state, _screen_wh
+    global _last_app, _active_at, _state
     parsed = parse_window_json(_hyprctl(["activewindow", "-j"]) or "")
     if parsed is None:
         # No readable window (desktop, locked, non-Hyprland): keep last app,
-        # but never keep a stale title or stale geometry.
+        # but never keep a stale title.
         _state.pop("title", None)
-        _state.pop("win_at", None)
-        _state.pop("win_size", None)
+        return
+    if is_self(parsed["app"], parsed["title"]):
+        # The human is typing AT her. That's activity — but she isn't "the
+        # app in focus": keep the last real app so she can still talk about it.
+        _active_at = now
         return
     app = parsed["app"]
     if app != _last_app:
@@ -247,15 +484,29 @@ def _observe_window(now: float) -> None:
         _state["app_since"] = now
     _state["app"] = app
     _state["fullscreen"] = parsed["fullscreen"]
-    if parsed.get("at"):
-        _state["win_at"] = parsed["at"]
-    if parsed.get("size"):
-        _state["win_size"] = parsed["size"]
     title = redact(app, parsed["title"])   # THE gate; off mode -> always None
     if title:
         _state["title"] = title
     else:
         _state.pop("title", None)
+
+
+def _observe_around(now: float) -> None:
+    """Poll every window + (cached) monitors -> her surroundings."""
+    global _monitors, _monitors_at
+    if not config.SURROUNDINGS:
+        _state["around"] = None
+        return
+    if not _monitors or now - _monitors_at > 30.0:
+        mons = parse_monitors_json(_hyprctl(["monitors", "-j"]) or "")
+        if mons:
+            _monitors, _monitors_at = mons, now
+    raw = _hyprctl(["clients", "-j"])
+    if raw is None:
+        return                         # not Hyprland / hiccup: keep last view
+    _state["around"] = build_around(parse_clients_json(raw), _monitors,
+                                    redactor=redact,
+                                    max_n=config.SURROUNDINGS_MAX)
 
 
 def _observe_cursor(now: float) -> None:
@@ -273,6 +524,7 @@ async def refresh() -> dict:
     global _quiet_since, _state
     now = time.monotonic()
     await asyncio.to_thread(_observe_window, now)
+    await asyncio.to_thread(_observe_around, now)
     await asyncio.to_thread(_observe_cursor, now)
     plugged = await asyncio.to_thread(read_plugged)
     if plugged is not None:
@@ -322,7 +574,9 @@ def describe(aware: dict | None = None) -> str:
                 else "active")
     bits.append({True: "AC", False: "battery", None: "power?"}[s.get("plugged")])
     bits.append("quiet" if s.get("muted") else "audible")
-    return " ".join(bits)
+    head = " ".join(bits)
+    extra = describe_around(s.get("around"))
+    return head + ("".join(f"\n  · {x}" for x in extra) if extra else "")
 
 
 # --------------------------------------------------------------- test hooks
@@ -333,13 +587,12 @@ def seed_for_test(**kw) -> None:
 
 
 def reset_for_test() -> None:
-    global _last_cursor, _last_app, _active_at, _quiet_since
-    _state.update(app=None, fullscreen=False, idle_s=None, plugged=None,
+    global _last_cursor, _last_app, _active_at, _quiet_since, _monitors, _monitors_at
+    _monitors, _monitors_at = [], 0.0
+    _state.update(around=None, app=None, fullscreen=False, idle_s=None, plugged=None,
                   muted=None, muted_s=None, app_since=None,
                   up_s=0.0, at=0.0)
     _state.pop("title", None)
-    _state.pop("win_at", None)
-    _state.pop("win_size", None)
     _last_cursor = None
     _last_app = None
     _active_at = time.monotonic()

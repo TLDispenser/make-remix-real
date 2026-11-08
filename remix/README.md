@@ -18,7 +18,7 @@ verified against live docs, and the user's constraints locked in on 2026-11-05:
 | 5 Push-to-talk (local STT) | ✅ done — faster-whisper, hold-to-talk, hard 15 s mic cap, see "Voice" below |
 | 6 Awareness | ✅ done — Hyprland app sensing (names only, titles redacted), idle/power/audio senses, unprompted lines from local text pools (DND + rate limits) |
 | 7 Voice out + polish | ✅ voice done: **espeak-ng** (not an AI voice), lip-sync from the audio, per-beat faces timed to it. Tray/settings still open |
-| 8 Criticism round (2026-11-08) | ✅ mostly done — persistent **memory sandbox** (`brain/sandbox/`, optional GitHub mirror), time sense (uptime/awaken/dated journal), temper knob + slight random personality drift, softer sides (dry ≠ cruel), honest stats everywhere, **ambient thoughts**, **urgent marker** (6.4), motion boost + pacing, per-beat espeak prosody. Godot-side snippets (single-eye twitch, urgent badge) drafted in `godot/PROPOSED_face_edits.md` for the user to apply |
+| 8 Criticism round (2026-11-08) | ✅ mostly done — persistent **memory sandbox** (`brain/sandbox/`, optional GitHub mirror), time sense (uptime/awaken/dated journal), temper knob + slight random personality drift, softer sides (dry ≠ cruel), honest stats everywhere, **ambient thoughts**, **urgent marker** (6.4), motion boost + pacing, per-beat espeak prosody. Godot-side single-eye twitch + urgent (OS taskbar attention request + orange frame) now applied (2026-11-08c, see `godot/PROPOSED_face_edits.md`) |
 
 Loose-ends pass (2026-11-08): `CORE_*` settings renamed to `REMIX_*` (old names
 still read — see `.env.example`), on-screen text rule enforced (flavor notices
@@ -56,6 +56,39 @@ CLOUD LLM (z.ai free endpoint) and she may read them aloud or caption them —
 raw titles often carry tokens, which is why scrub is the recommended opt-in.
 Grounding widens to match: she can quote a visible title without the screen
 flagging it as invention. Default stays `off`; `/aware` shows what she sees.
+
+**Surroundings (2026-11-08c) — what's AROUND her.** One extra `hyprctl clients -j`
+per poll (+ `monitors -j`, cached 30 s) gives her every window's app **class** and
+rectangle. She finds her own window (class or title matches `REMIX_SELF_MATCH`,
+default `remix`) and works out where everything else sits *relative to her*:
+
+```
+firefox (focused): to my left, close, huge
+spotify: right behind me (I'm sitting on top of it), small
+kitty: above me, close, mid-sized
+discord: on workspace 3 (out of sight)
+```
+
+That block goes into her "WHAT YOU CAN SEE" prompt, and the grounding screen allows
+exactly those app names (and "browser"/"terminal"/... for apps that are really
+there) — anything not listed is still flagged as invention. Other workspaces and
+other monitors are named but never pointed at (no position). It is names +
+geometry only: no contents, and titles only through the same `REMIX_TITLES` /
+`REMIX_TITLE_ALLOW` gate as before, applied per window. `REMIX_SURROUNDINGS=0`
+turns the whole thing off; `REMIX_SURROUNDINGS_MAX` (8) caps the list.
+`/aware` prints it.
+
+**Gesturing (fixed).** Two bugs, both mine: (1) the gaze was measured from the
+*screen center*, as if she filled the screen — she's a floating quarter-screen
+window, so it's now measured from *her own window* to the target; (2) the gaze
+went out as a single `pose` message that the spoken `perform`'s per-beat cues
+overwrote the moment her voice started. Now every beat carries its own look: if a
+beat names a window she can see ("firefox", "that terminal"), her eyes turn toward
+it for that beat; otherwise the usual ambient drift. It also works for any visible
+window the human names, not just the focused one. Limit: she only has eyes, so
+this is a gaze direction, not a pointing arm. Her eyes now travel `GAZE_GAIN` (1.6) x each shape's range
+(`face_config.gd`) so an aimed gaze actually reads; set it to 1.0 for the old
+subtlety.
 
 **Unprompted lines** (`brain/proactive.py` + `speech.generate_proactive_line`,
 the "random speech triggers"): the **trigger is a local reflex** — $0, no
@@ -151,6 +184,37 @@ never written to disk. What it heard shows on a dim line at the top of her scree
 short presses, silence and whisper's silence-hallucinations ("Thank you.") are discarded.
 
 **You type:** focus her window, press **Enter** (or `/`), type, Enter sends, Esc closes.
+
+
+**Expressive voice (2026-11-08d).** Still espeak-ng + plain arithmetic, **no AI
+voice**. Measured on espeak 1.51: speed and pitch only *shift* a voice (pitch
+spread stayed ~35 Hz whatever was set); what makes it sound flat or alive is
+**intonation range** (SSML `<prosody range>`: 0 % = dead monotone, 100 % = default,
+200 % = animated). That was the missing lever. Now each beat's voice follows the face
+she's making for it (`tts.py` `_EYE_VOICE` / `_MOUTH_VOICE`, edit freely):
+
+| face (eyes) | what it sounds like |
+|---|---|
+| default | unchanged |
+| anger | faster, lower, louder, livelier |
+| bottomlid (smug) | slower, a bit higher, sing-song |
+| really (deadpan; + pout mouth = sulky) | slow, low, nearly monotone |
+| spooked | fastest, high, wide, with a ~7 Hz tremble |
+| tired | slow, low, quiet, muffled, longer pauses |
+| tsun (flustered) | fast, high, wide, first word sometimes repeats (`i-it's`) |
+
+Also: `*word*` and ALL-CAPS get emphasis; `...` is a real pause and ` - ` a short one;
+a whole beat in `(parentheses)` is **whispered**; `*sigh*` / "sigh" is a synthesized
+breath (filtered noise) instead of the word; `!` pushes, `?` lifts. And when the real
+machine is strained (temp 70→90 °C or CPU 85→100 %, from the same vitals as her
+face) her voice gets glitchy: nothing below ~35 % strain. The DSP lives in
+`brain/vocal_fx.py` (tremble / muffle / crush / sigh; pure numpy, same length so
+perform cues stay valid). The voice is synthesized *after* the acting plan now
+(~45 ms for a 4-beat reply, so no visible latency). Knobs: `REMIX_TTS_EXPRESSIVE=0`
+restores the exact old voice; `REMIX_TTS_EXPRESSIVENESS` (1.0; 0.5 = half as
+dramatic, 2.0 = double); `REMIX_TTS_DSP=0` espeak-only; `REMIX_TTS_STRAIN=0`.
+The LLM isn't told about `*word*`/`(aside)`/`*sigh*` yet: she'll only use them if her
+persona prompt invites it (one line in `speech.py`'s system prompt would).
 
 ## Run it
 

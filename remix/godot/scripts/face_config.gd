@@ -12,7 +12,8 @@
 #
 # EYES entries
 #   src          which drawing in face_shapes.gd supplies this eye shape
-#   range        max offset of the whole EYE unit (x = side to side, y = up/down)
+#   range        max offset of the whole EYE unit (x = side to side, y = up/down),
+#                before GAZE_GAIN (below) scales it
 #   blink        does this eye shape blink at all
 #   blink_gap    multiplier on the time between blinks (<1 = more often)
 #   blink_speed  multiplier on blink speed (<1 = slow, heavy blink)
@@ -49,6 +50,15 @@ const TALK_MOUTH := "default"   # which straight mouth to talk with (any MOUTHS 
 const TALK_ON_LEVEL := 0.10     # smoothed sound level (0..1) that counts as "talking"
 const TALK_RELEASE := 0.35      # seconds of quiet before the expression mouth returns
 								# (so the gaps between words don't flap the shape)
+
+# GAZE. `look` (-1..1) times a shape's `range` is how far the eye unit may move.
+# These ranges are small against the 1920x1080 canvas, so a gaze AIMED at a
+# window on her desktop (the brain turns her eyes toward whatever she names)
+# barely read at 1.0. GAZE_GAIN multiplies the EYE range only (the mouth keeps
+# its own, so the face doesn't smear). Both eyes shift together as one unit, so
+# the gap between them never changes: the only ceiling is the canvas itself.
+# 1.0 = the old behavior. Per-shape limits (`range`) stay the thing to hand-tune.
+const GAZE_GAIN := 1.6
 
 const EYES := {
 	"default": {"src": "default", "range": Vector2(70, 40), "blink": true,

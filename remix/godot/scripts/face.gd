@@ -74,6 +74,7 @@ var _blink_in := 3.0
 var _blink_p := -1.0
 var _twitch_in := 12.0
 var _twitch_left := 0.0
+var _twitch_side := ""       # which eye is twitching: "left_eye" | "right_eye" (one eye, like a tic)
 
 var _level_raw := 0.0
 var level := 0.0           # smoothed 0..1 (drives mouth opening)
@@ -170,7 +171,10 @@ func set_speaking(on: bool) -> void:
 	_scalar_target("mouth", 1.0 if (_mcfg()["silent"] or on) else 0.0)
 
 
-func twitch() -> void:
+## One eye's bottom lid flicks (a tic, not a blink). `side` = "left_eye" or
+## "right_eye"; "" picks one at random each time.
+func twitch(side: String = "") -> void:
+	_twitch_side = side if side in EYE_KEYS else String(EYE_KEYS[randi() % 2])
 	_twitch_left = twitch_seconds
 	_retarget(false)
 
@@ -251,10 +255,11 @@ func _scalar_target(key: String, v: float) -> void:
 func _retarget(eyes_changed: bool) -> void:
 	var eye_shape: Dictionary = _shapes[_ecfg()["src"]]
 	var mouth_shape: Dictionary = _shapes[_mcfg()["src"]]
-	var eye_src: Dictionary = _shapes[FaceConfig.EYES[FaceConfig.TWITCH_EYES]["src"]] \
-			if _twitch_left > 0.0 else eye_shape
+	var twitch_shape: Dictionary = _shapes[FaceConfig.EYES[FaceConfig.TWITCH_EYES]["src"]]
 	for key in EYE_KEYS:
-		_tgt[key] = PackedVector2Array(eye_src[key])
+		# Only the twitching eye takes the bottom-lid shape; the other keeps her expression.
+		var src: Dictionary = twitch_shape if (_twitch_left > 0.0 and key == _twitch_side) else eye_shape
+		_tgt[key] = PackedVector2Array(src[key])
 	_tgt["mouth"] = _mouth_target()
 
 	var outlined: bool = float(eye_shape["eye_outline"]) > 0.0
@@ -359,7 +364,7 @@ func _process(delta: float) -> void:
 
 	# Unit offsets: gaze scaled by this pose's limits (mouth moves less).
 	# Critically damped on purpose, so a unit can never overshoot its limit.
-	var eye_t: Vector2 = Vector2(look.x * ecfg["range"].x, look.y * ecfg["range"].y)
+	var eye_t: Vector2 = Vector2(look.x * ecfg["range"].x, look.y * ecfg["range"].y) * FaceConfig.GAZE_GAIN
 	var mouth_t: Vector2 = Vector2(look.x * mcfg["range"].x, look.y * mcfg["range"].y)
 	_eye_off_v += ((eye_t - _eye_off) * 120.0 - _eye_off_v * 22.0) * delta
 	_eye_off += _eye_off_v * delta

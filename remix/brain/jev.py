@@ -82,7 +82,7 @@ class ActPlan(NamedTuple):
 class JevBrain:
     def __init__(self, rng: random.Random | None = None,
                  seed_faces: list | None = None,
-                 variety_hook: callable | None = None) -> None:
+                 variety_hook: "callable | None" = None) -> None:
         """seed_faces: 'eyes/mouth' strings from the persisted journal
         (memory). variety_hook: called with str(face) on every shown face so
         the journal remembers her recent looks across restarts."""

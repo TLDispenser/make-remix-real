@@ -5,7 +5,7 @@
 #   * jev: variety seeded from the journal + write-through hook
 #   * speech: temper drift line + persisted dedup merge
 #   * tts: per-beat prosody (still espeak, fixed ranges)
-#   * awareness: gaze_toward geometry
+#   * awareness: gaze_toward (from HER window; see test_surroundings.py)
 import asyncio
 import os
 import sys
@@ -191,26 +191,33 @@ class ProsodyTests(unittest.TestCase):
 
 
 class GazeTowardTests(unittest.TestCase):
+    """gaze_toward measures from HER window (she floats; she is not the screen)."""
     def setUp(self):
         awareness.reset_for_test()
-        self._saved = awareness._screen_wh
-        awareness._screen_wh = [1920, 1080]
 
     def tearDown(self):
-        awareness._screen_wh = self._saved
         awareness.reset_for_test()
 
-    def test_right_side_window_aims_right(self):
-        awareness.seed_for_test(win_at=[1400, 200], win_size=[400, 300])
-        look = awareness.gaze_toward()
-        self.assertEqual(2, len(look))     # an [x, y] look vector
-        self.assertGreater(look[0], 0.5)   # right of center
+    def _seed(self, **win):
+        w = {"app": "firefox", "dir": "to my right", "near": "close",
+             "covered": 0.0, "size": "mid-sized", "focused": True,
+             "look": [0.85, 0.0]}
+        w.update(win)
+        awareness.seed_for_test(around={"self": {"x": 0, "y": 0, "w": 480,
+                                                 "h": 270}, "windows": [w],
+                                        "elsewhere": []})
 
-    def test_centered_window_returns_none(self):
-        awareness.seed_for_test(win_at=[860, 440], win_size=[200, 200])
+    def test_focused_window_to_the_right_aims_right(self):
+        self._seed()
+        look = awareness.gaze_toward()
+        self.assertEqual(2, len(look))
+        self.assertGreater(look[0], 0.5)
+
+    def test_no_direction_returns_none(self):
+        self._seed(look=None)
         self.assertIsNone(awareness.gaze_toward())
 
-    def test_no_geometry_returns_none(self):
+    def test_no_surroundings_returns_none(self):
         self.assertIsNone(awareness.gaze_toward())
 
 
