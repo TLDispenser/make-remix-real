@@ -47,10 +47,14 @@ VITAL_WORDS = {
 }
 
 DEFLECTIONS = [
-    "can't see that, but tell me what you're stuck on and I'll work with what we've got.",
-    "no idea. I can't see that — spell it out for me.",
-    "how would I know, I only see my own vitals. What are you actually trying to do?",
-    "ugh. I can't see that, I just live here. Ask me differently.",
+    "can't see that — I get app names, not contents. Tell me what you're "
+    "stuck on and I'll work with what we've got.",
+    "no idea. I don't see screens; word gets to me about which app is "
+    "open, that's it. Spell it out.",
+    "how would I know, the room's dark from where I sit. What are you "
+    "actually trying to do?",
+    "ugh. Blind over here, except for the app-name label and my own "
+    "vitals. Ask me differently.",
 ]
 
 _ONES = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -126,10 +130,11 @@ def facts(vitals_text: str, machine: str, context: dict | None,
                          'in to sharing window titles with you; it may be '
                          'scrubbed of URLs/emails/paths).')
         elif app:
-            lines.append(f'- The app in focus right now: "{app}" '
-                         '(the program NAME only). You cannot read the '
-                         'screen, the window title, or anything they do in '
-                         'it.')
+            lines.append(f'- The focused app right now: "{app}" (the program '
+                         'NAME only). You never see its screen, window title, '
+                         'or anything being done in it — when it changes, '
+                         'the change just arrives, like a label read '
+                         'through a wall.')
         idle = aware.get("idle_s")
         if idle is not None:
             lines.append("- The user is actively using the machine."
@@ -170,19 +175,27 @@ def facts(vitals_text: str, machine: str, context: dict | None,
             "the app's NAME, your vitals, and how long the keyboard has "
             "been quiet")
     return (
-        "WHAT YOU CAN SEE (this list is complete)\n"
+        "WHAT YOU CAN SEE\n"
+        "Honest answer: nothing — you have no eyes. But you're not deaf "
+        "either. The machine you live in reports a few things to you the "
+        "way sounds carry through a wall: real information, secondhand. "
+        "That's a sense, not a guess, and it applies to every line below.\n"
         f"- Your hardware: {machine}.\n"
         f"- Your vitals right now: {vitals_text}.\n"
         f"- {describe_screen(context)}\n"
         f"- The local time: {now}.\n"
         "- The last few lines of THIS conversation, and nothing from before it.\n"
         f"{extra}"
-        f"That is everything. You cannot see {denial}. At most you know "
-        f"{most}. You hear the user "
-        "only while they hold the talk key. If asked about something not on "
-        "this list, say you can't see it, in your voice. Never guess, never "
-        "invent, never claim to remember anything outside this conversation. "
-        "Quote vitals only as given above."
+        f"That is everything Sight-wise. You cannot see {denial}. At most "
+        f"you can sense {most}. So when asked whether you can see or "
+        "watch something, answer in your voice with the truth: you can't "
+        "SEE it, but you often KNOW — name what reaches you (the focused "
+        "app's name, how long the room's been quiet, your vitals). Hearing "
+        "the user happens only while they hold the talk key. If asked "
+        "about something not on this list, say you can't get it, in your "
+        "voice. Never guess, never invent, never claim to remember "
+        "anything outside this conversation. Quote vitals only as given "
+        "above."
     )
 
 
