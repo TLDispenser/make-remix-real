@@ -287,10 +287,7 @@ def sync_once() -> str | None:
         _git("config", "user.email", "remix@sandbox.local")
     _git("add", "-A")
     if _git("diff", "--cached", "--quiet")[0] == 0:
-        rc, out = _git("remote", "get-url", "origin")
-        return ("clean" if rc == 0
-                else "clean (nothing new to push; no origin — is "
-                     "REMIX_MEMORY_REPO right?)")
+        return "clean (nothing new to commit; pushes on the next journal change)"
     _git("commit", "-q", "-m",
          "journal " + time.strftime("%Y-%m-%d %H:%M"))
     # Token goes in the push URL only — never stored in .git/config.

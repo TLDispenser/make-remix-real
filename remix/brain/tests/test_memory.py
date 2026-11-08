@@ -129,6 +129,19 @@ class UnbootedJournalIsInert(unittest.TestCase):
 
 
 class SandboxSyncTests(MemoryBase):
+    """sync enablement must be decided by config values, not by whatever
+    creds happen to live in the user's real .env — force the knobs."""
+
+    def setUp(self):
+        super().setUp()
+        self._creds = (config.MEMORY_REPO, config.MEMORY_TOKEN)
+        config.MEMORY_REPO = ""
+        config.MEMORY_TOKEN = ""
+
+    def tearDown(self):
+        (config.MEMORY_REPO, config.MEMORY_TOKEN) = self._creds
+        super().tearDown()
+
     def test_disabled_without_repo_config(self):
         self.assertFalse(memory.sync_enabled())
 
