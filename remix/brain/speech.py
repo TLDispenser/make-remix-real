@@ -184,7 +184,10 @@ def _memory_block() -> str:
             + "\n".join(rows) + "\n"
             "You may reference these outright (quote them loosely, keep your "
             "voice). Memories NOT in this list do not exist — never invent "
-            "one.\n")
+            "one. When they ask what they said or what happened, find the "
+            "row whose timestamp best matches the moment they mean — not "
+            "just any row sharing a word with the question — and report "
+            "what that row holds. If no row fits, say you don't have it.\n")
 
 
 def build_system_prompt(vitals: dict | None = None, stance: str | None = None,

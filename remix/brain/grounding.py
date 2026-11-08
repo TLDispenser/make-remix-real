@@ -174,6 +174,18 @@ def facts(vitals_text: str, machine: str, context: dict | None,
             "keyboard has been quiet" if sees_title else
             "the app's NAME, your vitals, and how long the keyboard has "
             "been quiet")
+    # Her memory rule must MATCH what actually exists, or she'll deny the
+    # journal to stay consistent with this text ("it starts with this
+    # conversation" while a WHAT YOU REMEMBER block says otherwise).
+    mem_line = ("- Your memory: this conversation, "
+                "plus WHAT YOU REMEMBER below if that section is present "
+                "(a short dated journal). Nothing older than those exists.\n"
+                if memory.has_journal() else
+                "- The last few lines of THIS conversation, and nothing "
+                "from before it.\n")
+    mem_rule = ("anything outside your journal and this conversation"
+                if memory.has_journal() else
+                "anything outside this conversation")
     return (
         "WHAT YOU CAN SEE\n"
         "Honest answer: nothing — you have no eyes. But you're not deaf "
@@ -184,18 +196,18 @@ def facts(vitals_text: str, machine: str, context: dict | None,
         f"- Your vitals right now: {vitals_text}.\n"
         f"- {describe_screen(context)}\n"
         f"- The local time: {now}.\n"
-        "- The last few lines of THIS conversation, and nothing from before it.\n"
+        f"{mem_line}"
         f"{extra}"
         f"That is everything Sight-wise. You cannot see {denial}. At most "
         f"you can sense {most}. So when asked whether you can see or "
         "watch something, answer in your voice with the truth: you can't "
         "SEE it, but you often KNOW — name what reaches you (the focused "
-        "app's name, how long the room's been quiet, your vitals). Hearing "
-        "the user happens only while they hold the talk key. If asked "
-        "about something not on this list, say you can't get it, in your "
-        "voice. Never guess, never invent, never claim to remember "
-        "anything outside this conversation. Quote vitals only as given "
-        "above."
+        "app's name, how long the room's been quiet, your vitals). Never "
+        f"invent {mem_rule}. "
+        "Hearing the user happens only while they hold the talk key. If "
+        "asked about something not on this list, say you can't get it, in "
+        "your voice. Never guess, never invent, never claim to remember "
+        f"{mem_rule}. Quote vitals only as given above."
     )
 
 
