@@ -20,7 +20,10 @@ _PHANTOM_TEXTS = {"thank you.", "thanks for watching!", "bye."}
 _NS_DROP = 0.5        # no_speech_prob >= this -> phantom
 _LP_DROP = -1.0       # avg_logprob <= this -> garbled
 
-_RECORDER_CANDIDATES = ["parec", "pw-record", "arecord"]
+_RECORDER_CANDIDATES = ["pw-record", "parec", "arecord"]
+# pw-record first: parec (PulseAudio-on-PipeWire 1.6.8) opens the default
+# source and streams ZERO bytes on this host (2026-11-08 probe); pw-record
+# is PipeWire-native and works. parec kept as fallback for other setups.
 
 
 def _recorder_flags(name: str) -> list:
@@ -111,6 +114,11 @@ class PushToTalk:
         self._closed = asyncio.Event()
 
     # ------------------------------------------------------------ properties
+
+    @property
+    def status(self) -> str:
+        """warming | ready | error | no_mic (main reads this to hint UX)."""
+        return self._status
 
     @property
     def listening(self) -> bool:
