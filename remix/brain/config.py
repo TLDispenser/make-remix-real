@@ -102,6 +102,16 @@ MUTED_NAG_S = float(_env("MUTED_NAG_S", "600.0"))         # quiet 10 min -> comm
 SESSION_LONG_S = float(_env("SESSION_LONG_S", "10800.0")) # 3 h -> stretch nudge
 APP_STUCK_S = float(_env("APP_STUCK_S", "5400.0"))        # 90 min same app
 QUIET_HOURS = _env("QUIET_HOURS", "")                     # "1-8" = no chatter 01:00-08:59
+# Awaken (memory.py): if she was off at least this long, the boot greeting
+# becomes "I just woke up / we were apart for X" instead of a plain greeting.
+AWAKEN_MIN_S = float(_env("AWAKEN_MIN_S", "120.0"))
+# Ambient thoughts (2b): between real events, a small-chance idle musing so
+# her chatter feels random inside the same caps (MIN_GAP, day cap, quiet hours).
+AMBIENT_RATE = float(_env("AMBIENT_RATE", "0.03"))        # per eligible 20 s tick
+AMBIENT_COOLDOWN_S = float(_env("AMBIENT_COOLDOWN_S", "2400.0"))  # >=40 min
+# Urgent marker (6.4): muted_long / idle_deep fire -> she flags her window as
+# "urgent" until the human shows up or the room un-mutes. Godot may ignore it.
+URGENT_ENABLED = _env("URGENT", "1") == "1"
 
 # ---- Left brain (Jev, System 1) — BUDGET-GATED (user: limited credits) ----
 # Policy (exercised by JevBrain, Phase 3; RuleBrain never calls Jev):
@@ -147,6 +157,9 @@ TTS_SPEED = int(_env("TTS_SPEED", "160"))       # words/min
 TTS_PITCH = int(_env("TTS_PITCH", "42"))        # 0-99; lower = flatter
 TTS_AMP = int(_env("TTS_AMP", "120"))           # 0-200
 TTS_BEAT_GAP_S = float(_env("TTS_BEAT_GAP_S", "0.2"))
+# Prosody (6.3): per-beat speed/pitch leaning from the beat's own text —
+# still espeak, NOT an AI voice; 0 disables and the fixed constants return.
+TTS_PROSODY = _env("TTS_PROSODY", "1") == "1"
 TTS_DIR = _env(
     "TTS_DIR",
     (os.environ.get("XDG_RUNTIME_DIR", "/tmp") + "/remix-voice"))
@@ -184,3 +197,19 @@ def _providers() -> list:
 PROVIDERS = _providers()
 LLM_PROVIDER_COOLDOWN_S = float(_env("LLM_PROVIDER_COOLDOWN_S", "600.0"))
 LLM_MAX_CONCURRENT = 1  # z.ai free Flash models allow ONE concurrent request
+
+# ---- Memory (Phase 7 polish): her sandbox + persistent journal ----
+# A folder that is HER repo: sandbox/memory.json (the journal) plus anything
+# else she is wired to write later. Optionally mirrored to a GitHub repo so
+# "space" is never a worry and she survives a disk move. The token is read at
+# push time only and never embedded in the stored remote URL.
+SANDBOX_DIR = Path(_env("SANDBOX_DIR") or (BRAIN_DIR / "sandbox"))
+MEMORY_JSON = SANDBOX_DIR / "memory.json"
+MEMORY_REPO = _env("MEMORY_REPO", "")            # e.g. https://github.com/me/remix-sandbox.git (PRIVATE)
+MEMORY_TOKEN = _env("MEMORY_TOKEN", "")          # fine-grained PAT; contents:read/write on that repo
+MEMORY_SYNC_MIN_S = float(_env("MEMORY_SYNC_MIN_S", "1800.0"))   # push this often if dirty
+MEMORY_MAX_ENTRIES = int(_env("MEMORY_MAX_ENTRIES", "400"))      # journal rows kept
+# Temper (1a): a slight per-boot personality drift, and REMIX_TEMPER sets the
+# baseline: cranky (default, the character you have now), balanced, soft.
+TEMPER = (_env("TEMPER", "cranky") or "cranky").strip().lower()
+TEMPER_REHOUR = float(_env("TEMPER_REHOUR", "6.0"))   # re-roll the drift every N h

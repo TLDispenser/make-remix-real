@@ -52,6 +52,50 @@ _last_cursor = None
 _last_app = None
 _active_at = _started      # last observed user activity (cursor or window)
 _quiet_since = None        # when audio turned quiet (for muted_s)
+_screen_wh = None          # [w, h] of the primary output (cached)
+
+
+def gaze_toward() -> list | None:
+    """A look [x, y] aimed at the focused window's center (the 5 gesture:
+    she can gesture toward the thing on screen she's commenting on). Public
+    geometry only — never the screen contents. None when unknown/offline."""
+    at = _state.get("win_at")
+    size = _state.get("win_size")
+    if not at or not size or len(at) != 2 or len(size) != 2:
+        return None
+    if _screen_wh is None:
+        _read_screen()
+    if not _screen_wh:
+        return None
+    sw, sh = _screen_wh
+    fx = at[0] + size[0] / 2.0
+    fy = at[1] + size[1] / 2.0
+    # She fills nearly the whole screen (her window is her world), so screen
+    # center is "straight ahead": offset = direction to look at.
+    dx = (fx - sw / 2.0) / (sw / 2.0)
+    dy = (fy - sh / 2.0) / (sh / 2.0)   # +y = down = compositor +y = look down
+    out = [max(-0.85, min(0.85, round(dx, 2))),
+           max(-0.85, min(0.85, round(dy, 2)))]
+    return out if abs(out[0]) + abs(out[1]) > 0.06 else None
+
+
+def _read_screen() -> None:
+    """One `hyprctl monitors -j`; take the first monitor's width/height."""
+    global _screen_wh
+    import json as _json
+    raw = _hyprctl(["monitors", "-j"]) or ""
+    if not raw.startswith("[") and not raw.startswith("{"):
+        return
+    try:
+        data = _json.loads(raw)
+        mons = data if isinstance(data, list) else [data]
+        for m in mons:
+            w, h = m.get("width"), m.get("height")
+            if w and h:
+                _screen_wh = [int(w), int(h)]
+                return
+    except ValueError:
+        pass
 
 
 # ------------------------------------------------------------- redaction
@@ -103,8 +147,10 @@ def redact(app_class: str | None, title: str | None):
 
 
 def parse_window_json(text: str) -> dict | None:
-    """`hyprctl activewindow -j` output -> {app, title(raw), fullscreen}.
-    None when there is no window / bad output (empty desktop prints `Invalid`)."""
+    """`hyprctl activewindow -j` output -> {app, title(raw), fullscreen,
+    at, size}. None when there is no window / bad output (empty desktop
+    prints `Invalid`). at/size are the window's geometry — public compositor
+    data, used only for gaze-toward gestures (never spoken)."""
     t = (text or "").strip()
     if not t or not t.startswith("{"):
         return None
@@ -120,7 +166,9 @@ def parse_window_json(text: str) -> dict | None:
         full = int(data.get("fullscreen") or 0) > 0
     except (TypeError, ValueError):
         full = bool(data.get("fullscreen"))
-    return {"app": app.strip().lower(), "title": title, "fullscreen": full}
+    return {"app": app.strip().lower(), "title": title, "fullscreen": full,
+            "at": [int(v) for v in (data.get("at") or [])][:2] or None,
+            "size": [int(v) for v in (data.get("size") or [])][:2] or None}
 
 
 def parse_cursor(text: str) -> tuple | None:
@@ -183,12 +231,14 @@ def _hyprctl(args: list) -> str | None:
 
 def _observe_window(now: float) -> None:
     """Poll the focused window; fold it into the activity/idle tracking."""
-    global _last_app, _active_at, _state
+    global _last_app, _active_at, _state, _screen_wh
     parsed = parse_window_json(_hyprctl(["activewindow", "-j"]) or "")
     if parsed is None:
         # No readable window (desktop, locked, non-Hyprland): keep last app,
-        # but never keep a stale title.
+        # but never keep a stale title or stale geometry.
         _state.pop("title", None)
+        _state.pop("win_at", None)
+        _state.pop("win_size", None)
         return
     app = parsed["app"]
     if app != _last_app:
@@ -197,6 +247,10 @@ def _observe_window(now: float) -> None:
         _state["app_since"] = now
     _state["app"] = app
     _state["fullscreen"] = parsed["fullscreen"]
+    if parsed.get("at"):
+        _state["win_at"] = parsed["at"]
+    if parsed.get("size"):
+        _state["win_size"] = parsed["size"]
     title = redact(app, parsed["title"])   # THE gate; off mode -> always None
     if title:
         _state["title"] = title
@@ -284,6 +338,8 @@ def reset_for_test() -> None:
                   muted=None, muted_s=None, app_since=None,
                   up_s=0.0, at=0.0)
     _state.pop("title", None)
+    _state.pop("win_at", None)
+    _state.pop("win_size", None)
     _last_cursor = None
     _last_app = None
     _active_at = time.monotonic()

@@ -40,6 +40,7 @@ class RuleBrain:
         self.candidate_count = 0
         self.candidate_look = None
         self.last_switch = 0.0
+        self._last_look = None   # (5) last look vector, for jump-size pacing
         now = time.monotonic()
         self.last_look_at = now
         self.last_notice_at = now   # no notices in the first quiet minutes
@@ -148,8 +149,15 @@ class RuleBrain:
         if now - self.last_look_at > random.uniform(6.0, 13.0):
             pool = self._look_pool(cpu)
             if pool:
-                out.append({"type": "look", "look": list(random.choice(pool))})
-                self.last_look_at = now
+                target = list(random.choice(pool))
+                out.append({"type": "look", "look": target})
+                # (5) pacing: a LARGE eye jump costs focus — bank some extra
+                # quiet time before the next drift; small jumps keep tempo.
+                prev = self._last_look
+                self._last_look = target
+                jump = 0.0 if prev is None else (
+                    abs(target[0] - prev[0]) + abs(target[1] - prev[1]))
+                self.last_look_at = now + jump * random.uniform(2.0, 5.0)
         if (self.pose in TWITCH_POSES
                 and now - self.last_twitch_at > random.uniform(18.0, 40.0)):
             out.append({"type": "twitch"})
@@ -171,15 +179,18 @@ class RuleBrain:
         return out
 
     def _look_pool(self, cpu):
+        """(5) boost: bigger amplitudes than the old pools. Cadence rules live
+        in _idle_life: small jumps allowed more often, big jumps throttled."""
         if self.pose == "spooked":
-            return [[0.8, 0.1], [-0.8, 0.1], [0.0, -0.9], [0.0, 0.9]]
+            return [[0.95, 0.0], [-0.95, 0.0], [0.0, -0.85], [0.0, 0.85]]
         if self.pose == "tired":
-            return [[0.3, 0.6], [-0.3, 0.6]]
+            return [[0.45, 0.65], [-0.45, 0.65]]
         if self.pose == "anger":
-            return [[0.0, 0.0], [0.4, -0.2]]
+            return [[0.0, 0.0], [0.55, -0.25], [-0.4, -0.1]]
         if (cpu is not None and cpu >= config.CPU_HIGH) or self.pose == "pout":
-            return [[0.7, 0.2]]
-        return [[random.uniform(-0.9, 0.9), random.uniform(-0.6, 0.6)]]
+            return [[0.85, 0.25], [-0.85, 0.25]]
+        return [[random.uniform(-0.9, 0.9), random.uniform(-0.7, 0.7)],
+                [random.uniform(-0.5, 0.5), random.uniform(-0.4, 0.4)]]
 
     def _notice_pool(self, snap):
         disk = _f(snap.get("disk"))

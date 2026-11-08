@@ -51,6 +51,7 @@ CONCERNED_LOOK = [0.0, 0.15]     # gaze slightly down: soft, not staring
 # stance must FIT what she noticed, variety comes from the generated words.
 STANCE_CHOICES = {
     "greeting": ["playful", "tsun", "fond"],
+    "awaken": ["flat", "playful", "pout"],
     "battery_low": ["concerned", "annoyed"],
     "plugged": ["tsun", "playful"],
     "welcome_back": ["playful", "flat", "fond"],
@@ -59,12 +60,14 @@ STANCE_CHOICES = {
     "muted_long": ["pout", "tsun", "flat"],
     "long_session": ["concerned", "flat"],
     "app_stuck": ["flat", "playful", "pout"],
+    "ambient": ["flat", "playful", "pout"],
     "poke": ["playful", "tsun", "flat"],
 }
 
 # Per-trigger minimum spacing (seconds), on top of the global MIN_GAP.
 TRIGGER_COOLDOWN_S = {
     "greeting": 1.0,          # once per boot anyway
+    "awaken": 1.0,            # once per boot anyway
     "battery_low": 2400.0,    # 40 min
     "plugged": 10800.0,       # 3 h
     "welcome_back": 3600.0,   # 1 h
@@ -73,7 +76,12 @@ TRIGGER_COOLDOWN_S = {
     "muted_long": 7200.0,     # 2 h
     "long_session": 7200.0,   # 2 h
     "app_stuck": 10800.0,     # 3 h
+    "ambient": config.AMBIENT_COOLDOWN_S,
 }
+
+# Triggers whose room-notice doubles as the "urgent" flag (6.4: she's being
+# ignored/muted and got pissed about it; main raises the marker).
+URGENT_ON = ("muted_long", "idle_deep")
 
 
 def _f(v):
@@ -110,6 +118,27 @@ def _situation(trigger: str, aware: dict, batt: float | None,
     if trigger == "greeting":
         return ("a new session just started and they just showed up at the "
                 "keyboard")
+    if trigger == "awaken":
+        from . import memory
+        gap = memory.elapsed_text((memory.awaken() or {}).get("elapsed_s")) \
+            or "some time"
+        return (f"you were OFF (the whole machine was shut down) and just "
+                f"woke up after about {gap}; they are at the keyboard now")
+    if trigger == "ambient":
+        app = aware.get("app")
+        now = aware.get("up_s")
+        parts = []
+        if app:
+            parts.append(f"they have {app} in focus")
+        hour = time.localtime().tm_hour
+        when = ("morning" if hour < 11 else "midday" if hour < 14 else
+                "afternoon" if hour < 18 else "evening" if hour < 23 else
+                "dead of night")
+        parts.append(f"it's {when}")
+        if (aware.get("muted")):
+            parts.append("the sound is muted")
+        return ("nothing happened — you just felt like saying something "
+                "about " + (", ".join(parts[:2]) or "where you are"))
     if trigger == "battery_low":
         return (f"the battery just crossed {round(config.BATT_LOW)}% and is "
                 f"now at {round(batt)}%, and the machine is running on "
@@ -117,8 +146,10 @@ def _situation(trigger: str, aware: dict, batt: float | None,
     if trigger == "plugged":
         return "the power cable was just plugged back in"
     if trigger == "welcome_back":
-        return (f"they were away from the keyboard for about "
-                f"{away_mins or 30} minutes and just came back")
+        if away_mins:
+            return (f"they were away from the keyboard for about "
+                    f"{away_mins} minutes and just came back")
+        return "they just came back to the keyboard"   # honest when unknown
     if trigger == "idle_gentle":
         idle = _f(aware.get("idle_s")) or 0.0
         return f"the keyboard has been quiet for about {max(1, round(idle / 60))} minutes"
@@ -152,13 +183,18 @@ class Proactive:
     are written afterwards by speech.generate_proactive_line()."""
 
     def __init__(self, rng: random.Random | None = None,
-                 enabled: bool | None = None) -> None:
+                 enabled: bool | None = None,
+                 awaken_s: float | None = None) -> None:
         self.rng = rng or random.Random()
         self.enabled = config.PROACTIVE if enabled is None else enabled
+        # awaken_s: how long she was OFF before this boot (memory at boot).
+        # A real gap turns the boot greeting into an awaken line (proposal 4).
+        self.awaken_s = awaken_s
         self.last_line_at = -1e12
         self.day_key = None          # (for the daily cap)
         self.day_count = 0
         self._last = {}              # trigger -> monotonic of last fire
+        self._last_ambient = -1e12
         # edge memory (previous observations; None = never seen)
         self.prev_batt = None
         self.prev_plugged = None
@@ -227,7 +263,11 @@ class Proactive:
         # --- candidates, most urgent first ---
         plan = None
         if not self.greeted:
-            plan = "greeting"
+            if self.awaken_s and self.awaken_s >= config.AWAKEN_MIN_S:
+                plan = "awaken"        # the greeting slot becomes a wake-up
+            else:
+                plan = "greeting"
+            self.greeted = True        # one boot line either way
         elif low_edge:
             plan = "battery_low"
         elif plug_edge:
@@ -250,6 +290,9 @@ class Proactive:
                 and now - aware["app_since"] >= config.APP_STUCK_S
                 and self._due("app_stuck", now)):
             plan = "app_stuck"
+        elif self._ambient_ok(now) and \
+                self.rng.random() < config.AMBIENT_RATE:
+            plan = "ambient"
 
         if plan is None:
             return None
@@ -264,12 +307,15 @@ class Proactive:
         self.day_count += 1
         if plan == "greeting":
             self.greeted = True
+        if plan == "ambient":
+            self._last_ambient = now
         if plan in ("idle_gentle", "idle_deep"):
             self.episode[plan[5:]] = True
 
         return {"trigger": plan, "stance": stance,
                 "face": STANCE_FACE.get(stance, POSES["default"]),
                 "look": CONCERNED_LOOK if stance == "concerned" else None,
+                "urgent": plan in URGENT_ON,
                 "situation": _situation(
                     plan, aware, batt,
                     away_mins=round((_f(prev_idle) or 0) / 60)
@@ -304,3 +350,7 @@ class Proactive:
     def _due(self, trigger: str, now: float) -> bool:
         return now - self._last.get(trigger, -1e12) >= \
             TRIGGER_COOLDOWN_S.get(trigger, 3600.0)
+
+    def _ambient_ok(self, now: float) -> bool:
+        """Ambient musings (2b): own cooldown, on top of MIN_GAP/day-cap."""
+        return now - self._last_ambient >= config.AMBIENT_COOLDOWN_S

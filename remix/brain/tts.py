@@ -53,16 +53,44 @@ def available() -> bool:
     return config.TTS_ENABLED and shutil.which(config.TTS_BIN) is not None
 
 
+# (6.3) prosody: fixed voice, per-beat LEANING. Tiny deterministic tilts of
+# espeak speed/pitch per beat, keyed off the beat's own markers — alarms run
+# slightly faster, trailing "..." sighs drag, questions lift a touch. Still
+# espeak-ng, NOT an AI voice; the ranges are narrow on purpose.
+_PRO_WORDS = re.compile(
+    r"\b(fuck|damn|hell|no|wait|wrong|fire|dead|crash|now|stop|overheat)\b", re.I)
+_SLOW_WORDS = re.compile(
+    r"\b(tired|whatever|fine|guess|meh|numb|later|whatever)\b|\.{3,}\s*$", re.I)
+
+
+def _prosody(text: str) -> tuple:
+    """(speed, pitch) deltas for one beat."""
+    if not config.TTS_PROSODY:
+        return (0, 0)
+    jitter = (hash(text) % 7) - 3          # -3..+3, stable per text
+    speed, pitch = jitter, jitter // 2
+    if _PRO_WORDS.search(text):
+        speed, pitch = 18, 4               # alarm: faster and higher
+    if _SLOW_WORDS.search(text):
+        speed, pitch = -12, -3             # tired/sigh: slower and flatter
+    if text.rstrip().endswith("?"):
+        pitch += 3
+    return (max(-25, min(30, speed)), max(-8, min(8, pitch)))
+
+
 async def _synth_one(text: str) -> bytes | None:
     """One beat -> WAV bytes (22.05 kHz mono s16), or None."""
     spoken = speakable(text)
     if not spoken:
         return None
+    ds, dp = _prosody(text)
     try:
         proc = await asyncio.create_subprocess_exec(
             config.TTS_BIN, "--stdin", "--stdout",
-            "-v", config.TTS_VOICE, "-s", str(config.TTS_SPEED),
-            "-p", str(config.TTS_PITCH), "-a", str(config.TTS_AMP),
+            "-v", config.TTS_VOICE,
+            "-s", str(max(80, config.TTS_SPEED + ds)),
+            "-p", str(max(0, min(99, config.TTS_PITCH + dp))),
+            "-a", str(config.TTS_AMP),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL)
         out, _ = await asyncio.wait_for(proc.communicate(spoken.encode()), 15.0)

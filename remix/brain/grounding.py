@@ -17,6 +17,8 @@ import random
 import re
 import time
 
+from . import config, memory
+
 # Words that assert knowledge of the user's machine/life she does not have.
 # Only a problem if the USER didn't bring the word up first.
 UNSEEN = {
@@ -45,10 +47,10 @@ VITAL_WORDS = {
 }
 
 DEFLECTIONS = [
-    "can't see that. not my department.",
-    "no idea. I can't see that.",
-    "how would I know. I only see my own vitals.",
-    "ugh. I can't see that, I just live here.",
+    "can't see that, but tell me what you're stuck on and I'll work with what we've got.",
+    "no idea. I can't see that — spell it out for me.",
+    "how would I know, I only see my own vitals. What are you actually trying to do?",
+    "ugh. I can't see that, I just live here. Ask me differently.",
 ]
 
 _ONES = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -134,6 +136,10 @@ def facts(vitals_text: str, machine: str, context: dict | None,
                          if idle < 90 else
                          f"- The user has been away from the keyboard about "
                          f"{max(1, round(idle / 60))} minutes.")
+        up = _fl(aware.get("up_s"))
+        if up and up > 120:
+            lines.append(f"- This session of yours (your brain running) has "
+                         f"been awake about {max(1, round(up / 60))} minutes.")
         if aware.get("fullscreen"):
             lines.append("- The focused app is fullscreen: they are likely "
                          "watching or gaming. Keep replies minimal.")
@@ -143,6 +149,14 @@ def facts(vitals_text: str, machine: str, context: dict | None,
             lines.append("- The machine is plugged into AC power.")
         if aware.get("muted"):
             lines.append("- The system audio is muted or very low.")
+        if _fl(aware.get("up_s") or 0) < 1800:
+            aw = memory.awaken()
+            if aw and aw.get("elapsed_s"):
+                lines.append(f"- You were OFF before this session started "
+                             f"and woke up {memory.elapsed_text(aw['elapsed_s'])} "
+                             "ago. That's normal for you: someone restarted "
+                             "the machine. Your journal survived (see WHAT "
+                             "YOU REMEMBER if it's present).")
         if lines:
             extra = "\n" + "\n".join(lines) + "\n"
     denial = ("the user's screen, other windows, workspaces, processes, "
@@ -170,6 +184,61 @@ def facts(vitals_text: str, machine: str, context: dict | None,
         "invent, never claim to remember anything outside this conversation. "
         "Quote vitals only as given above."
     )
+
+
+def _memory_ok(phrase: str, reply: str) -> bool:
+    """PAST gate widening (proposal 4): a past-tense claim passes ONLY if her
+    journal genuinely reaches that far back. Rules:
+      'yesterday'            -> a journal row dated the previous local day
+      'earlier today' etc    -> a row dated today (or the last ~20 h)
+      'N days/weeks... ago'  -> journal age >= about half the claimed span
+      last night/week/month  -> same as yesterday
+    Sharing a content word with a real row is ALSO required, so a generic
+    'yesterday' can't smuggle invented facts."""
+    import re
+    if not memory.has_journal():
+        return False
+    pl = (phrase or "").lower()
+    rows = memory.lines(limit=100)
+    if not rows:
+        return False
+    words = {w for w in re.findall(r"[a-z0-9']+", reply.lower()) if len(w) > 3}
+    day_name = time.strftime("%Y-%m-%d")
+
+    def local_day(ts: float) -> str:
+        return time.strftime("%Y-%m-%d", time.localtime(ts))
+
+    yesterday = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
+    for e in rows:
+        try:
+            ts = float(e.get("t") or 0)
+        except (TypeError, ValueError):
+            continue
+        text = (e.get("text") or "").lower()
+        near = bool(words & (set(text.split()) | {e.get("at", "").lower()[:10]}))
+        if not near:
+            continue
+        if "yesterday" in pl or pl.startswith("last "):
+            if local_day(ts) in (yesterday, day_name):
+                return True
+        elif "earlier today" in pl or "today" in pl or "this morning" in pl:
+            if local_day(ts) == day_name or time.time() - ts < 20 * 3600:
+                return True
+        else:
+            m2 = re.search(
+                r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|"
+                r"eleven|twelve|few|several|couple of)\s*(day|week|month|"
+                r"year)s?\s+ago", pl)
+            if m2:
+                n_txt, unit = m2.group(1), m2.group(2)
+                n = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                     "six": 6, "seven": 7, "eight": 8, "nine": 9,
+                     "ten": 10, "eleven": 11, "twelve": 12,
+                     "few": 3, "several": 4, "couple of": 2}.get(n_txt, 3)
+                mult = {"day": 1, "week": 7, "month": 30, "year": 365}[unit]
+                if time.time() - ts >= (n * mult * 86400) / 2.0:
+                    return True
+    return False
 
 
 def check(reply: str, user_text: str, history_text: str, vitals: dict | None,
@@ -207,7 +276,7 @@ def check(reply: str, user_text: str, history_text: str, vitals: dict | None,
         problems.append(f"mentions {name} (you can't see that)")
 
     m = PAST.search(reply)
-    if m and not PAST.search(known):
+    if m and not PAST.search(known) and not _memory_ok(m.group(0), reply):
         problems.append(f"claims a memory from outside this chat ('{m.group(0)}')")
 
     vit = {k: _fl((vitals or {}).get(k)) for k in VITAL_WORDS}

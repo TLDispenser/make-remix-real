@@ -33,6 +33,7 @@ does not require it).
 | `twitch` | | one bottom-lid twitch now |
 | `listening` | `state: "start"/"stop"` | mic-live marker (pale blue, top-right) while push-to-talk is held |
 | `notice` | `text`, optional `seconds` (4) | her one caption/status line (word-wrapped; muted, volume low, no-voice captions, mic problems) |
+| `urgent` | `state: true/false`, optional `reason` | persistent "urgent" marker on her window; raised when she has been muted or ignored too long (she said a line about it first). Ignored by older face builds (`_: pass`) |
 | `transcript` | `text`, optional `seconds` (4) | what the mic heard, on a dim line at the top (`you: ...`) |
 | `theme` | `color: "#rrggbb"` | face color |
 | `vitals`, `event`, `say` | any | passed through as signals; unused by the face (`say` carries her reply text for terminals/logs) |

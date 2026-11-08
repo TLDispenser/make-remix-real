@@ -18,6 +18,7 @@ verified against live docs, and the user's constraints locked in on 2026-11-05:
 | 5 Push-to-talk (local STT) | ✅ done — faster-whisper, hold-to-talk, hard 15 s mic cap, see "Voice" below |
 | 6 Awareness | ✅ done — Hyprland app sensing (names only, titles redacted), idle/power/audio senses, unprompted lines from local text pools (DND + rate limits) |
 | 7 Voice out + polish | ✅ voice done: **espeak-ng** (not an AI voice), lip-sync from the audio, per-beat faces timed to it. Tray/settings still open |
+| 8 Criticism round (2026-11-08) | ✅ mostly done — persistent **memory sandbox** (`brain/sandbox/`, optional GitHub mirror), time sense (uptime/awaken/dated journal), temper knob + slight random personality drift, softer sides (dry ≠ cruel), honest stats everywhere, **ambient thoughts**, **urgent marker** (6.4), motion boost + pacing, per-beat espeak prosody. Godot-side snippets (single-eye twitch, urgent badge) drafted in `godot/PROPOSED_face_edits.md` for the user to apply |
 
 Loose-ends pass (2026-11-08): `CORE_*` settings renamed to `REMIX_*` (old names
 still read — see `.env.example`), on-screen text rule enforced (flavor notices
@@ -91,6 +92,27 @@ captions only per the on-screen text rule.
 **Typed commands** (never sent to any LLM): `/poke` (say something now),
 `/aware` (print the redacted snapshot — verify redaction live), `/quiet`
 (toggle unprompted chatter at runtime).
+
+## Memory & time (Nov-8 round)
+
+`brain/memory.py` keeps a dated journal in `remix/brain/sandbox/` (her repo):
+what was said both ways, her unprompted thoughts, her recent faces, the
+chatter-dedup set and the last shutdown timestamp. That single file is what
+gives her a past — the system prompt now carries a **WHAT YOU REMEMBER**
+block straight from it, the grounding rules allow past-talk exactly as far
+back as the journal reaches (and no further), and a boot after a real gap
+turns the greeting into an *awaken* line ("we were apart for about X").
+
+Optional mirror to GitHub (her request 3 — put whatever she wants out there,
+space becomes a non-issue):
+
+```ini
+REMIX_MEMORY_REPO=https://github.com/you/remix-sandbox.git   # PRIVATE
+REMIX_MEMORY_TOKEN=          # fine-grained PAT, contents read/write
+```
+
+The token is read at push time and never stored in `.git/config`. Journal is
+bounded (~400 rows), so even without the mirror it's kilobytes, not megabytes.
 
 ## The face (user's Godot work)
 

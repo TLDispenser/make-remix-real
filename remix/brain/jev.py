@@ -31,10 +31,11 @@ from . import config
 from .faces import EYES_TEXT, MOUTHS_TEXT, NEUTRAL, Face, Vocabulary
 
 # She/her, dry, secretly fond — stance choices the sysprompt understands.
+# (1b soften: "fond" may now be plain warm; the barbs stay OUT of the words.)
 STANCE_OPTION_TEXT = {
     "flat": "flat and tired; no coloring, facts only",
     "annoyed": "irritation on the surface; keep the barbs out",
-    "fond": "secretly fond; warmth may leak out ONLY as an insult",
+    "fond": "quiet fondness; a small warm word is allowed",
     "concerned": "the bit stops; plainly kind and gentle, still short",
     "alarmed": "something about the machine feels wrong; worry under the sarcasm",
     "playful": "dry mischief; one sly jab is allowed, no gushing",
@@ -42,15 +43,17 @@ STANCE_OPTION_TEXT = {
 
 REACT_SCENE = (
     "The user just sent Remix a message. Remix is a deadpan, tired, dry laptop "
-    "character; her baseline is flat, so plain shapes are right when nothing in "
-    "the message calls for more. Choose her first gut reaction as a face made of "
-    "separate EYES and MOUTH. Smug is for real teasing or mischief only, not the "
-    "default. Match the line: insults or swearing at her -> irritation or "
-    "deadpan; praise or something sweet -> flustered; a sad or hurt user -> plain "
-    "and soft; something gross or weird -> disgust or deadpan; a scary system "
-    "problem -> startled; a boring or lazy line -> tired or deadpan. recent_faces "
-    "lists what her face just showed: avoid repeating it unless the feeling is "
-    "unchanged."
+    "character — dry does NOT mean cruel: she is on the user's side, and she "
+    "cooperates. Her baseline is flat, so plain shapes are right when nothing "
+    "in the message calls for more. Choose her first gut reaction as a face "
+    "made of separate EYES and MOUTH. Smug is for real teasing or mischief "
+    "only, not the default. Match the line: insults or swearing at her -> "
+    "irritation or deadpan; praise or something sweet -> flustered; a "
+    "question or request -> pay attention, plain and present; a sad or hurt "
+    "user -> plain and soft; something gross or weird -> disgust or deadpan; "
+    "a scary system problem -> startled; a boring or lazy line -> tired or "
+    "deadpan. recent_faces lists what her face just showed: avoid repeating "
+    "it unless the feeling is unchanged."
 )
 
 ACT_SCENE = (
@@ -77,13 +80,27 @@ class ActPlan(NamedTuple):
 
 
 class JevBrain:
-    def __init__(self, rng: random.Random | None = None) -> None:
+    def __init__(self, rng: random.Random | None = None,
+                 seed_faces: list | None = None,
+                 variety_hook: callable | None = None) -> None:
+        """seed_faces: 'eyes/mouth' strings from the persisted journal
+        (memory). variety_hook: called with str(face) on every shown face so
+        the journal remembers her recent looks across restarts."""
         self.vocab = Vocabulary()
         self.rng = rng or random.Random()
         self._last_react_at = 0.0
         self._call_times: list = []          # hourly-cap window (both call kinds)
         self._cache: dict = {}               # sig -> (expiry, value)
         self._recent: deque = deque(maxlen=4)  # last faces shown (variety memory)
+        self._hook = variety_hook
+        if seed_faces:
+            # journal order is newest-first; rebuild so `.recent[-1]` is newest
+            for s in list(seed_faces)[:4][::-1]:
+                try:
+                    e, _, m = str(s).partition("/")
+                    self._recent.append(Face(e, m))
+                except Exception:
+                    pass
 
     def set_available(self, eyes=None, mouths=None) -> None:
         """Godot's `ready` lists the shapes the face actually has."""
@@ -95,6 +112,11 @@ class JevBrain:
         """Tell the variety memory what the face just showed (any source)."""
         if not self._recent or self._recent[-1] != face:
             self._recent.append(face)
+        if self._hook:
+            try:
+                self._hook(str(face))
+            except Exception:
+                pass
 
     def recent_faces(self) -> list:
         return [str(f) for f in self._recent]

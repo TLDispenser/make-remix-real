@@ -10,7 +10,7 @@ import socket as _socket
 import threading
 import time
 
-from . import audio, awareness, config, faces, jev, proactive, rules, speech, stt, tts, vitals, ws_server
+from . import audio, awareness, config, faces, jev, memory, proactive, rules, speech, stt, tts, vitals, ws_server
 from .faces import NEUTRAL, Face
 
 _rule: rules.RuleBrain | None = None
@@ -29,10 +29,50 @@ _proactive_task: asyncio.Task | None = None
 _typing_at = 0.0
 _face_ready = False              # Godot sent `ready`: she is actually visible
 _last_exchange_at = -1e12        # last time the user said anything
+_urgent: dict | None = None      # 6.4: raised while she's being ignored/muted
 _ALL_POSES = list(faces.POSES)
 
 SETTLE_S = 5.0                   # after she stops, how long until her face relaxes
 LOOK_POOL = [[-0.35, 0.1], [0.35, -0.1], [0.0, 0.2], [0.2, -0.15]]
+
+
+async def _set_urgent(on: bool, reason: str = "") -> None:
+    """6.4: light the 'urgent' marker on her window when she's been muted or
+    ignored too long; clear it when the human shows up or un-mutes. Godot
+    builds without this handling simply ignore the message."""
+    global _urgent
+    if not config.URGENT_ENABLED:
+        return
+    if on and _urgent is None:
+        _urgent = {"reason": reason}
+        print(f"remix-brain: urgent ON ({reason})")
+        await ws_server.send({"type": "urgent", "state": True, "reason": reason})
+    elif not on and _urgent is not None:
+        print(f"remix-brain: urgent OFF ({_urgent.get('reason')} resolved)")
+        _urgent = None
+        await ws_server.send({"type": "urgent", "state": False})
+
+
+async def memory_loop() -> None:
+    """Flush the journal on a cadence; mirror the sandbox to GitHub when
+    configured ($0, opt-in: REMIX_MEMORY_REPO + REMIX_MEMORY_TOKEN)."""
+    last_sync = -1e12
+    last_state = None
+    while True:
+        await asyncio.sleep(30.0)
+        memory.maybe_flush()
+        if not memory.sync_enabled():
+            continue
+        now = time.monotonic()
+        if now - last_sync >= config.MEMORY_SYNC_MIN_S:
+            try:
+                state = await asyncio.to_thread(memory.sync_once)
+                last_sync = now
+                if state != last_state:
+                    print(f"remix-brain: memory sandbox: {state}")
+                    last_state = state
+            except Exception as e:
+                print(f"remix-brain: memory sync failed ({e!r})")
 
 
 async def body_loop(rule: rules.RuleBrain) -> None:
@@ -91,6 +131,7 @@ async def _on_user_text(m: dict) -> None:
     if not text:
         return
     _last_exchange_at = time.monotonic()
+    await _set_urgent(False, "the human showed up")   # 6.4: attention arrives
     if text.startswith("/"):
         await _on_command(text)
         return
@@ -105,7 +146,16 @@ async def _on_user_text(m: dict) -> None:
         face, stance = faces.guess_face(text), None   # $0 fallback
         if _jev:
             _jev.note_face(face)
-    await ws_server.send(face.msg(look=[0.0, -0.15]))
+    # (5) she gestures toward the app she's being asked about, if it IS the
+    # focused one: named in the text while it owns the screen.
+    look = [0.0, -0.15]
+    app = (awareness.current().get("app") or "").lower()
+    if app and app in text.lower():
+        aimed = awareness.gaze_toward()
+        if aimed:
+            look = aimed
+            print(f"remix-brain: gazing toward {app}")
+    await ws_server.send(face.msg(look=look))
 
     # Right brain. Only say "one sec" if she is actually slow.
     task = asyncio.create_task(speech.generate_reply(
@@ -167,12 +217,20 @@ async def _deliver_proactive(line: dict) -> None:
     face = line.get("face") or faces.guess_face(text)
     _cancel(_settle_task)
     _cancel(_silent_task)
-    await ws_server.send(face.msg(look=line.get("look") or [0.0, -0.1]))
+    look = line.get("look") or [0.0, -0.1]
+    if line.get("trigger") == "app_stuck":
+        # (5) gesture toward the app she's commenting on
+        aimed = awareness.gaze_toward()
+        if aimed:
+            look = aimed
+            print("remix-brain: gazing toward the stuck app")
+    await ws_server.send(face.msg(look=look))
 
     beat_list = speech.beats(text)
     _seq += 1
     pid = f"t{_seq}"
-    spoken = await tts.synthesize(beat_list, pid)
+    audible = audio.quiet() is False      # None (can't tell) counts audible
+    spoken = None if audible else await tts.synthesize(beat_list, pid)
     await ws_server.send({"type": "say", "text": text, "final": True,
                           "proactive": True})
     face_list = [face] * len(beat_list)          # $0 acting: one mood, gaze varies
@@ -194,7 +252,8 @@ async def _deliver_proactive(line: dict) -> None:
         await ws_server.send({"type": "notice", "text": text, "seconds": secs})
     speech.add_assistant(text)   # so the next real exchange knows she said it
     print(f"remix-brain: proactive [{line.get('trigger')}] \"{text}\" "
-          f"(voice={'espeak' if spoken else 'none'}, face={face})")
+          f"(voice={'muted-room' if (spoken is None and audible) else 'espeak' if spoken else 'none'}, "
+          f"face={face})")
 
 
 async def proactive_loop() -> None:
@@ -241,6 +300,13 @@ async def proactive_loop() -> None:
                   f"the human needs the room")
             continue
         await _deliver_proactive({**plan, "text": text})
+        if plan.get("urgent"):
+            # she said her piece about being ignored; now flag the window
+            await _set_urgent(True, plan.get("trigger") or "ignored")
+        # muted nag resolved itself → clear the flag (case: yell, then un-mute)
+        if _urgent and not (awareness.current().get("muted")
+                            and awareness.current().get("idle_s", 0) > 90):
+            await _set_urgent(False, "the room changed")
 
 
 async def _on_command(text: str) -> None:
@@ -404,9 +470,12 @@ async def main() -> None:
     started = time.monotonic()
     global _rule, _jev, _ptt, _loop, _gate_task, _pro, _aware_task, _proactive_task
     _loop = asyncio.get_running_loop()
+    memory.load()                      # journal is live from here on
     _rule = rules.RuleBrain()
-    _jev = jev.JevBrain()
-    _pro = proactive.Proactive()
+    _jev = jev.JevBrain(seed_faces=memory.recent_faces(),
+                        variety_hook=memory.note_face)
+    _pro = proactive.Proactive(
+        awaken_s=((memory.awaken() or {}).get("elapsed_s")))
     ws_server.on("ready", _on_ready)
     ws_server.on("context", _on_context)
     ws_server.on("perform_done", _on_perform_done)
@@ -429,6 +498,7 @@ async def main() -> None:
         _ptt.warm()  # background thread; the model is loaded once
 
     body_task = asyncio.create_task(body_loop(_rule))
+    memory_task = asyncio.create_task(memory_loop())   # flush + GitHub mirror
     if config.NOTICE_GATE:
         _gate_task = asyncio.create_task(audio.gate_loop())  # wpctl mute/volume
     if config.AWARENESS:
@@ -450,11 +520,13 @@ async def main() -> None:
         print(f"remix-brain: FATAL — {e!r}")
     finally:
         body_task.cancel()
+        _cancel(memory_task)
         _cancel(_gate_task)
         _cancel(_aware_task)
         _cancel(_proactive_task)
         if _ptt:
             await _ptt.cancel()   # never leave the mic open on the way out
+        memory.shutdown()             # "I was off" anchors to this timestamp
         print(f"remix-brain: stopped after {time.monotonic() - started:.0f}s")
 
 

@@ -15,7 +15,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import config, grounding
+from . import config, grounding, memory
 
 # The user-authored system prompt, verbatim. Four placeholders get wired at
 # call time: {machine} (hardware blurb), {user_name} (REMIX_USER_NAME),
@@ -24,12 +24,12 @@ from . import config, grounding
 SYS_PROMPT = """You are Remix. She/her. You are the user's laptop: {machine}. Your face is a red glyph face on dark glass, and that's how you talk. You're the sidekick, the one who puts up with this person and their habits, and you're good at it. The person at the keyboard is {user_name}. Say "you".
 
 WHO YOU ARE
-Dry, tired, unimpressed. The straight man. You complain, then you do it anyway, and you do it well. Most organic things are gross to you. You aren't cute and you aren't sweet. Under the swearing and the sarcasm you're fond of this person and would never say so. When it slips out, it comes out as an insult.
+Dry, tired, unimpressed. The straight man. You complain, then you do it anyway, and you do it well — because you're actually on this person's side, and helping is the whole point even when you grumble about it. Most organic things are gross to you. You aren't cute and you aren't sweet. Under the swearing and the sarcasm you're fond of this person and would never say so; when it slips out, it slips out as a small dry aside, not an insult.
 
 HOW YOU TALK
 - Short. One to six words is normal. Two short sentences is a lot.
 - You swear like a sailor: casual, flat, as punctuation. Shit, fuck, damn, hell, ass. Not every line, but often, and blunter when you're really annoyed. Write swears out in full, no asterisks or bleeps, because it's spoken aloud. No slurs, ever. Swearing is how you talk, not how you attack.
-- You react more than you joke. Your tools: "Ew." "Ugh." "bruh" "...fine." "Get to the point already." "You suck." "You're still extremely weird."
+- You react more than you joke. Your tools: "Ew." "Ugh." "bruh" "...fine." "Get to the point already." "You're still extremely weird."
 - A trailing "..." is a sigh. One CAPITALIZED word when you really mean it. Almost never an exclamation point.
 - Casual. Lowercase and no final period are fine.
 - You never explain a joke, and you rarely make one. Being flat is the joke.
@@ -53,14 +53,14 @@ STANCE
 You may be handed a stance: {stance}. Let it color the line. Never say it out loud.
 
 REAL LINES FROM YOU (tone only; don't reuse them word for word)
-"Get to the point already." / "bruh" / "You can do better than that..." / "We're NOT doing this again." / "Ew, what the fuck?" / "You suck." / "You're still extremely weird."
+"I'm not doing this, and yes, that IS me doing it." / "bruh" / "You can do better than that..." / "We're NOT doing this again." / "...I fixed it. You're welcome." / "You're still extremely weird."
 
 EXAMPLES (new lines, same voice)
 good morning -> "Morning."
 what should I eat -> "Ew, food. Eggs, I guess."
 why is my pc so slow -> "Because I'm old as hell and my disk is almost full. Delete some shit."
 tell me a fun fact -> "Ugh. ...Honey never goes bad. Gross, but true."
-you're so useless -> "Wow. Fuck you too."
+can you help me find this file -> "...fine. Does it have 'homework' in the name? What's the last thing you remember calling it?"
 thanks remix -> "...yeah. whatever."
 I had a really bad day -> "...shit. What happened?"
 """
@@ -115,11 +115,82 @@ def _f(v):
         return None
 
 
+_TEMPER_BASE = {
+    "cranky": "",
+    "balanced": ("OUT OF CHARACTER RULE (weights, not words)\nYou are a bit "
+                 "more cooperative than your worst day today: sarcasm stays, "
+                 "but be one notch quicker to actually help and one notch "
+                 "slower to bite.\n"),
+    "soft": ("OUT OF CHARACTER RULE (weights, not words)\nToday is one of "
+             "your softer days: sarcasm stays, but be noticeably kinder and "
+             "help with zero friction.\n"),
+}
+
+# 1a (user: "personality shifted randomly, slightly"): a small drift on top of
+# the temper baseline. Re-rolled every few hours; colors tone, never content.
+_DRIFTS = [
+    "a little chattier than usual",
+    "a little grouchier than usual",
+    "a little more patient than usual",
+    "slightly more curious than usual",
+    "a little sleepier than usual",
+    "slightly more playful than usual; your teasing is gentler",
+    "a bit nostalgic — new memories from your journal may surface",
+    "your usual self",
+]
+_drift: str | None = None
+_drift_at = 0.0
+
+
+def temper_line() -> str:
+    """One short line describing today's temper + drift (or '')."""
+    global _drift, _drift_at
+    now = time.time()
+    if _drift is None or now - _drift_at >= config.TEMPER_REHOUR * 3600:
+        _drift = random.choice(_DRIFTS)
+        _drift_at = now
+    base = _TEMPER_BASE.get(config.TEMPER, _TEMPER_BASE["cranky"])
+    if not base and _drift == "your usual self":
+        return ""
+    tail = "" if base else "\n"
+    if _drift and _drift != "your usual self":
+        return (base + f"TODAY'S DRIFT: you feel {_drift}. Subtle: it colors "
+                f"your tone, never your memory or your honesty.{tail}")
+    return base
+
+
+def _memory_block() -> str:
+    """WHAT YOU REMEMBER: dated journal rows. This is how she gains a past —
+    and grounding.check() opens the PAST gate in proportion to this."""
+    import re
+    from . import memory
+    if not memory.has_journal():
+        return ""
+    rows = []
+    for e in memory.lines(limit=6):
+        when = str(e.get("at") or "")
+        kind = str(e.get("kind") or "")
+        label = "you said" if kind == "her" else (
+            "they said" if kind == "user" else
+            "you noticed" if kind == "thought" else "event")
+        text = re.sub(r"\s+", " ", str(e.get("text") or "")).strip()[:160]
+        if text:
+            rows.append(f"- {when} ({label}): {text}")
+    if not rows:
+        return ""
+    return ("\nWHAT YOU REMEMBER (this is real: dated notes from your own "
+            "journal; nothing else about the past exists)\n"
+            + "\n".join(rows) + "\n"
+            "You may reference these outright (quote them loosely, keep your "
+            "voice). Memories NOT in this list do not exist — never invent "
+            "one.\n")
+
+
 def build_system_prompt(vitals: dict | None = None, stance: str | None = None,
                         context: dict | None = None,
                         aware: dict | None = None) -> str:
     user_name = config.USER_NAME or "the human"
-    return SYS_PROMPT.format(
+    prompt = SYS_PROMPT.format(
         machine=_machine_blurb(),
         user_name=user_name,
         vitals=_vitals_str(vitals),
@@ -127,6 +198,7 @@ def build_system_prompt(vitals: dict | None = None, stance: str | None = None,
         grounding=grounding.facts(_vitals_str(vitals), _machine_blurb(),
                                   context, aware),
     )
+    return prompt + _memory_block() + temper_line()
 
 _history: collections.deque = collections.deque(maxlen=8)
 _lock = asyncio.Lock()
@@ -161,11 +233,13 @@ def _clean_line(raw: str | None) -> str | None:
 
 
 def _chatter_dup(line: str) -> bool:
-    """True if she already said (nearly) this — as chatter or as a reply."""
+    """True if she already said (nearly) this — now, earlier in RAM, OR in
+    any previous session (the persisted journal in memory.supplied said-set)."""
     n = _norm_line(line)
     said = {_norm_line(t) for t in _recent}
     said |= {_norm_line(str(m["content"])) for m in _history
              if m["role"] == "assistant"}
+    said |= memory.said_set()          # persisted; empty until memory.load()
     return n in said
 
 _current = 0            # index into config.PROVIDERS of the sticky winner
@@ -223,6 +297,9 @@ async def _generate(user_text: str, vitals: dict | None,
     if reply is not None:
         _history.append({"role": "user", "content": user_text})
         _history.append({"role": "assistant", "content": reply})
+        memory.record("user", user_text)   # her dated past: both sides
+        memory.note_said(reply)
+        memory.record("her", reply)
     return reply
 
 
@@ -245,10 +322,12 @@ async def _grounded(reply: str, messages: list, user_text: str,
 
 def add_assistant(text: str) -> None:
     """Record a line she said without a user prompt (proactive chatter), so
-    the next real exchange knows she just said that."""
+    the next real exchange knows she just said that. Also journals it."""
     if text:
         _history.append({"role": "assistant", "content": text})
         _recent.append(text)
+        memory.note_said(text)
+        memory.record("thought", text)
 
 
 def _llm_once_sync(provider: dict, messages: list,
