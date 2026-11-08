@@ -256,11 +256,16 @@ def sync_enabled() -> bool:
                 and shutil.which("git"))
 
 
-def _git(*args: str, cwd: str = path() and str(config.SANDBOX_DIR)) -> tuple:
+def _git(*args: str, cwd: str | None = None) -> tuple:
+    # cwd is resolved at CALL time. (An earlier version froze it into the
+    # default argument at import time — with a test/alt sandbox that made
+    # every git call run in the import-time sandbox, which lives inside the
+    # PROJECT work tree; with real creds that would have committed and pushed
+    # the whole project repo to her sandbox remote. Never again.)
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"        # never hang waiting for a password
-    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True,
-                       text=True, timeout=60, env=env)
+    r = subprocess.run(["git", *args], cwd=cwd or str(config.SANDBOX_DIR),
+                       capture_output=True, text=True, timeout=60, env=env)
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
@@ -269,9 +274,12 @@ def sync_once() -> str | None:
     if not sync_enabled():
         return None
     flush()
-    d = str(config.SANDBOX_DIR)
-    rc, out = _git("rev-parse", "--is-inside-work-tree")
-    if rc != 0:
+    d = Path(str(config.SANDBOX_DIR)).resolve()
+    # The sandbox must be its OWN repo. It lives INSIDE the project work
+    # tree, so "inside a work tree" is always true here — the question is
+    # whether the toplevel is the sandbox itself.
+    rc, top = _git("rev-parse", "--show-toplevel")
+    if not (rc == 0 and Path(top.strip()).resolve() == d):
         rc, out = _git("init", "-b", "main")
         if rc != 0:
             return f"init failed: {out.strip()[:120]}"
@@ -280,7 +288,9 @@ def sync_once() -> str | None:
     _git("add", "-A")
     if _git("diff", "--cached", "--quiet")[0] == 0:
         rc, out = _git("remote", "get-url", "origin")
-        return "clean" if rc == 0 else f"init ok ({out.strip()[:80]})"
+        return ("clean" if rc == 0
+                else "clean (nothing new to push; no origin — is "
+                     "REMIX_MEMORY_REPO right?)")
     _git("commit", "-q", "-m",
          "journal " + time.strftime("%Y-%m-%d %H:%M"))
     # Token goes in the push URL only — never stored in .git/config.
@@ -291,6 +301,9 @@ def sync_once() -> str | None:
     rc, out = _git("push", "--quiet", authed, "HEAD:main")
     _git("remote", "remove", "origin") if _git(
         "remote", "get-url", "origin")[0] == 0 else None
+    # Git echoes the authed URL in network-failure messages; never let the
+    # token reach the return value (it would land in the log).
+    out = out.replace(config.MEMORY_TOKEN, "***")
     if rc != 0:
         return f"push failed: {out.strip()[:120]}"
     return "pushed"

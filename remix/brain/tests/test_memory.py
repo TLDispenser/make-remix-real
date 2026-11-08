@@ -134,3 +134,33 @@ class SandboxSyncTests(MemoryBase):
 
     def test_sync_once_noop_when_disabled(self):
         self.assertIsNone(memory.sync_once())
+
+    def test_git_cwd_resolves_at_call_time(self):
+        """Regression: _git's default cwd was once frozen at import time, so
+        with a swapped sandbox it ran git in the real one — inside the
+        project work tree, which it then mistook for 'her repo'."""
+        d = tempfile.mkdtemp()          # outside any repo
+        saved = (config.SANDBOX_DIR, config.MEMORY_JSON)
+        config.SANDBOX_DIR = d
+        config.MEMORY_JSON = os.path.join(d, "memory.json")
+        try:
+            rc, _top = memory._git("rev-parse", "--show-toplevel")
+            self.assertNotEqual(0, rc)   # a bare temp dir has no repo
+        finally:
+            (config.SANDBOX_DIR, config.MEMORY_JSON) = saved
+
+    def test_enclosing_repo_is_not_her_repo(self):
+        """The dangerous case, reproduced exactly: a sandbox with no .git of
+        its own nested INSIDE another repo. Old detection said 'repo exists,
+        skip init' and would have added/committed the enclosing project.
+        sync_once's toplevel comparison must reject it."""
+        outer = tempfile.mkdtemp()
+        sandbox = os.path.join(outer, "brain", "sandbox")
+        os.makedirs(sandbox)
+        memory._git("init", "-q", cwd=outer)
+        rc, top = memory._git("rev-parse", "--show-toplevel", cwd=sandbox)
+        self.assertEqual(0, rc)      # it IS inside a work tree...
+        self.assertNotEqual(os.path.realpath(top.strip()),
+                            os.path.realpath(sandbox))  # ...but not HERS
+
+
