@@ -25,16 +25,17 @@ does not require it).
 
 | type | fields | effect |
 |---|---|---|
-| `pose` | `pose`, optional `look: [x,y]` | switch pose. `look` absent = mood's default gaze or centered |
+| `pose` | `pose` and/or `eyes` / `mouth`, optional `look: [x,y]` | set the face. `pose` = a shortcut that sets BOTH units; `eyes` / `mouth` set one unit each and override `pose`; an omitted unit stays as it is; unknown names are ignored. Gaze: `look` if given, else kept when the eyes don't change, re-centered when they do |
 | `look` | `look: [x,y]` (-1..1) | move gaze without changing pose |
 | `perform` | `id`, `audio` (absolute path to PCM WAV), `cues[]`, optional `then` | speak with acting (below) |
 | `stop` | | cancel the running performance (reports `ok:false`) |
 | `mouth` | `level` 0..1 | drive the mouth yourself (streaming TTS you measure); held for 0.25 s |
 | `twitch` | | one bottom-lid twitch now |
 | `listening` | `state: "start"/"stop"` | mic-live marker (pale blue, top-right) while push-to-talk is held |
-| `notice` | `text`, optional `seconds` (4) | the ONLY text she ever shows (muted / volume low) |
+| `notice` | `text`, optional `seconds` (4) | her one caption/status line (word-wrapped; muted, volume low, no-voice captions, mic problems) |
+| `transcript` | `text`, optional `seconds` (4) | what the mic heard, on a dim line at the top (`you: ...`) |
 | `theme` | `color: "#rrggbb"` | face color |
-| `vitals`, `event` | any | passed through as signals; unused by the face |
+| `vitals`, `event`, `say` | any | passed through as signals; unused by the face (`say` carries her reply text for terminals/logs) |
 | `mood` | `mood`, optional `look` | legacy; mapped to the closest pose (`scripts/face_config.gd`) |
 
 `perform`:
@@ -47,7 +48,9 @@ does not require it).
  "then":{"pose":"default"}}
 ```
 
-- `t` is seconds into the audio. A cue may carry `pose`, `look`, or `twitch`.
+- `t` is seconds into the audio. A cue may carry `pose`, `eyes`, `mouth`, `look`, or `twitch`
+  (`then` takes the same fields). Per-unit cues are how one line gets e.g.
+  `{"t":0,"eyes":"really","mouth":"smirk"}` then `{"t":1.4,"mouth":"pout"}`.
 - A new `perform` cancels the running one (you get `perform_done` ok=false for it).
 - Missing/unreadable audio: all cues apply at once, `then` applies, and you get
   `perform_done` with `ok:false, error:"audio"`. (Use this for muted/no-voice lines.)
@@ -57,15 +60,23 @@ does not require it).
 
 | type | fields | when |
 |---|---|---|
-| `ready` | `poses[]`, `moods[]` | every time the socket opens; use `poses` as Jev's option list |
+| `ready` | `poses[]`, `eyes[]`, `mouths[]`, `moods[]` | every time the socket opens; `eyes` / `mouths` are Jev's option lists |
+| `context` | `window [w,h]`, `screen [w,h]`, `screen_index`, `area_fraction`, `face_scale`, `dpi_scale`, `focused` | on connect, and (debounced) whenever the window or screen changes; the brain tells her where she is |
 | `perform_done` | `id`, `ok`, optional `error` | performance ended (finished, cancelled, or failed) |
+| `user_text` | `text` | a line typed into the on-screen text bar |
+| `user_typing` | | you are typing in the bar (throttled): the brain answers with an instant "thinking" look |
+| `ptt` | `state: "start"/"stop"` | focused-window fallback push-to-talk (hold **F2**); the brain does the recording |
 
-## Poses and limits
+## Eyes, mouths, poses and limits
 
-Poses are whatever `ready.poses` says (today: default, anger, smirk, pout, spooked,
-tired, tsun). Moods without art map to the closest pose (happy -> smirk,
-stressed/alert -> spooked, sleepy -> tired, bored -> pout, thinking -> default
-looking up-left, listening -> default). Gaze limits, mouth-widening caps, blink
-rules and the Spooked "no mouth unless sound" rule live in `scripts/face_config.gd`.
-The brain never sends coordinates; it picks a pose and a look and the pose decides
-how far things may move.
+Eyes and mouth are two independent units. Your 7 drawings give 7 eye shapes
+(`default anger bottomlid really spooked tired tsun`) and 7 mouth shapes
+(`default anger smirk pout trauma tsun none`), so any of 49 faces can be sent.
+(`"Tired/Trauma"` = tired eyes + trauma mouth, `"Really?"/Pout` = really eyes + pout
+mouth, `BottomEyeLid + SmirkMouth` = bottomlid eyes + smirk mouth.) A **pose** is a
+named eyes+mouth pair (the original 7: default, anger, smirk, pout, spooked, tired,
+tsun) and mood words map to one (happy -> smirk, bored -> pout, ...; a few map to
+mixed faces: deadpan, skeptical, sheepish, numb). `none` = no mouth unless she makes
+sound. Gaze limits, mouth-widening caps, blink rules and trembling live in
+`scripts/face_config.gd`, per eye shape and per mouth shape. The brain never sends
+coordinates; it picks eyes, a mouth and a look and the shapes decide how far things move.

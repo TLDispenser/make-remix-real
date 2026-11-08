@@ -298,3 +298,71 @@ string -> 404 -> no reply available. Lesson: rotation code was right, the
 config was stale; `.env` now says `gemini-3.5-flash-lite`. Brain restarts
 need `setsid` — nohup'd children die when the harness reaps the process
 group.
+
+## Voice, faces, grounding (2026-11-07)
+- **TTS:** `espeak-ng --stdin --stdout` (non-AI, per the locked constraint) -> per-beat WAV, joined with a
+  0.2 s gap into one 22.05 kHz mono s16 file; beat starts become `perform` cue times. Verified here with
+  real espeak-ng 1.51 and a real Godot 4.7 playing the file (`perform_done ok=true`).
+- **STT:** faster-whisper on a float32 array (no WAV encoding), VAD on, `condition_on_previous_text=False`,
+  silence/phantom filtering. Recorder auto-detect: `parec` -> `pw-record` -> `arecord`. NOT verified here:
+  a real whisper model download (huggingface.co is blocked in the build sandbox) and a real PipeWire mic;
+  both were tested through fakes (fake recorder process, fake model).
+- **Hyprland release binds are `bindr`**, not an `up` argument (the earlier draft was wrong).
+- **Jev smirk diagnosis (from brain.log):** 30/30 reactions were `pose=smirk`, stance confidence 0.3-0.8, per-beat
+  poses asked BEFORE her words existed (so identical), scene text said "sarcastic", argmax every time. Fixed by
+  separate eyes/mouth questions, neutral scene text, sampling from `probabilities` with a repeat penalty, and a
+  post-words acting call. NOT verified against live Jev (no key in the build sandbox): the `probabilities`
+  shape is handled as dict or list and degrades to the top `choice` if it differs.
+- **Hallucination diagnosis:** the sysprompt's own example asserted "forty fucking tabs open"; nothing told her
+  what she can't see. Fixed with an explicit "what you can see" block + a reply screen (grounding.py).
+
+## Loose-ends pass (2026-11-08): naming, text rule, Hyprland syntax, stance, tests
+
+- **`CORE_*` -> `REMIX_*` (45 settings).** config.py reads `REMIX_<name>` first,
+  legacy `CORE_<name>` second, so the existing `.env` (still CORE_-named, keys
+  seen but never printed) keeps working until it is rewritten. `.env.example`,
+  README, run.sh, comments updated. `JEV_*` was never prefixed and stays.
+- **`.gitignore` fixed:** it ignored `remix/brain/.venv/` but the venv lives at
+  `remix/.venv` (~477 MB was one `git add` away from a commit). `.env` was and
+  remains ignored. Reminder: the shared zip contained `.env` with two live keys
+  — rotate both (Jev + z.ai) on the user side.
+- **On-screen text rule enforced (was violated by RuleBrain flavor notices).**
+  New `brain/audio.py`: `wpctl get-volume @DEFAULT_AUDIO_SINK@` (WirePlumber
+  0.5.x manual verified: output `Volume: 0.68`, gains `[MUTED]` when muted);
+  muted or volume <= `REMIX_QUIET_VOLUME` (0.15) = "quiet" -> flavor text
+  allowed; audible -> suppressed. Refreshed off-loop every 5 s (cache), fails
+  OPEN to text when wpctl is missing/broken (pre-gate behavior), and
+  `REMIX_NOTICE_GATE=0` disables. A suppressed attempt still consumes the >=4
+  min notice gap (at most one try per gap). Cutesy notice lines rewritten dry
+  ("choo-choo motif", "heart: warmer" gone). DECISION: the mic-transcript line,
+  "one sec", and ear-problem notices are exempt — functional/privacy, not
+  flavor (she must always be checkable about what was heard).
+- **Hyprland window rules (verified against the wiki + 0.53-era forum configs):
+  `windowrulev2` is deprecated since 0.53**; current form is
+  `windowrule = match:title ^Remix$, float on, pin on, no_initial_focus on`
+  (matchers carry a `match:` prefix; a Lua `hl.window_rule({...})` form also
+  exists for 0.55+ configs). README checklist + hyprland-setup.md updated.
+  The click-through question (XWayland vs tight window) is still the user's call.
+- **Jev stance lopsidedness (live log: playful 40 / flat 26 / annoyed 2 /
+  alarmed 1 / fond 0 / concerned 0):** the stance question gave Jev no trigger
+  guidance. The react question now maps triggers explicitly (sad/hurt/worried ->
+  concerned; praise/warmth -> fond; insults -> annoyed; scary system -> alarmed;
+  teasing -> playful; flat only as the resting stance). Measuring it needs real
+  credits: `brain/tools/stance_probe.py` runs a 20-line battery (one call per
+  line, `--yes` required) and prints the spread + never-fired stances. NOT run
+  here (no key in the build sandbox) — first thing to run on her machine.
+- **Godot tests rewritten for the ribbon mouth** (Godot 4.7-stable headless,
+  run in the build sandbox): engine_test's old "mouth widens" check referenced
+  the removed `widen` key (would crash: "Invalid get index"); replaced with the
+  shipped contract — mouth OPENS (thickness, capped per shape's `open`), never
+  gets longer, rests when quiet. perform_test now tracks `mouth_open_scale`
+  (opens while loud, rests in the quiet gap) instead of mouth width. NEW
+  `tests/talk_test.gd` covers the TALK_* handoff deterministically: sub-threshold
+  level keeps the expression mouth, sound flips to the straight bar re-seated at
+  the expression's height with the shape's `open` cap, mid-speech mouth swaps
+  re-seat the bar, TALK_RELEASE returns the expression. `run_all.sh` runs it.
+  Full suite: SHAPES/ENGINE/TALK/PROTOCOL/PERFORM/E2E **ALL GREEN**.
+- **Specs de-staled:** CORE_SPEC.md carries a SUPERSEDED banner (history only);
+  NEW_SPEC.md got a reality pass (right brain = $0 pool, TTS = espeak-ng,
+  protocol v2 pointer, actual folder layout, mood-vocabulary annotation, sysprompt
+  pointer to speech.py). README now points to NEW_SPEC.md.

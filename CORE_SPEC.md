@@ -1,5 +1,12 @@
 # CORE: a PC-as-avatar with a two-brain architecture
 
+> **SUPERSEDED (2026-11-08) — kept for history only.** This was the original
+> spec ("Core"). The project was renamed to **Remix** and re-specced in
+> [NEW_SPEC.md](NEW_SPEC.md); the character/face system, the $0-LLM and
+> non-AI-TTS constraints, and the protocol all moved on. NEW_SPEC.md,
+> remix/godot/PROTOCOL.md (protocol v2 contract) and RESEARCH_NOTES.md
+> (everything verified) are the live documents. Do not build from this file.
+
 Build a desktop companion whose "body" is the user's PC itself. A Godot 4 app renders a living avatar. Real system vitals drive its mood. A fast "left brain" (TypeSafe's Jev, a System One model) makes instant decisions. A slow "right brain" (an LLM) writes the actual words.
 
 ---

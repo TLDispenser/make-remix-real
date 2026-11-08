@@ -18,26 +18,20 @@ from . import config
 PROTOCOL_VERSION = 2
 _clients: Set[ServerConnection] = set()
 
-# Single-callback hooks (main.py wires them; None = ignore).
-_cb_ready: Optional[Callable[[dict], None]] = None
-_cb_perform_done: Optional[Callable[[dict], None]] = None
-_cb_user_text: Optional[Callable[[dict], None]] = None
+# One callback per incoming message type (main.py wires them; none = ignore).
+# Types: ready, perform_done, context, user_text, user_typing, ptt.
+_handlers: dict = {}
 
 
-def on_ready(cb: Callable[[dict], None]) -> None:
-    global _cb_ready
-    _cb_ready = cb
+def on(kind: str, cb: Callable[[dict], None]) -> None:
+    _handlers[kind] = cb
 
 
-def on_perform_done(cb: Callable[[dict], None]) -> None:
-    global _cb_perform_done
-    _cb_perform_done = cb
-
-
-def on_user_text(cb: Callable[[dict], None]) -> None:
-    """Text from the terminal REPL (tools/terminal.py) or Godot typing."""
-    global _cb_user_text
-    _cb_user_text = cb
+def on_ready(cb): on("ready", cb)
+def on_perform_done(cb): on("perform_done", cb)
+def on_user_text(cb):
+    """Text from the terminal REPL (tools/terminal.py) or the Godot input bar."""
+    on("user_text", cb)
 
 
 def _wrap(msg: dict) -> str:
@@ -50,14 +44,14 @@ async def _handle_incoming(raw: str) -> None:
         m = json.loads(raw)
     except (TypeError, ValueError):
         return
-    kind = m.get("type")
-    if kind == "ready" and _cb_ready:
-        _cb_ready(m)
-    elif kind == "perform_done" and _cb_perform_done:
-        _cb_perform_done(m)
-    elif kind == "user_text" and _cb_user_text:
-        _cb_user_text(m)  # long pipelines MUST schedule their own task
-    # future kinds (user_typing / ui) land here.
+    if not isinstance(m, dict):
+        return
+    cb = _handlers.get(m.get("type"))
+    if cb:
+        try:
+            cb(m)  # long pipelines MUST schedule their own task
+        except Exception as e:
+            print(f"remix-brain: handler for {m.get('type')!r} raised {e!r}")
 
 
 async def _handler(websocket: ServerConnection) -> None:

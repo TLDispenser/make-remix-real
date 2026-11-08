@@ -1,5 +1,5 @@
 # Machine-generated / secrets
-remix/brain/.venv/
+remix/.venv/
 remix/.env
 remix/brain/memory.json
 remix/brain/brain.log

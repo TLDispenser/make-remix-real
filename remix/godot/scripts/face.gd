@@ -1,16 +1,23 @@
 # face.gd: Remix's face engine.
 #
 # The face is two UNITS: the eyes (both, together) and the mouth (one piece).
-# Each pose (scripts/face_shapes.gd, generated from art/faces/*.svg) is a set of
-# 10-point ribbon polygons. Springs pull every point toward the current pose,
-# so any pose eases into any other, and changing your mind mid-move stays smooth.
+# They are chosen INDEPENDENTLY: any eye shape can pair with any mouth shape
+# (face_config.gd: 7 eyes x 7 mouths). A "pose" is only a named shortcut for one
+# eyes+mouth pair. Each shape (scripts/face_shapes.gd, generated from
+# art/faces/*.svg) is a 10-point ribbon polygon. Springs pull every point toward
+# the current shapes, so anything eases into anything, and changing your mind
+# mid-move stays smooth.
 #
-# On top of the pose, additively:
+# On top of the shapes, additively:
 #   look      the brain's gaze (-1..1, -1..1): shifts the eye unit a lot and the
 #             mouth unit a little, never beyond that pose's limits (face_config.gd)
-#   speech    audio level widens the WHOLE mouth (proportional), capped per pose
+#   speech    audio level OPENS the whole mouth: every rung of the mouth ribbon
+#             thickens by the same factor about its own midpoint, up to the mouth's
+#             `open` multiplier (face_config.gd). Same spine, same length, fatter.
+#   lipsync   while she talks the mouth becomes a straight bar (face_config.gd
+#             TALK_*) and returns to her expression's mouth after the sound stops.
 #   blink     the eye unit squashes to a line (not in every pose)
-#   twitch    brief bottom-lid flick (the "smirk" eye shape), poses opt in
+#   twitch    brief bottom-lid flick (the "bottomlid" eye shape), eye shapes opt in
 #   life      breathing glow, tiny gaze drift, tremble (Spooked)
 #
 # Godot draws only. Everything that decides WHICH pose lives in the brain.
@@ -30,11 +37,12 @@ const EYE_KEYS := ["left_eye", "right_eye"]
 @export var level_attack := 42.0     # mouth opens fast ...
 @export var level_release := 14.0    # ... and closes a bit slower
 
-var pose_name := FaceConfig.DEFAULT_POSE
+var eyes_name := "default"
+var mouth_name := "default"
+var pose_name := FaceConfig.DEFAULT_POSE   # shortcut name if eyes+mouth match one, else "eyes/mouth"
 var look := Vector2.ZERO
 
 var _shapes: Dictionary = {}
-var _cfg: Dictionary = {}
 
 var _cur := {}   # feature -> PackedVector2Array (live geometry)
 var _vel := {}
@@ -68,18 +76,26 @@ var _twitch_in := 12.0
 var _twitch_left := 0.0
 
 var _level_raw := 0.0
-var level := 0.0           # smoothed 0..1 (drives mouth widening)
+var level := 0.0           # smoothed 0..1 (drives mouth opening)
 var speaking := false
+var _talking := false      # mouth is currently the straight talking bar
+var _talk_hold := 0.0      # seconds left before it returns to the expression mouth
 
 
 func _ready() -> void:
 	_shapes = FaceShapes.all()
-	_cfg = FaceConfig.POSES
-	var start: Dictionary = _shapes[FaceConfig.DEFAULT_POSE]
-	for key in ["left_eye", "right_eye", "mouth"]:
-		_cur[key] = PackedVector2Array(start[key])
+	var d: Dictionary = FaceConfig.resolve(FaceConfig.DEFAULT_POSE)
+	eyes_name = d["eyes"]
+	mouth_name = d["mouth"]
+	var e_src: Dictionary = _shapes[_ecfg()["src"]]
+	var m_src: Dictionary = _shapes[_mcfg()["src"]]
+	for key in ["left_eye", "right_eye"]:
+		_cur[key] = PackedVector2Array(e_src[key])
 		_vel[key] = _zeros(POINTS)
-		_tgt[key] = PackedVector2Array(start[key])
+		_tgt[key] = PackedVector2Array(e_src[key])
+	_cur["mouth"] = PackedVector2Array(m_src["mouth"])
+	_vel["mouth"] = _zeros(POINTS)
+	_tgt["mouth"] = PackedVector2Array(m_src["mouth"])
 	for i in 4:
 		_ln_a.append(Vector2.ZERO)
 		_ln_b.append(Vector2.ZERO)
@@ -94,25 +110,50 @@ func _ready() -> void:
 
 # ------------------------------------------------------------------ public API
 
+## Named shortcuts (your original 7 drawings).
 func poses() -> Array:
-	return _shapes.keys()
+	return FaceConfig.POSES.keys()
 
 
-## Switch pose. `new_look` (Vector2, -1..1) defaults to the mood's own gaze or
-## centered. Unknown names fall back to the default pose.
+func eyes_list() -> Array:
+	return FaceConfig.EYES.keys()
+
+
+func mouths_list() -> Array:
+	return FaceConfig.MOUTHS.keys()
+
+
+## Switch to a named pose / mood (sets BOTH eyes and mouth). `new_look` (Vector2,
+## -1..1) defaults to the mood's own gaze or centered. Unknown names fall back
+## to the default pose.
 func set_pose(name: String, new_look: Variant = null) -> void:
 	var r := FaceConfig.resolve(name)
-	var key: String = r["pose"]
-	var gaze: Vector2 = Vector2.ZERO
-	if new_look is Vector2:
-		gaze = new_look
-	elif r.has("look"):
+	var gaze: Variant = new_look
+	if not (gaze is Vector2) and r.has("look"):
 		gaze = r["look"]
-	elif key == pose_name:
-		gaze = look
-	pose_name = key
-	look = _clamp_look(gaze)
-	_retarget(true)
+	set_face(String(r["eyes"]), String(r["mouth"]), gaze)
+
+
+## Set the eyes and/or the mouth independently. "" keeps that unit as it is.
+## Unknown names are ignored (the unit stays as it was). Gaze: `new_look` if
+## given; otherwise it is kept when the EYES don't change and re-centered when
+## they do (a mouth-only change never moves her gaze).
+func set_face(eyes: String = "", mouth: String = "", new_look: Variant = null) -> void:
+	var e := eyes.strip_edges().to_lower()
+	var m := mouth.strip_edges().to_lower()
+	var eyes_changed := false
+	if e != "" and FaceConfig.has_eyes(e) and e != eyes_name:
+		eyes_name = e
+		eyes_changed = true
+	if m != "" and FaceConfig.has_mouth(m):
+		mouth_name = m
+	var named := FaceConfig.pose_for(eyes_name, mouth_name)
+	pose_name = named if named != "" else "%s/%s" % [eyes_name, mouth_name]
+	if new_look is Vector2:
+		look = _clamp_look(new_look)
+	elif eyes_changed:
+		look = Vector2.ZERO
+	_retarget(eyes_changed)
 
 
 func set_look(v: Vector2) -> void:
@@ -126,7 +167,7 @@ func set_level(v: float) -> void:
 
 func set_speaking(on: bool) -> void:
 	speaking = on
-	_scalar_target("mouth", 1.0 if (_cfg[pose_name]["mouth_when_silent"] or on) else 0.0)
+	_scalar_target("mouth", 1.0 if (_mcfg()["silent"] or on) else 0.0)
 
 
 func twitch() -> void:
@@ -150,18 +191,30 @@ func is_active() -> bool:
 
 
 func debug_cycle(step: int) -> void:
-	var keys: Array = _shapes.keys()
+	var keys: Array = poses()
 	var i: int = keys.find(pose_name)
 	set_pose(String(keys[wrapi(i + step, 0, keys.size())]))
+
+
+func debug_cycle_eyes(step: int) -> void:
+	var keys: Array = eyes_list()
+	set_face(String(keys[wrapi(keys.find(eyes_name) + step, 0, keys.size())]), "")
+
+
+func debug_cycle_mouth(step: int) -> void:
+	var keys: Array = mouths_list()
+	set_face("", String(keys[wrapi(keys.find(mouth_name) + step, 0, keys.size())]))
 
 
 ## Live numbers for tests and the debug overlay.
 func snapshot() -> Dictionary:
 	return {
-		"pose": pose_name, "look": look, "eye_off": _eye_off, "mouth_off": _mouth_off,
+		"pose": pose_name, "eyes": eyes_name, "mouth": mouth_name,
+		"look": look, "eye_off": _eye_off, "mouth_off": _mouth_off,
 		"level": level, "mouth_alpha": _sc["mouth"][0], "fill": _sc["fill"][0],
 		"outline": _sc["outline"][0], "lines": _sc["lines"][0],
 		"blink_scale": _blink_scale(), "mouth_width": _mouth_width(),
+		"mouth_height": _mouth_height(), "mouth_open_scale": _mouth_open_scale(),
 	}
 
 
@@ -178,36 +231,72 @@ func _clamp_look(v: Vector2) -> Vector2:
 	return v.limit_length(1.0)
 
 
+func _ecfg() -> Dictionary:
+	return FaceConfig.EYES[eyes_name]
+
+
+func _mcfg() -> Dictionary:
+	return FaceConfig.MOUTHS[mouth_name]
+
+
 func _next_blink_gap() -> float:
-	var gap_mult: float = _cfg[pose_name]["blink_gap"] if _cfg.has(pose_name) else 1.0
-	return randf_range(blink_min_gap, blink_max_gap) * gap_mult
+	return randf_range(blink_min_gap, blink_max_gap) * float(_ecfg()["blink_gap"])
 
 
 func _scalar_target(key: String, v: float) -> void:
 	_sc[key][2] = v
 
 
-## Point the springs at the current pose (plus a twitch override on the eyes).
-func _retarget(pose_changed: bool) -> void:
-	var shape: Dictionary = _shapes[pose_name]
-	var cfg: Dictionary = _cfg[pose_name]
-	var eye_src: Dictionary = _shapes["smirk"] if _twitch_left > 0.0 else shape
+## Point the springs at the current eyes + mouth (plus a twitch override on the eyes).
+func _retarget(eyes_changed: bool) -> void:
+	var eye_shape: Dictionary = _shapes[_ecfg()["src"]]
+	var mouth_shape: Dictionary = _shapes[_mcfg()["src"]]
+	var eye_src: Dictionary = _shapes[FaceConfig.EYES[FaceConfig.TWITCH_EYES]["src"]] \
+			if _twitch_left > 0.0 else eye_shape
 	for key in EYE_KEYS:
 		_tgt[key] = PackedVector2Array(eye_src[key])
-	_tgt["mouth"] = PackedVector2Array(shape["mouth"])
+	_tgt["mouth"] = _mouth_target()
 
-	var outlined: bool = float(shape["eye_outline"]) > 0.0
+	var outlined: bool = float(eye_shape["eye_outline"]) > 0.0
 	_scalar_target("fill", 0.0 if outlined else 1.0)
 	_scalar_target("outline", 1.0 if outlined else 0.0)
 	if outlined:
-		_scalar_target("outline_w", float(shape["eye_outline"]))
-	_scalar_target("mouth", 1.0 if (cfg["mouth_when_silent"] or speaking) else 0.0)
+		_scalar_target("outline_w", float(eye_shape["eye_outline"]))
+	_scalar_target("mouth", 1.0 if (_mcfg()["silent"] or speaking) else 0.0)
 
-	if pose_changed:
-		_retarget_lines(shape)
-		if not cfg["blink"]:
+	if eyes_changed:
+		_retarget_lines(eye_shape)
+		if not _ecfg()["blink"]:
 			_blink_p = -1.0
 		_blink_in = _next_blink_gap()
+
+
+## The mouth the springs aim at: her expression's own mouth, or, while she is
+## talking, a straight bar (lipsync can't hold an angled mouth) sitting at the
+## same height the expression's mouth sits at, so it doesn't hop.
+func _mouth_target() -> PackedVector2Array:
+	var own: PackedVector2Array = _shapes[_mcfg()["src"]]["mouth"]
+	if not _talking:
+		return PackedVector2Array(own)
+	var talk_name := String(_mcfg().get("talk", FaceConfig.TALK_MOUTH))
+	if not FaceConfig.MOUTHS.has(talk_name):
+		talk_name = FaceConfig.TALK_MOUTH
+	var bar: PackedVector2Array = _shapes[FaceConfig.MOUTHS[talk_name]["src"]]["mouth"]
+	var dy := _home_y(own) - _home_y(bar)
+	var out := PackedVector2Array(bar)
+	for i in out.size():
+		out[i] = Vector2(bar[i].x, bar[i].y + dy)
+	return out
+
+
+## Where a mouth "sits": the median height of its rung midpoints (robust to a
+## tick or a tail that sticks out).
+func _home_y(pts: PackedVector2Array) -> float:
+	var ys: Array[float] = []
+	for k in 5:
+		ys.append((pts[k].y + pts[POINTS - 1 - k].y) * 0.5)
+	ys.sort()
+	return ys[2]
 
 
 func _retarget_lines(shape: Dictionary) -> void:
@@ -241,7 +330,8 @@ func _retarget_lines(shape: Dictionary) -> void:
 func _process(delta: float) -> void:
 	delta = minf(delta, 0.05)
 	_t += delta
-	var cfg: Dictionary = _cfg[pose_name]
+	var ecfg: Dictionary = _ecfg()
+	var mcfg: Dictionary = _mcfg()
 
 	# Point springs.
 	for key in ["left_eye", "right_eye", "mouth"]:
@@ -269,8 +359,8 @@ func _process(delta: float) -> void:
 
 	# Unit offsets: gaze scaled by this pose's limits (mouth moves less).
 	# Critically damped on purpose, so a unit can never overshoot its limit.
-	var eye_t: Vector2 = Vector2(look.x * cfg["eye_range"].x, look.y * cfg["eye_range"].y)
-	var mouth_t: Vector2 = Vector2(look.x * cfg["mouth_range"].x, look.y * cfg["mouth_range"].y)
+	var eye_t: Vector2 = Vector2(look.x * ecfg["range"].x, look.y * ecfg["range"].y)
+	var mouth_t: Vector2 = Vector2(look.x * mcfg["range"].x, look.y * mcfg["range"].y)
 	_eye_off_v += ((eye_t - _eye_off) * 120.0 - _eye_off_v * 22.0) * delta
 	_eye_off += _eye_off_v * delta
 	_mouth_off_v += ((mouth_t - _mouth_off) * 100.0 - _mouth_off_v * 20.0) * delta
@@ -280,10 +370,21 @@ func _process(delta: float) -> void:
 	var rate := level_attack if _level_raw > level else level_release
 	level = lerpf(level, _level_raw, 1.0 - exp(-rate * delta))
 
+	# Talking: once sound really opens the mouth it becomes a straight bar, and it
+	# goes back to the expression's mouth only after a short quiet.
+	if level > FaceConfig.TALK_ON_LEVEL:
+		_talk_hold = FaceConfig.TALK_RELEASE
+	elif _talk_hold > 0.0:
+		_talk_hold -= delta
+	var talk_now := _talk_hold > 0.0
+	if talk_now != _talking:
+		_talking = talk_now
+		_retarget(false)
+
 	# Blink.
-	if cfg["blink"]:
+	if ecfg["blink"]:
 		if _blink_p >= 0.0:
-			_blink_p += delta / (blink_seconds / cfg["blink_speed"])
+			_blink_p += delta / (blink_seconds / float(ecfg["blink_speed"]))
 			if _blink_p >= 1.0:
 				_blink_p = -1.0
 				_blink_in = _next_blink_gap()
@@ -298,7 +399,7 @@ func _process(delta: float) -> void:
 		if _twitch_left <= 0.0:
 			_twitch_left = 0.0
 			_retarget(false)
-	elif cfg["twitch"]:
+	elif ecfg["twitch"]:
 		_twitch_in -= delta
 		if _twitch_in <= 0.0:
 			_twitch_in = randf_range(10.0, 25.0)
@@ -324,27 +425,79 @@ func _bbox_center(pts: PackedVector2Array) -> Vector2:
 	return (lo + hi) * 0.5
 
 
+## How far speech has opened the mouth: ONE thickness multiplier used for every
+## part of the mouth. Level 0 = as drawn (1.0x); level 1 = the mouth's `open`.
+func _mouth_open_scale() -> float:
+	if _cur.is_empty():
+		return 1.0
+	return lerpf(1.0, maxf(float(_mcfg()["open"]), 1.0), level)
+
+
+## The mouth after speech has opened it (offsets/gaze are applied later).
+## "rung": each of the ribbon's 5 rungs (point k <-> point 9-k) scales about its
+## own midpoint, so the mouth keeps its spine and gets thicker along its own shape.
+## A rung far longer than the mouth's usual thickness (Pout's tick) is SHAPE, not
+## stroke, so it holds its drawn size (smoothly, so a morph never pops).
+## "whole": everything scales vertically about the overall center.
+func _open_mouth(pts: PackedVector2Array) -> PackedVector2Array:
+	var out := PackedVector2Array(pts)
+	var k_open := _mouth_open_scale()
+	if absf(k_open - 1.0) < 0.001:
+		return out
+	if FaceConfig.MOUTH_OPEN_MODE == "rung":
+		var lens: Array[float] = []
+		for k in 5:
+			lens.append(pts[k].distance_to(pts[POINTS - 1 - k]))
+		var sorted := lens.duplicate()
+		sorted.sort()
+		var typical := maxf(float(sorted[2]), 1.0)   # median rung length
+		for k in 5:
+			var hold := smoothstep(2.0, 4.0, lens[k] / typical)
+			var ks := lerpf(k_open, 1.0, hold)
+			var a := pts[k]
+			var b := pts[POINTS - 1 - k]
+			var mid := (a + b) * 0.5
+			out[k] = mid + (a - mid) * ks
+			out[POINTS - 1 - k] = mid + (b - mid) * ks
+	else:
+		var cy := _bbox_center(pts).y
+		for i in pts.size():
+			out[i] = Vector2(pts[i].x, cy + (pts[i].y - cy) * k_open)
+	return out
+
+
+## Mouth size as drawn now (after speech has opened it).
 func _mouth_width() -> float:
-	var pts: PackedVector2Array = _cur["mouth"] if not _cur.is_empty() else PackedVector2Array([Vector2.ZERO])
-	var lo := pts[0].x
-	var hi := pts[0].x
+	return _mouth_size().x
+
+
+func _mouth_height() -> float:
+	return _mouth_size().y
+
+
+func _mouth_size() -> Vector2:
+	if _cur.is_empty():
+		return Vector2.ZERO
+	var pts := _open_mouth(_cur["mouth"])
+	var lo := pts[0]
+	var hi := pts[0]
 	for p in pts:
-		lo = minf(lo, p.x)
-		hi = maxf(hi, p.x)
-	var widen: float = 1.0 + float(_cfg[pose_name]["widen"]) * level if _cfg.has(pose_name) else 1.0
-	return (hi - lo) * widen
+		lo = lo.min(p)
+		hi = hi.max(p)
+	return hi - lo
 
 
 func _draw() -> void:
 	if _cur.is_empty():
 		return
-	var cfg: Dictionary = _cfg[pose_name]
+	var ecfg: Dictionary = _ecfg()
+	var mcfg: Dictionary = _mcfg()
 	var breath := 0.95 + 0.05 * sin(_t * 1.35)
 	var col := Color(theme_color.r, theme_color.g, theme_color.b, breath)
 
 	var tremble := Vector2.ZERO
-	if cfg["tremble"] > 0.0:
-		tremble = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * float(cfg["tremble"])
+	if float(ecfg["tremble"]) > 0.0:
+		tremble = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * float(ecfg["tremble"])
 	var drift := Vector2(sin(_t * 0.37) * 5.0, sin(_t * 0.21) * 3.0)
 	var eye_off := _eye_off + drift + tremble
 	var mouth_off := _mouth_off + tremble
@@ -368,12 +521,10 @@ func _draw() -> void:
 			var b := _xf_point(_ln_b[i], eye_off, Vector2(0.0, eye_cy), Vector2(1.0, sy))
 			draw_line(a, b, lc, maxf(_ln_w[i], 1.0), true)
 
-	# ---- mouth unit: the ENTIRE mouth widens with sound
+	# ---- mouth unit: the ENTIRE mouth opens with sound (uniformly, per rung)
 	var mouth_a: float = _sc["mouth"][0]
 	if mouth_a > 0.01:
-		var mc := _bbox_center(_cur["mouth"])
-		var wx := 1.0 + float(cfg["widen"]) * level
-		var mpts := _xform(_cur["mouth"], mouth_off, Vector2.ONE, Vector2(mc.x, 0.0), Vector2(wx, 1.0))
+		var mpts := _xform(_open_mouth(_cur["mouth"]), mouth_off, Vector2.ONE, Vector2.ZERO, Vector2.ONE)
 		_fill_ribbon(mpts, _alpha(col, mouth_a))
 
 

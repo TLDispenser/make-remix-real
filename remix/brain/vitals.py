@@ -1,5 +1,5 @@
 # vitals.py — 1 Hz vitals stream. Phase 1: MOCK feed drives everything.
-# Phase 2 flips CORE_MOCK=0 to use real psutil data (same snapshot shape).
+# Phase 2 flips REMIX_MOCK=0 to use real psutil data (same snapshot shape).
 import asyncio
 import random
 
@@ -43,8 +43,8 @@ async def _real_snapshot() -> dict:
 
 async def stream():
     """Yields {'cpu','ram','temp','battery','disk'} every VITALS_INTERVAL_S."""
-    source = _mock_snapshot if config.CORE_MOCK else _real_snapshot
-    if not config.CORE_MOCK:  # prime cpu_percent(interval=None): first read = 0
+    source = _mock_snapshot if config.MOCK else _real_snapshot
+    if not config.MOCK:  # prime cpu_percent(interval=None): first read = 0
         import psutil
         psutil.cpu_percent(interval=None)
     yield await source()

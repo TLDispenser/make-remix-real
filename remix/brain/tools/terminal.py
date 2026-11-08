@@ -5,9 +5,11 @@
     python3 remix/brain/tools/terminal.py "hey there"   # one-shot
 
 Connects to the brain's ws://127.0.0.1:8765 as a second client and sends
-{"type":"user_text","text":...}. The brain's reply surfaces ON HER FACE as a
-subtitle notice + acting cues (Protocol v2); this REPL prints notices and
-perform_done acks it receives back.
+{"type":"user_text","text":...}. Her reply shows on her face (voice + acting,
+or captions when she has no voice) AND prints here as `remix: ...`.
+
+    /talk    open the mic (same as holding push-to-talk); press Enter to stop.
+             Needs the brain's ears (faster-whisper + a recorder, see README).
 """
 import asyncio
 import json
@@ -30,11 +32,15 @@ async def run() -> int:
                 except (TypeError, ValueError):
                     continue
                 kind = m.get("type")
-                if kind == "notice":
-                    print(f"remix says: {m.get('text', '')}")
-                elif kind == "perform_done":
-                    print(f"[perform {m.get('id')} ok={m.get('ok', True)}]")
-                # everything else (pose/look/...) is face business; stay quiet
+                if kind == "say":
+                    print(f"\rremix: {m.get('text', '')}\nyou> ", end="", flush=True)
+                elif kind == "transcript":
+                    print(f"\rheard: {m.get('text', '')}\nyou> ", end="", flush=True)
+                elif kind == "notice":
+                    t = str(m.get("text", ""))
+                    if t.startswith("//") and "one sec" not in t:   # system notices only
+                        print(f"\r{t}\nyou> ", end="", flush=True)
+                # everything else (pose/look/perform/...) is face business; stay quiet
 
         task = asyncio.create_task(reader())
         if one_shot:
@@ -57,6 +63,12 @@ async def run() -> int:
             if line.lower() in {"exit", "quit", ":q"}:
                 task.cancel()
                 return 0
+            if line.lower() == "/talk":
+                await ws.send(json.dumps({"v": 2, "type": "ptt", "state": "start"}))
+                print("(mic open - speak, then press Enter to stop)")
+                await asyncio.to_thread(input, "")
+                await ws.send(json.dumps({"v": 2, "type": "ptt", "state": "stop"}))
+                continue
             await ws.send(json.dumps({"v": 2, "type": "user_text",
                                       "text": line}))
             print("(sent — watch her face)")

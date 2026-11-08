@@ -1,0 +1,20 @@
+Remix update 2026-11-08b — supersedes the earlier zip (has everything)
+
+1) GENERATED CHATTER (no more pre-written pools)
+   proactive.py = local reflex (trigger/stance/situation, never words);
+   speech.py generate_proactive_line() writes the line fresh via the $0 reply
+   pool, grounded + deduped; failure = silence. main.py wires it + re-checks
+   the room after the words exist. config: + REMIX_CHATTER_TIMEOUT_S.
+
+2) OPT-IN-EVERYTHING TITLES (your ask)
+   REMIX_TITLES=off (default) | scrub (all titles, still stripped of
+   emails/URLs/IPs/paths) | raw (untouched, 200-char cap).
+   awareness.py redact() enforces it + poller wires it; grounding widens so
+   she can quote a visible title; /aware shows it; app_stuck chatter can
+   name it. KNOW: titles go to the CLOUD LLM and she may read them aloud.
+
+Overwrite the same paths in your repo with these files:
+  remix/brain/{awareness,config,grounding,main,proactive,speech}.py
+  remix/brain/tests/test_awareness.py   remix/README.md   remix/.env.example
+75 offline tests green (python3 -m unittest discover -s brain/tests -t .
+ from remix/ — the sandbox venv lacks numpy; yours is fine).

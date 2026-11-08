@@ -24,12 +24,22 @@ Shapes the wiki showed for recent versions (verify, don't trust):
 
 Find the real title/class if it doesn't match:  `hyprctl clients | grep -iA3 remix`
 
-## Push-to-talk (later phase)
-Use compositor binds (press = start mic, release = stop + transcribe) that call a
-small script which messages the Python brain, instead of reading raw input devices.
-Keep the bind syntax from the wiki for your version.
+## Push-to-talk
+Hold-to-talk = two binds on the same key: press starts the mic, **release** stops it
+and transcribes. Both just run `remix/ptt.sh start|stop`, which pokes the brain.
+In hyprlang a *release* bind is `bindr` (the `r` flag), NOT an `up` argument:
+
+    bind  = SUPER, M, exec, /path/to/remix/ptt.sh start
+    bindr = SUPER, M, exec, /path/to/remix/ptt.sh stop
+
+Check the wiki (https://wiki.hypr.land/Configuring/Binds/) for your version's syntax
+(Lua configs differ). If you bind a modifier combo and let go of the modifier before the
+letter, some versions skip the release: the brain closes the mic by itself after
+`REMIX_PTT_MAX_PRESS_S` (15 s), so it can never stay open. No compositor setup yet? Focus
+her window and hold **F2** instead, or type `/talk` in `./talk.sh`.
 
 ## Things not verified on real Hyprland (could not test here)
-Per-pixel transparency of the rounded glass corners, click-drag via the compositor,
-and scroll-wheel resizing under a floating rule. If corners show black, your setup
-has no transparency available; the face is unaffected.
+Click-drag via the compositor, scroll-wheel resizing under a floating rule, and how
+your compositor treats her size hints (she is resizable and fits any size she is given).
+There are no rounded corners and no transparency any more, so nothing depends on your
+compositor having a transparency path.

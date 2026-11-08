@@ -7,11 +7,15 @@
 #
 # Protocol v2 is documented in PROTOCOL.md. Short version, brain -> Godot:
 #   {"type":"pose","pose":"anger","look":[0.3,-0.2]}      silent pose change
+#   {"type":"pose","eyes":"tired","mouth":"smirk"}        eyes/mouth mixed freely
 #   {"type":"perform","id":"p1","audio":"/tmp/x.wav",
 #    "cues":[{"t":0.0,"pose":"anger"},{"t":1.8,"pose":"tired","look":[0,0.3]}],
 #    "then":{"pose":"default"}}                            speak with acting
 #   {"type":"look","look":[x,y]}  {"type":"mouth","level":0..1}  {"type":"twitch"}
 #   {"type":"listening","state":"start"|"stop"}  {"type":"notice","text":"..."}
+#   {"type":"transcript","text":"..."}                     what the mic heard
+# Godot -> brain: ready, perform_done, user_text (the input bar), user_typing,
+#   ptt (focused-window hold-to-talk fallback), context (window/screen facts).
 # Old {"type":"mood","mood":"stressed"} messages still work (mapped to poses).
 extends Control
 
@@ -27,7 +31,10 @@ const RECONNECT_DELAY := 2.0
 const VOICE_BUS := "Voice"
 const EXTERNAL_LEVEL_HOLD := 0.25   # seconds an external {"type":"mouth"} level stays "live"
 
-@export var base_window := Vector2i(640, 360)
+## The window is this fraction of the screen per axis: 0.5 = a quarter of the
+## screen's area ("4x smaller than the screen"), on whatever screen she is on.
+@export var screen_fraction := 0.5
+@export var min_window := Vector2i(320, 180)
 @export var fps_idle := 30
 @export var fps_active := 60
 
@@ -40,7 +47,10 @@ var _reconnect_timer := 0.0
 
 var _voice: AudioStreamPlayer
 var _voice_bus := -1
-var _window_scale := 1.0
+var _window_scale := 1.0        # mouse-wheel multiplier on the fitted size
+var _screen_seen := Vector2i.ZERO
+var _screen_poll := 0.0
+var _context_in := -1.0         # >=0: seconds until the debounced context report
 
 # performance (audio + cues)
 var _perf_active := false
@@ -60,6 +70,11 @@ var log_lines: Array = []   # last few protocol events, for tests/debug
 func _ready() -> void:
 	_setup_window()
 	_setup_audio()
+	resized.connect(_layout)
+	get_window().size_changed.connect(_queue_context)
+	hud.text_submitted.connect(_send_text)
+	hud.typing.connect(func() -> void: send_json({"v": PROTOCOL, "type": "user_typing"}))
+	_layout()
 	_ws.connect_to_url(WS_URL)
 
 
@@ -69,8 +84,81 @@ func _setup_window() -> void:
 	w.borderless = true
 	# always_on_top is X11-only; on Hyprland the compositor pins her (tools/hyprland-setup.md).
 	w.always_on_top = true
-	w.size = base_window
+	w.min_size = min_window
+	_fit_window_to_screen()
 	Engine.max_fps = fps_idle
+
+
+# ---------------------------------------------------------- window / context
+
+## Window size for a screen: `fraction` of the screen per axis, in the face's
+## own 16:9 shape, never below `floor_size`. Pure function (unit-tested).
+static func fit_window(screen: Vector2i, fraction: float, floor_size: Vector2i) -> Vector2i:
+	if screen.x <= 0 or screen.y <= 0:
+		return floor_size
+	var aspect := 16.0 / 9.0
+	var w := minf(float(screen.x) * fraction, float(screen.y) * fraction * aspect)
+	var sz := Vector2i(int(roundf(w / 2.0)) * 2, int(roundf(w / aspect / 2.0)) * 2)
+	return Vector2i(maxi(sz.x, floor_size.x), maxi(sz.y, floor_size.y))
+
+
+func _screen_size() -> Vector2i:
+	var w := get_window()
+	var sz := DisplayServer.screen_get_size(w.current_screen)
+	return sz if sz.x > 0 and sz.y > 0 else Vector2i.ZERO
+
+
+func _fit_window_to_screen() -> void:
+	var w := get_window()
+	_screen_seen = _screen_size()
+	var base := fit_window(_screen_seen, screen_fraction, min_window)
+	var center := w.position + w.size / 2
+	w.size = Vector2i(Vector2(base) * _window_scale)
+	w.position = center - w.size / 2   # honored on X11; Hyprland rules decide on Wayland
+	_queue_context()
+
+
+## The face fills whatever canvas it is given: always centered, scaled to fit.
+## (Design space is the 1920x1080 SVG canvas.) Works at any window size/shape.
+func _layout() -> void:
+	if size.x <= 0.0 or size.y <= 0.0 or face == null:
+		return
+	var fit := minf(size.x / 1920.0, size.y / 1080.0)
+	face.position = size / 2.0
+	face.scale = Vector2(fit, fit)
+
+
+func _queue_context() -> void:
+	_context_in = 0.4   # debounce: resizing fires many size_changed
+
+
+## Facts about where she is displayed. Sent to the brain so she can know.
+func context() -> Dictionary:
+	var w := get_window()
+	var scr := _screen_size()
+	var area := 0.0
+	if scr.x > 0 and scr.y > 0:
+		area = float(w.size.x) * float(w.size.y) / (float(scr.x) * float(scr.y))
+	return {"v": PROTOCOL, "type": "context",
+		"window": [w.size.x, w.size.y], "screen": [scr.x, scr.y],
+		"screen_index": w.current_screen,
+		"area_fraction": snappedf(area, 0.001),
+		"face_scale": snappedf(face.scale.x, 0.001),
+		"dpi_scale": snappedf(DisplayServer.screen_get_scale(w.current_screen), 0.01),
+		"focused": w.has_focus()}
+
+
+func _tick_context(delta: float) -> void:
+	_screen_poll -= delta
+	if _screen_poll <= 0.0:
+		_screen_poll = 2.0
+		var now := _screen_size()
+		if now != Vector2i.ZERO and now != _screen_seen:   # new monitor / resolution
+			_fit_window_to_screen()
+	if _context_in >= 0.0:
+		_context_in -= delta
+		if _context_in < 0.0:
+			send_json(context())
 
 
 func _setup_audio() -> void:
@@ -90,6 +178,7 @@ func _setup_audio() -> void:
 
 func _process(delta: float) -> void:
 	_poll_socket(delta)
+	_tick_context(delta)
 	_tick_performance()
 	_tick_external_level(delta)
 	_fps_timer -= delta
@@ -124,13 +213,21 @@ func _set_online(open: bool) -> void:
 	brain_online.emit(open)
 	if open:
 		send_json({"v": PROTOCOL, "type": "ready", "poses": face.poses(),
+			"eyes": face.eyes_list(), "mouths": face.mouths_list(),
 			"moods": FaceConfig.ALIASES.keys()})
+		send_json(context())
 	else:
 		_finish_performance(false)
 		hud.set_mic(false)
 
 
+## Tests set this to capture outgoing messages without a socket.
+var send_json_hook: Callable = Callable()
+
+
 func send_json(msg: Dictionary) -> void:
+	if send_json_hook.is_valid():
+		send_json_hook.call(msg)
 	if _open:
 		_ws.send_text(JSON.stringify(msg))
 
@@ -152,7 +249,7 @@ func _handle(raw: String) -> void:
 	_log(kind)
 	match kind:
 		"pose":
-			face.set_pose(String(d.get("pose", "default")), _vec(d.get("look")))
+			_apply_face(d)
 		"mood":  # legacy protocol
 			face.set_pose(String(d.get("mood", "idle")), _vec(d.get("look")))
 		"look":
@@ -170,6 +267,10 @@ func _handle(raw: String) -> void:
 			face.twitch()
 		"listening":
 			hud.set_mic(String(d.get("state", "stop")) == "start")
+		"transcript":
+			var heard := String(d.get("text", "")).strip_edges()
+			if heard != "":
+				hud.show_heard("you: " + heard, float(d.get("seconds", 4.0)))
 		"notice":
 			hud.show_notice(String(d.get("text", "")), float(d.get("seconds", 4.0)))
 		"theme":
@@ -183,6 +284,27 @@ func _handle(raw: String) -> void:
 			event_fired.emit(String(d.get("name", "")))
 		_:
 			pass  # "say", "reflex_line" and unknown types: nothing is displayed
+
+
+## A pose/cue/then spec: {pose?, eyes?, mouth?, look?}. `pose` is the preset
+## shortcut (both units); `eyes` / `mouth` then override one unit each. With none
+## of the three the face goes to the default pose. Unknown eyes/mouth are ignored.
+func _apply_face(d: Dictionary) -> void:
+	var look: Variant = _vec(d.get("look"))
+	var eyes := String(d.get("eyes", ""))
+	var mouth := String(d.get("mouth", ""))
+	if d.has("pose") or (eyes == "" and mouth == ""):
+		face.set_pose(String(d.get("pose", "default")), look)
+	if eyes != "" or mouth != "":
+		face.set_face(eyes, mouth, look)
+
+
+func _send_text(text: String) -> void:
+	hud.show_heard("you: " + text, 2.5)
+	if _open or send_json_hook.is_valid():
+		send_json({"v": PROTOCOL, "type": "user_text", "text": text})
+	else:
+		hud.show_notice("// my brain isn't running //", 3.0)
 
 
 func _log(kind: String) -> void:
@@ -238,8 +360,8 @@ func _fire_due_cues(pos: float) -> void:
 
 
 func _apply_cue(c: Dictionary) -> void:
-	if c.has("pose"):
-		face.set_pose(String(c["pose"]), _vec(c.get("look")))
+	if c.has("pose") or c.has("eyes") or c.has("mouth"):
+		_apply_face(c)
 	elif c.has("look"):
 		var l: Variant = _vec(c["look"])
 		if l != null:
@@ -258,7 +380,7 @@ func _finish_performance(ok: bool, error: String = "") -> void:
 	face.set_speaking(false)
 	face.set_level(0.0)
 	if not _perf_then.is_empty():
-		face.set_pose(String(_perf_then.get("pose", "default")), _vec(_perf_then.get("look")))
+		_apply_face(_perf_then)
 	var report := {"v": PROTOCOL, "type": "perform_done", "id": id, "ok": ok}
 	if error != "":
 		report["error"] = error
@@ -303,19 +425,44 @@ func _gui_input(event: InputEvent) -> void:
 
 func _rescale(step: float) -> void:
 	_window_scale = clampf(_window_scale + step, 0.5, 2.0)
-	var w := get_window()
-	var center := w.position + w.size / 2
-	w.size = Vector2i(Vector2(base_window) * _window_scale)
-	w.position = center - w.size / 2   # honored on X11; Hyprland rules decide on Wayland
+	_fit_window_to_screen()
 
 
-# Debug keys (window must be focused): F8/F9 cycle poses, F10 twitch.
+# Keys (window must be focused):
+#   Enter or /   open the text bar     Enter sends     Esc closes
+#   hold F2      push-to-talk (fallback when no global hotkey is bound; the
+#                brain does the recording, this only sends start/stop)
+#   F4/F5 mouth, F6/F7 eyes, F8/F9 pose shortcut, F10 twitch   (debug cycling)
 func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		match event.keycode:
-			KEY_F8:
-				face.debug_cycle(1)
-			KEY_F9:
-				face.debug_cycle(-1)
-			KEY_F10:
-				face.twitch()
+	if not (event is InputEventKey):
+		return
+	var k := event as InputEventKey
+	if k.keycode == KEY_F2 and not k.echo:
+		send_json({"v": PROTOCOL, "type": "ptt", "state": "start" if k.pressed else "stop"})
+		get_viewport().set_input_as_handled()
+		return
+	if not k.pressed or k.echo:
+		return
+	if hud.input_open():
+		if k.keycode == KEY_ESCAPE:
+			hud.close_input()
+			get_viewport().set_input_as_handled()
+		return   # everything else belongs to the text bar
+	match k.keycode:
+		KEY_ENTER, KEY_KP_ENTER, KEY_SLASH:
+			hud.open_input()
+			get_viewport().set_input_as_handled()
+		KEY_F4:
+			face.debug_cycle_mouth(-1)
+		KEY_F5:
+			face.debug_cycle_mouth(1)
+		KEY_F6:
+			face.debug_cycle_eyes(-1)
+		KEY_F7:
+			face.debug_cycle_eyes(1)
+		KEY_F8:
+			face.debug_cycle(1)
+		KEY_F9:
+			face.debug_cycle(-1)
+		KEY_F10:
+			face.twitch()

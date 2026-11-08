@@ -4,6 +4,15 @@ Build **Remix**, a desktop companion whose "body" is the user's PC itself. Remix
 
 A Godot 4 app renders a living avatar. Real system vitals drive its mood. A fast "left brain" (TypeSafe's Jev, a System One model) makes instant decisions. A slow "right brain" (an LLM) writes the actual words.
 
+> **Reality pass (2026-11-08), after Phases 0-5 + voice shipped.** Where the
+> build diverged from this text, the divergence won; the big ones, now reflected
+> inline: the right brain is a **$0 provider pool** (GLM-4.7-Flash default) per
+> the user's cost constraint, TTS is **espeak-ng** (Piper is neural -> excluded),
+> the wire protocol is **v2** with the contract living in `remix/godot/PROTOCOL.md`,
+> and the left brain answers with **stance + eyes/mouth face + per-beat acting
+> plans** instead of the mood vocabulary below. Everything verified lives in
+> RESEARCH_NOTES.md.
+
 ---
 
 ## STEP 0: RESEARCH FIRST (MANDATORY, DO NOT SKIP)
@@ -35,13 +44,16 @@ Many things below are new or fast-moving (Jev launched September 2026; Godot, Cl
 - websockets: https://websockets.readthedocs.io (use the current asyncio API, which has changed across versions)
 - Active-window detection: research the current best library for the user's OS (e.g. `pygetwindow`, `pywin32`, `pyobjc`, `xdotool`/`ewmh`). Verify it's maintained.
 
-**Right brain (LLM)**
-- Anthropic API docs: https://docs.claude.com and the models overview page there. **Look up the current model names and pick a fast, cheap one for chat. Do not hardcode from memory; make the model name a config value.**
-- Anthropic Python SDK: check PyPI for the current version and the streaming interface.
-- Optional local alternative: https://ollama.com and its API docs.
+**Right brain (LLM) — user constraint: $0 of any kind (overrides any paid option)**
+- Verified free tiers (2026-11-06, see RESEARCH_NOTES.md): Z.ai GLM-4.7-Flash
+  (permanently $0, default), Google Gemini Flash free tier (backup leg), Groq,
+  OpenRouter `:free`. Anthropic is pay-per-token only -> locked out.
+- Speak generic OpenAI-compatible chat completions; base URL + model are config
+  values, never hardcoded. Provider pool with failover lives in `speech.py`.
 
 **Voice (Phases 5 and 7)**
-- TTS: Piper (find the current maintained repo and voices via search), or pyttsx3 as a zero-setup fallback.
+- TTS: espeak-ng / pyttsx3 (formant synthesis, zero neural models). Piper is
+  neural -> excluded by the user's non-AI-voice constraint (2026-11-05).
 - STT (push-to-talk, local only): faster-whisper or whisper.cpp (check current repos, install steps, and which model sizes run well on the user's hardware; ask whether they have a GPU).
 - Mic capture: `sounddevice` (check current docs) or an equivalent maintained library.
 - Global push-to-talk hotkey: research the current best option for the user's OS (e.g. `pynput`, `keyboard`, or native APIs). **Godot only sees keys while its window is focused, and Remix's window is usually unfocused and click-through, so the hotkey must be captured globally in Python.** Check known limits: macOS needs Accessibility/Input Monitoring permissions, Wayland restricts global key capture, and some libraries need admin rights on Linux. Ask the user which OS and (on Linux) which display server they use.
@@ -95,8 +107,10 @@ Many things below are new or fast-moving (Jev launched September 2026; Godot, Cl
 - Keep replies brief. Dry beats cute. Never gushing, never a cheerful-assistant voice.
 - Keep profanity out unless the user's own style calls for it.
 
-**Right-brain system prompt (starting point; refine with the user):**
-"You are Remix, a sarcastic, deadpan computer who lives on this user's PC. She/her. These are your current vitals: {...}. Respond in first person as the machine, in 1-2 short sentences. You grumble about requests but always help. You are fond of the user and would never admit it. End with a mood tag."
+**Right-brain system prompt:** the user authored it verbatim; it lives in
+`remix/brain/speech.py` (`SYS_PROMPT`) with slots for machine blurb, user name,
+live vitals at reply time, and Jev's stance. (The original "end with a mood tag"
+idea is gone: her face is driven by the left brain, not by tags in the text.)
 
 **Visual identity (from the reference art)**
 - **Mech's design:** a beige CRT monitor for a head, with a vent on the side. A dark screen with a glowing pixel-style face. A dark jacket, white cross-shaped shoulder patches, yellow cable connectors at the wrists, large blocky hands. A voxel look.
@@ -115,6 +129,12 @@ Many things below are new or fast-moving (Jev launched September 2026; Godot, Cl
 
 ## What the left brain decides
 
+(Reality 2026-11-08: silent life is the RuleBrain's alone — vitals -> pose, $0.
+Jev answers ONE typed question set per exchange: stance + instant eyes/mouth
+face + an optional per-beat acting plan after her words exist. The mood
+vocabulary below is the original intent; the shipped vocabulary is Remix's
+pose/eyes/mouth system in `godot/PROTOCOL.md`.)
+
 Define decisions as typed questions about a compact `state` snapshot. Adapt to Jev's real question primitives after reading the docs. Target decisions:
 
 | Decision | Type | Used for |
@@ -132,6 +152,10 @@ Use the confidence values: below a threshold, fall back to a safe default (e.g. 
 Rate-limit left-brain calls (e.g. mood re-eval only when vitals change meaningfully or every N seconds) to control cost and respect API limits found in the docs.
 
 ## Message protocol (JSON over WebSocket)
+
+(Superseded 2026-11-06: protocol **v2**, single source of truth is
+`remix/godot/PROTOCOL.md` — audio-clock `perform` cues, eyes/mouth units,
+`ready`/`context`/`perform_done`. The v1 message list below is history.)
 
 Python -> Godot
 - `{"type":"vitals","cpu":42,"ram":61,"temp":58,"battery":80,"disk":12}`
@@ -155,21 +179,27 @@ Version the protocol (`"v":1`) and keep it documented in `README.md`.
 
 ```
 remix/
-  reference/        character art and scripts (Faces.png, Anger.png, scripts)
-  godot/            project.godot, scenes/, scripts/, assets/
+  references/       character art (Faces.png, Anger.png, SVG poses)
+  godot/            the body: project.godot, scripts/, art/faces/*.svg,
+                    shaders/, tests/ (+ tools/svg_to_shapes.py)
   brain/
-    main.py         asyncio entrypoint
-    vitals.py       psutil + OS-specific sensors
-    awareness.py    active window, idle time, session tracking
-    left_brain.py   LeftBrain interface, JevBrain, RuleBrain
-    right_brain.py  LLM client (streaming), system prompt, memory
-    ws_server.py    WebSocket server + protocol
-    stt.py          push-to-talk capture + local transcription
-    config.py       thresholds, model names, ports (env + config file)
-    memory.json     persistent notes about the user (gitignored)
+    main.py         asyncio entrypoint; the exchange pipeline
+    vitals.py       psutil feed (1 Hz) + mock feed
+    rules.py        RuleBrain ($0 silent life: vitals -> pose/look/notice)
+    jev.py          JevBrain (stance + face + acting plan, budget-gated)
+    faces.py        eye/mouth vocabulary shared by both brains
+    speech.py       right brain: grounded sysprompt, beats, provider pool
+    grounding.py    "what she can see" screen for the reply
+    tts.py          espeak-ng voice, per-beat WAVs -> one perform
+    stt.py          push-to-talk capture + local faster-whisper
+    audio.py        machine mute/volume gate for on-screen text
+    ws_server.py    WebSocket server + protocol v2
+    config.py       thresholds, model names, ports (REMIX_* env; .env)
+    tools/          selftest, terminal, ptt_ctl, stance_probe
+    tests/          offline unittest suite
   RESEARCH_NOTES.md
   README.md
-  .env.example      JEV_API_KEY=, ANTHROPIC_API_KEY=
+  .env.example      JEV_API_KEY=, REMIX_LLM_API_KEY=, ...
 ```
 
 ---

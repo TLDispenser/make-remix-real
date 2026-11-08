@@ -6,13 +6,14 @@ GODOT="${1:-godot}"
 cd "$(dirname "$0")/.."
 fail=0
 run() {  # name, script
-	out=$("$GODOT" --headless --path . --script "res://tests/$2" 2>&1)
-	echo "$out" | grep -E "^(FAIL|[A-Z0-9_]+_(OK|FAILED))" || true
-	if echo "$out" | grep -qE "FAILED|^FAIL |SCRIPT ERROR|^ERROR:"; then echo "$out" | grep -E "SCRIPT ERROR|^ERROR:|^FAIL " | head -5; fail=1; fi
+        out=$("$GODOT" --headless --path . --script "res://tests/$2" 2>&1)
+        echo "$out" | grep -E "^(FAIL|[A-Z0-9_]+_(OK|FAILED))" || true
+        if echo "$out" | grep -qE "FAILED|^FAIL |SCRIPT ERROR|^ERROR:"; then echo "$out" | grep -E "SCRIPT ERROR|^ERROR:|^FAIL " | head -5; fail=1; fi
 }
 "$GODOT" --headless --path . --import >/dev/null 2>&1
 run shapes shapes_audit.gd
 run engine engine_test.gd
+run talk talk_test.gd
 run protocol protocol_test.gd
 run perform perform_test.gd
 # end to end: fake brain + real Godot

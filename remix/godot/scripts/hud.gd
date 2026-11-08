@@ -1,32 +1,108 @@
 # hud.gd: the only non-face things on screen.
 #   - a small mic-live marker (pale blue-white, so it can never be mistaken for a mood)
-#   - a quiet notice line, ONLY when the brain asks for one (muted / volume low).
-# Remix does not otherwise show text.
+#   - a quiet notice line (word-wrapped), ONLY when the brain asks for one
+#     (muted / volume low / subtitles when she has no voice)
+#   - a dim "heard" line at the top: what the mic caught, or what you just typed
+#   - a text-input bar (Enter opens it, Enter sends, Esc closes)
+# Remix does not otherwise show text. Everything is square-cornered (pixel art).
 extends Control
 
+signal text_submitted(text: String)
+signal typing()          # fires (throttled) while you type, for the instant "thinking" reflex
+
 const MIC_COLOR := Color("#cfe0ff")
+const BAR_H := 40.0
+const MARGIN := 24.0
+const TYPING_THROTTLE_MS := 1500
 
 var _mic_on := false
 var _notice: Label
 var _notice_left := 0.0
+var _heard: Label
+var _heard_left := 0.0
+var _edit: LineEdit
 var _t := 0.0
+var _theme := Color("#ff5148")
+var _last_typing_ms := -100000
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var font := SystemFont.new()
 	font.font_names = PackedStringArray(["JetBrainsMono NFM", "JetBrains Mono", "monospace"])
+
 	_notice = Label.new()
 	_notice.add_theme_font_override("font", font)
 	_notice.add_theme_font_size_override("font_size", 22)
-	_notice.add_theme_color_override("font_color", Color("#ff5148"))
+	_notice.add_theme_color_override("font_color", _theme)
 	_notice.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_notice.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	_notice.offset_top = -52.0
-	_notice.offset_bottom = -22.0
+	_notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Anchored just above the input bar; wrapped text grows UPWARD.
+	_notice.anchor_left = 0.0
+	_notice.anchor_right = 1.0
+	_notice.anchor_top = 1.0
+	_notice.anchor_bottom = 1.0
+	_notice.offset_left = MARGIN
+	_notice.offset_right = -MARGIN
+	_notice.offset_bottom = -(BAR_H + MARGIN + 12.0)
+	_notice.offset_top = _notice.offset_bottom - 28.0
+	_notice.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_notice.modulate.a = 0.0
 	_notice.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_notice)
+
+	_heard = Label.new()
+	_heard.add_theme_font_override("font", font)
+	_heard.add_theme_font_size_override("font_size", 18)
+	_heard.add_theme_color_override("font_color", MIC_COLOR)
+	_heard.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_heard.anchor_right = 1.0
+	_heard.offset_left = MARGIN
+	_heard.offset_right = -80.0       # leave the mic marker's corner alone
+	_heard.offset_top = 16.0
+	_heard.offset_bottom = 44.0
+	_heard.modulate.a = 0.0
+	_heard.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_heard)
+
+	_edit = LineEdit.new()
+	_edit.add_theme_font_override("font", font)
+	_edit.add_theme_font_size_override("font_size", 22)
+	_edit.placeholder_text = "say something to her  (Enter sends, Esc closes)"
+	_edit.anchor_left = 0.0
+	_edit.anchor_right = 1.0
+	_edit.anchor_top = 1.0
+	_edit.anchor_bottom = 1.0
+	_edit.offset_left = MARGIN
+	_edit.offset_right = -MARGIN
+	_edit.offset_bottom = -MARGIN
+	_edit.offset_top = -(MARGIN + BAR_H)
+	_edit.max_length = 400
+	_edit.context_menu_enabled = false
+	_edit.visible = false
+	_edit.text_submitted.connect(_on_submit)
+	_edit.text_changed.connect(_on_changed)
+	add_child(_edit)
+	_restyle_input()
+
+
+func _restyle_input() -> void:
+	# Flat, square, theme-colored: matches the pixel-art screen (no rounded corners).
+	var box := StyleBoxFlat.new()
+	box.bg_color = Color(0.03, 0.04, 0.07, 0.96)
+	box.set_corner_radius_all(0)
+	box.set_border_width_all(2)
+	box.border_color = _theme
+	box.content_margin_left = 12.0
+	box.content_margin_right = 12.0
+	box.content_margin_top = 4.0
+	box.content_margin_bottom = 4.0
+	for st in ["normal", "focus", "read_only"]:
+		_edit.add_theme_stylebox_override(st, box)
+	_edit.add_theme_color_override("font_color", _theme)
+	_edit.add_theme_color_override("caret_color", _theme)
+	_edit.add_theme_color_override("font_placeholder_color", Color(_theme.r, _theme.g, _theme.b, 0.45))
+	_edit.add_theme_color_override("selection_color", Color(_theme.r, _theme.g, _theme.b, 0.35))
 
 
 func set_mic(on: bool) -> void:
@@ -35,7 +111,9 @@ func set_mic(on: bool) -> void:
 
 
 func set_theme_color(c: Color) -> void:
+	_theme = c
 	_notice.add_theme_color_override("font_color", c)
+	_restyle_input()
 
 
 ## Show a short line (e.g. "// you're muted //") for `seconds`, then fade out.
@@ -49,16 +127,69 @@ func notice_visible() -> bool:
 	return _notice.modulate.a > 0.01
 
 
+## Dim top line: what the mic heard / what you just typed.
+func show_heard(text: String, seconds: float = 3.5) -> void:
+	_heard.text = text
+	_heard_left = maxf(seconds, 0.5)
+	_heard.modulate.a = 1.0
+
+
+func heard_visible() -> bool:
+	return _heard.modulate.a > 0.01
+
+
+# ------------------------------------------------------------------ text input
+
+func input_open() -> bool:
+	return _edit.visible
+
+
+func open_input() -> void:
+	if _edit.visible:
+		return
+	_edit.text = ""
+	_edit.visible = true
+	_edit.grab_focus()
+
+
+func close_input() -> void:
+	if not _edit.visible:
+		return
+	_edit.release_focus()
+	_edit.visible = false
+	_edit.text = ""
+
+
+func _on_submit(text: String) -> void:
+	var t := text.strip_edges()
+	close_input()
+	if t != "":
+		text_submitted.emit(t)
+
+
+func _on_changed(_text: String) -> void:
+	var now := Time.get_ticks_msec()
+	if now - _last_typing_ms >= TYPING_THROTTLE_MS:
+		_last_typing_ms = now
+		typing.emit()
+
+
 func _process(delta: float) -> void:
 	_t += delta
-	if _notice_left > 0.0:
-		_notice_left -= delta
-		if _notice_left < 0.6:
-			_notice.modulate.a = clampf(_notice_left / 0.6, 0.0, 1.0)
-	elif _notice.modulate.a > 0.0:
-		_notice.modulate.a = 0.0
+	_notice_left = _fade(_notice, _notice_left, delta)
+	_heard_left = _fade(_heard, _heard_left, delta)
 	if _mic_on:
 		queue_redraw()
+
+
+func _fade(label: Label, left: float, delta: float) -> float:
+	if left > 0.0:
+		left -= delta
+		if left < 0.6:
+			label.modulate.a = clampf(left / 0.6, 0.0, 1.0)
+	elif label.modulate.a > 0.0:
+		label.modulate.a = 0.0
+	return left
 
 
 func _draw() -> void:

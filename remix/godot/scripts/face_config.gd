@@ -1,50 +1,97 @@
 # face_config.gd: the hand-tunable half of Remix's face.
-# face_shapes.gd (generated from your SVGs) says WHAT each pose looks like.
-# This file says how much each pose is ALLOWED to move. Edit freely.
+# face_shapes.gd (generated from your SVGs) says WHAT each drawn shape looks like.
+# This file says how the shapes are USED and how much each may move. Edit freely.
+#
+# EYES and MOUTH are two separate units, in expression too. Every SVG you drew
+# holds one eye shape and one mouth shape (the slash in a file title, e.g.
+# "Tired/Trauma", is exactly that split). So there are 7 eye shapes and 7 mouth
+# shapes, and any eyes can pair with any mouth: 49 faces from 7 drawings.
+# A POSE is just a named shortcut for one eyes+mouth pair (your original 7).
 #
 # All distances are SVG design-space pixels (the 1920x1080 canvas).
 #
-#   eye_range    max offset of the whole EYE unit  (x = side to side, y = up/down)
-#   mouth_range  max offset of the whole MOUTH unit
-#   widen        max extra width of the mouth while sound plays (0.3 = +30%)
-#   blink        does this pose blink at all
+# EYES entries
+#   src          which drawing in face_shapes.gd supplies this eye shape
+#   range        max offset of the whole EYE unit (x = side to side, y = up/down)
+#   blink        does this eye shape blink at all
 #   blink_gap    multiplier on the time between blinks (<1 = more often)
 #   blink_speed  multiplier on blink speed (<1 = slow, heavy blink)
-#   tremble      constant tiny shake in px (Spooked)
-#   mouth_when_silent  false = mouth is hidden unless she is making sound
-#   twitch       may the idle bottom-lid twitch fire in this pose
+#   tremble      constant tiny shake in px, applied to the whole face (Spooked)
+#   twitch       may the idle bottom-lid twitch fire with these eyes
+# MOUTHS entries
+#   src          which drawing supplies this mouth shape
+#   range        max offset of the MOUTH unit
+#   open         how far the mouth opens at full volume, as a thickness multiplier
+#                (3.0 = three times as thick). Applied uniformly to every rung (or to
+#                the whole mouth in "whole" mode, see MOUTH_OPEN_MODE). The mouth
+#                keeps its shape and its drawn length; it never gets longer.
+#   silent       false = the mouth is hidden unless she is making sound
+#   talk         (optional) a different straight mouth to talk with, instead of TALK_MOUTH
 class_name FaceConfig
 
 const DEFAULT_POSE := "default"
+const TWITCH_EYES := "bottomlid"   # the eye shape the idle twitch flicks to
 
-const POSES := {
-	"default": {"eye_range": Vector2(70, 40), "mouth_range": Vector2(30, 18), "widen": 0.30,
-		"blink": true, "blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0,
-		"mouth_when_silent": true, "twitch": false},
-	"anger": {"eye_range": Vector2(35, 20), "mouth_range": Vector2(20, 10), "widen": 0.22,
-		"blink": true, "blink_gap": 1.3, "blink_speed": 1.0, "tremble": 0.0,
-		"mouth_when_silent": true, "twitch": true},
-	"smirk": {"eye_range": Vector2(60, 35), "mouth_range": Vector2(30, 15), "widen": 0.18,
-		"blink": true, "blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0,
-		"mouth_when_silent": true, "twitch": false},
-	"pout": {"eye_range": Vector2(50, 30), "mouth_range": Vector2(25, 12), "widen": 0.28,
-		"blink": true, "blink_gap": 1.2, "blink_speed": 0.9, "tremble": 0.0,
-		"mouth_when_silent": true, "twitch": true},
-	"spooked": {"eye_range": Vector2(25, 15), "mouth_range": Vector2(15, 10), "widen": 0.25,
-		"blink": false, "blink_gap": 1.0, "blink_speed": 1.0, "tremble": 2.0,
-		"mouth_when_silent": false, "twitch": false},
-	"tired": {"eye_range": Vector2(50, 50), "mouth_range": Vector2(25, 15), "widen": 0.25,
-		"blink": true, "blink_gap": 0.7, "blink_speed": 0.55, "tremble": 0.0,
-		"mouth_when_silent": true, "twitch": false},
-	"tsun": {"eye_range": Vector2(30, 20), "mouth_range": Vector2(20, 12), "widen": 0.30,
-		"blink": true, "blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0,
-		"mouth_when_silent": true, "twitch": false},
+# How speech opens the mouth (see `open` below).
+#   "rung"  each rung of the mouth ribbon (the cross-section from one edge of the
+#           stroke to the other) scales about ITS OWN midpoint. The mouth keeps its
+#           spine and layout and just gets thicker along its own shape: bars open
+#           up and down, an angled tick or a ^ gets fatter strokes without growing
+#           taller overall.
+#   "whole" the entire mouth scales vertically about its overall center instead.
+const MOUTH_OPEN_MODE := "rung"
+
+# LIPSYNC. A mouth can't hold a smirk or a ^ while it talks. So the moment sound
+# really opens the mouth, it eases to a STRAIGHT bar (kept at the same height her
+# expression's mouth sits at, so it doesn't hop) and opens from there. When the
+# sound stops it eases back to her expression's own mouth.
+const TALK_MOUTH := "default"   # which straight mouth to talk with (any MOUTHS entry)
+const TALK_ON_LEVEL := 0.10     # smoothed sound level (0..1) that counts as "talking"
+const TALK_RELEASE := 0.35      # seconds of quiet before the expression mouth returns
+								# (so the gaps between words don't flap the shape)
+
+const EYES := {
+	"default": {"src": "default", "range": Vector2(70, 40), "blink": true,
+		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0, "twitch": false},
+	"anger": {"src": "anger", "range": Vector2(35, 20), "blink": true,
+		"blink_gap": 1.3, "blink_speed": 1.0, "tremble": 0.0, "twitch": true},
+	"bottomlid": {"src": "smirk", "range": Vector2(60, 35), "blink": true,
+		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0, "twitch": false},
+	"really": {"src": "pout", "range": Vector2(50, 30), "blink": true,
+		"blink_gap": 1.2, "blink_speed": 0.9, "tremble": 0.0, "twitch": true},
+	"spooked": {"src": "spooked", "range": Vector2(25, 15), "blink": false,
+		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 2.0, "twitch": false},
+	"tired": {"src": "tired", "range": Vector2(50, 50), "blink": true,
+		"blink_gap": 0.7, "blink_speed": 0.55, "tremble": 0.0, "twitch": false},
+	"tsun": {"src": "tsun", "range": Vector2(30, 20), "blink": true,
+		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0, "twitch": false},
 }
 
-# Moods the brain may still send (old protocol) and plain-English synonyms,
-# mapped to the closest DRAWN pose for now. Redirect any of these freely; when
-# you draw a new pose, add it to POSES (+ the generator) and point its mood here.
-# Optional "look" is a default gaze for that mood (-1..1 each axis).
+const MOUTHS := {
+	"default": {"src": "default", "range": Vector2(30, 18), "open": 3.0, "silent": true},
+	"anger": {"src": "anger", "range": Vector2(20, 10), "open": 3.0, "silent": true},
+	"smirk": {"src": "smirk", "range": Vector2(30, 15), "open": 3.0, "silent": true},
+	"pout": {"src": "pout", "range": Vector2(25, 12), "open": 3.0, "silent": true},
+	"trauma": {"src": "tired", "range": Vector2(25, 15), "open": 2.6, "silent": true},
+	"tsun": {"src": "tsun", "range": Vector2(20, 12), "open": 3.0, "silent": true},
+	# No mouth drawn at all (the Spooked drawing); borrows Default's shape when she speaks.
+	"none": {"src": "spooked", "range": Vector2(15, 10), "open": 3.0, "silent": false},
+}
+
+# Your original 7 drawings as named shortcuts: pose -> eyes + mouth.
+const POSES := {
+	"default": {"eyes": "default", "mouth": "default"},
+	"anger": {"eyes": "anger", "mouth": "anger"},
+	"smirk": {"eyes": "bottomlid", "mouth": "smirk"},
+	"pout": {"eyes": "really", "mouth": "pout"},
+	"spooked": {"eyes": "spooked", "mouth": "none"},
+	"tired": {"eyes": "tired", "mouth": "trauma"},
+	"tsun": {"eyes": "tsun", "mouth": "tsun"},
+}
+
+# Moods the brain may still send (old protocol) and plain-English synonyms.
+# Each points at a POSE (or gives eyes/mouth directly). Optional "look" is a
+# default gaze for that mood (-1..1 each axis).
 const ALIASES := {
 	"idle": {"pose": "default"},
 	"happy": {"pose": "smirk"},
@@ -63,15 +110,42 @@ const ALIASES := {
 	"angry": {"pose": "anger"},
 	"embarrassed": {"pose": "tsun"},
 	"flustered": {"pose": "tsun"},
+	# mixed faces the shortcuts can't express
+	"deadpan": {"eyes": "really", "mouth": "default"},
+	"skeptical": {"eyes": "really", "mouth": "smirk"},
+	"sheepish": {"eyes": "tsun", "mouth": "pout"},
+	"numb": {"eyes": "tired", "mouth": "default"},
 }
 
 
-## Resolve any incoming name (pose, mood, synonym) to {pose, look?}.
+## Resolve a pose / mood / synonym to {eyes, mouth, look?}.
 ## Unknown names fall back to the default pose rather than erroring.
 static func resolve(name: String) -> Dictionary:
 	var key := name.strip_edges().to_lower()
 	if POSES.has(key):
-		return {"pose": key}
+		return (POSES[key] as Dictionary).duplicate()
 	if ALIASES.has(key):
-		return ALIASES[key].duplicate()
-	return {"pose": DEFAULT_POSE}
+		var a: Dictionary = (ALIASES[key] as Dictionary).duplicate()
+		if a.has("pose"):
+			var p: Dictionary = (POSES[a["pose"]] as Dictionary).duplicate()
+			if a.has("look"):
+				p["look"] = a["look"]
+			return p
+		return a
+	return (POSES[DEFAULT_POSE] as Dictionary).duplicate()
+
+
+## The pose name whose eyes AND mouth match, or "" for a custom mix.
+static func pose_for(eyes: String, mouth: String) -> String:
+	for n: String in POSES:
+		if POSES[n]["eyes"] == eyes and POSES[n]["mouth"] == mouth:
+			return n
+	return ""
+
+
+static func has_eyes(name: String) -> bool:
+	return EYES.has(name.strip_edges().to_lower())
+
+
+static func has_mouth(name: String) -> bool:
+	return MOUTHS.has(name.strip_edges().to_lower())

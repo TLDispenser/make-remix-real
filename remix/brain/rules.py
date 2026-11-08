@@ -15,17 +15,19 @@
 import random
 import time
 
-from . import config
+from . import audio, config
 
 # An i5-4310M laptop idles warm, so thresholds skew forgiving; confirm on the
 # real host and tune via env (config.py). Pose names match face_config.gd.
 POSE_DEFAULT = "default"
 TWITCH_POSES = {"anger", "pout"}  # face_config.gd allows twitch there
 
+# Flavor text: dry, short, no cutesy AI-voice lines (user rule, 2026-11-08).
+# Only ever SHOWN while the machine is quiet — see the gate in _idle_life.
 MOCK_NOTICES = [
-    "// fan speed reminds me of a choo-choo motif //",
+    "// fan's droning. business as usual //",
     "// all quiet on the driver front //",
-    "// cpu: warm. heart: warmer //",
+    "// cpu nominal. nothing to file a complaint about //",
 ]
 
 
@@ -49,11 +51,16 @@ class RuleBrain:
     def set_available_poses(self, ready_poses) -> None:
         self.poses = list(ready_poses or [])
 
+    def baseline_message(self) -> dict:
+        """Her current vitals-driven face, restated (to settle after speaking)."""
+        return {"type": "pose", "pose": self.pose}
+
     def pause_for_speech(self, seconds: float) -> None:
         self.speak_gate_until = time.monotonic() + max(0.0, seconds)
 
-    def update(self, snap: dict, now=None) -> list:
-        """Feed one vitals snapshot; return protocol v2 messages to send."""
+    def update(self, snap: dict, now=None, aware=None) -> list:
+        """Feed one vitals snapshot (+ optional awareness state); return
+        protocol v2 messages to send."""
         now = time.monotonic() if now is None else now
         out = []
         prev = self.prior
@@ -84,7 +91,7 @@ class RuleBrain:
             self.candidate = target
             self.candidate_count = 0
 
-        out.extend(self._idle_life(snap, cpu, now))
+        out.extend(self._idle_life(snap, cpu, now, aware))
         return out
 
     # ------------------------------------------------------------- internals
@@ -135,7 +142,7 @@ class RuleBrain:
         return (self.candidate_count >= config.POSE_CANDIDATE_N
                 and now - self.last_switch >= config.POSE_MIN_HOLD_S)
 
-    def _idle_life(self, snap, cpu, now) -> list:
+    def _idle_life(self, snap, cpu, now, aware=None) -> list:
         """Pose stays; drift gaze, twitch, rare notice."""
         out = []
         if now - self.last_look_at > random.uniform(6.0, 13.0):
@@ -149,11 +156,18 @@ class RuleBrain:
             self.last_twitch_at = now
         if (now - self.last_notice_at > config.NOTICE_MIN_GAP_S
                 and random.random() < 0.02):
-            pool = self._notice_pool(snap)
-            if pool:
-                out.append({"type": "notice", "text": random.choice(pool),
-                            "seconds": 3.0})
+            # Attempt counts even when suppressed: at most one try per gap.
             self.last_notice_at = now
+            # Flavor holds under Do-Not-Disturb (fullscreen = can't be seen
+            # either), and shows only when the machine is quiet anyway
+            # (muted or low volume). Functional lines (transcript, "one sec",
+            # ear problems) are exempt: those never go through here.
+            if (not (aware or {}).get("fullscreen")
+                    and (not config.NOTICE_GATE or audio.quiet())):
+                pool = self._notice_pool(snap)
+                if pool:
+                    out.append({"type": "notice", "text": random.choice(pool),
+                                "seconds": 3.0})
         return out
 
     def _look_pool(self, cpu):
@@ -170,7 +184,7 @@ class RuleBrain:
     def _notice_pool(self, snap):
         disk = _f(snap.get("disk"))
         if disk is not None and disk >= config.DISK_FULL:
-            return ["// disk's %d%% full. that's not a vibe, that's a to-do //"
+            return ["// disk's %d%% full. that's a to-do //"
                     % round(disk)]
         battery = _f(snap.get("battery"))
         if battery is not None and battery <= config.BATT_LOW:

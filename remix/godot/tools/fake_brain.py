@@ -39,12 +39,19 @@ async def demo(ws, once):
     ready = await recv_until(ws, "ready", 5)
     result["ready"] = ready
     poses = ready["poses"]
-    print("Remix is ready. poses:", poses)
+    result["eyes"] = ready.get("eyes", [])
+    result["mouths"] = ready.get("mouths", [])
+    print("Remix is ready. poses:", poses, "eyes:", result["eyes"], "mouths:", result["mouths"])
     while True:
         # 1) silent poses with gaze
         for i, p in enumerate(poses):
             await send(ws, type="pose", pose=p, look=[(-1) ** i * 0.8, -0.3])
             await asyncio.sleep(0.6)
+        # 1b) eyes and mouth mixed freely (every eye shape against a rotating mouth)
+        for i, e in enumerate(result["eyes"]):
+            m = result["mouths"][(i * 2) % len(result["mouths"])]
+            await send(ws, type="pose", eyes=e, mouth=m, look=[0.0, -0.2])
+            await asyncio.sleep(0.5)
         # 2) a spoken line with acting: anger -> tired, then back to default
         await send(ws, type="perform", id="demo1", audio=WAV,
                    cues=[{"t": 0.0, "pose": "anger", "look": [0.0, 0.0]},
@@ -57,6 +64,7 @@ async def demo(ws, once):
         await send(ws, type="listening", state="start"); await asyncio.sleep(0.5)
         await send(ws, type="listening", state="stop")
         await send(ws, type="twitch")
+        await send(ws, type="transcript", text="this is what the mic heard")
         await send(ws, type="notice", text="// you're muted //", seconds=1.5)
         await send(ws, type="mouth", level=0.7); await asyncio.sleep(0.4)
         await send(ws, type="theme", color="#ff5148")

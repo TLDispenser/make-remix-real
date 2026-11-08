@@ -5,7 +5,6 @@
 //   scanlines fine horizontal lines, fixed in real screen pixels
 //   bleed     tiny red/blue fringe at edges of bright shapes
 //   vignette  gentle darkening toward the corners
-//   corner    rounded glass corners (transparent outside; needs a compositor)
 //   flicker   very subtle brightness wobble
 shader_type canvas_item;
 render_mode blend_disabled;
@@ -17,7 +16,6 @@ uniform float scanline_strength : hint_range(0.0, 0.5) = 0.10;
 uniform float bleed_px : hint_range(0.0, 3.0) = 0.8;
 uniform float vignette : hint_range(0.0, 1.0) = 0.35;
 uniform float flicker_strength : hint_range(0.0, 0.2) = 0.03;
-uniform float corner_radius_px : hint_range(0.0, 80.0) = 18.0;
 
 void fragment() {
 	vec2 px = SCREEN_PIXEL_SIZE;
@@ -49,11 +47,7 @@ void fragment() {
 	// flicker
 	col *= 1.0 - flicker_strength * fract(sin(TIME * 13.7) * 43758.5453) * 0.6;
 
-	// rounded glass corners
-	vec2 size_px = vec2(1.0) / px;
-	vec2 q = abs(uv - vec2(0.5)) * size_px - (size_px * 0.5 - vec2(corner_radius_px));
-	float dist = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - corner_radius_px;
-	float alpha = 1.0 - smoothstep(-1.0, 0.5, dist);
-
-	COLOR = vec4(col, alpha);
+	// Square pixel-art screen: no rounded corners, fully opaque, no compositor
+	// transparency needed.
+	COLOR = vec4(col, 1.0);
 }

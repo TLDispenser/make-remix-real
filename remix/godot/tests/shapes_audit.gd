@@ -10,7 +10,7 @@ func _initialize() -> void:
 	for pose_name: String in shapes:
 		var s: Dictionary = shapes[pose_name]
 		if not FaceConfig.POSES.has(pose_name):
-			print("FAIL %s has no FaceConfig entry" % pose_name); bad += 1
+			print("FAIL %s has no FaceConfig pose entry" % pose_name); bad += 1
 		for key in ["left_eye", "right_eye", "mouth"]:
 			var pts: PackedVector2Array = s[key]
 			if pts.size() != FaceShapes.POINTS:
@@ -26,9 +26,21 @@ func _initialize() -> void:
 		var r: PackedVector2Array = s["right_eye"]
 		if not (l[0].x < 0.0 and r[0].x > 0.0):
 			print("FAIL %s eye rung order is not mirrored" % pose_name); bad += 1
+	for e: String in FaceConfig.EYES:
+		if not shapes.has(FaceConfig.EYES[e]["src"]):
+			print("FAIL eyes %s -> missing shape %s" % [e, FaceConfig.EYES[e]["src"]]); bad += 1
+	for m: String in FaceConfig.MOUTHS:
+		if not shapes.has(FaceConfig.MOUTHS[m]["src"]):
+			print("FAIL mouth %s -> missing shape %s" % [m, FaceConfig.MOUTHS[m]["src"]]); bad += 1
+	for p: String in FaceConfig.POSES:
+		if not FaceConfig.EYES.has(FaceConfig.POSES[p]["eyes"]) or not FaceConfig.MOUTHS.has(FaceConfig.POSES[p]["mouth"]):
+			print("FAIL pose %s points at missing eyes/mouth" % p); bad += 1
 	for alias: String in FaceConfig.ALIASES:
-		if not shapes.has(FaceConfig.ALIASES[alias]["pose"]):
+		var a: Dictionary = FaceConfig.ALIASES[alias]
+		if a.has("pose") and not FaceConfig.POSES.has(a["pose"]):
 			print("FAIL alias %s -> missing pose" % alias); bad += 1
+		if not a.has("pose") and not (FaceConfig.EYES.has(a.get("eyes", "")) and FaceConfig.MOUTHS.has(a.get("mouth", ""))):
+			print("FAIL alias %s -> missing eyes/mouth" % alias); bad += 1
 	if bad == 0:
-		print("SHAPES_OK poses=%d" % shapes.size())
+		print("SHAPES_OK poses=%d eyes=%d mouths=%d" % [shapes.size(), FaceConfig.EYES.size(), FaceConfig.MOUTHS.size()])
 	quit(1 if bad > 0 else 0)

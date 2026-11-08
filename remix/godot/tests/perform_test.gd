@@ -1,7 +1,7 @@
 extends SceneTree
 # Audio + cue playback, in real time, against the real scene.
 #   godot --headless --path . --script res://tests/perform_test.gd
-# Checks: cues fire in order against the audio clock, the mouth widens while
+# Checks: cues fire in order against the audio clock, the mouth opens while
 # sound plays and rests in the quiet gap, `then` pose lands, perform_done is
 # reported, bad audio degrades gracefully, stop cancels.
 
@@ -48,22 +48,45 @@ func _initialize() -> void:
 		"then": {"pose": "pout"},
 	}))
 	var pose_seq: Array = []
-	var acc := {"max_level": 0.0, "widest": 0.0}   # a Dictionary, because lambdas copy plain floats
-	var base_w: float = face.snapshot()["mouth_width"]
+	var acc := {"max_level": 0.0, "max_open": 0.0, "min_open": 10.0}   # a Dictionary, because lambdas copy plain floats
 	var finished := await wait_until(func() -> bool:
 		var s: Dictionary = face.snapshot()
 		if pose_seq.is_empty() or pose_seq[-1] != s["pose"]:
 			pose_seq.append(s["pose"])
 		acc["max_level"] = maxf(acc["max_level"], s["level"])
-		acc["widest"] = maxf(acc["widest"], s["mouth_width"])
+		acc["max_open"] = maxf(acc["max_open"], s["mouth_open_scale"])
+		if acc["max_level"] > 0.25:   # only after she was audibly loud does a dip mean "resting"
+			acc["min_open"] = minf(acc["min_open"], s["mouth_open_scale"])
 		return not done_events.is_empty(), 4.0)
 	check(finished, "performance finishes by itself")
 	check(pose_seq.size() >= 3 and pose_seq[0] == "anger" and "tired" in pose_seq and pose_seq[-1] == "pout",
 			"cues fired in order, then landed on `then`: %s" % str(pose_seq))
 	check(acc["max_level"] > 0.25, "audio level reaches the face (max %.2f)" % acc["max_level"])
-	check(acc["widest"] > base_w * 1.05, "mouth got wider while sound played (%.0f -> %.0f)" % [base_w, acc["widest"]])
+	check(acc["max_open"] > 1.3, "mouth opened while sound played (max %.2f)" % acc["max_open"])
+	check(acc["min_open"] < 1.5, "mouth rested in the quiet gap (min %.2f)" % acc["min_open"])
 	check(done_events.size() == 1 and done_events[0][0] == "t1" and done_events[0][1] == true, "perform_done(t1, ok)")
 	check(not face.speaking, "speaking flag cleared afterwards")
+
+	# --- cues and `then` can mix eyes and mouth freely
+	done_events.clear()
+	face.set_pose("default")
+	main._handle(JSON.stringify({
+		"type": "perform", "id": "t1b", "audio": wav,
+		"cues": [{"t": 0.0, "eyes": "really", "mouth": "smirk"},
+				{"t": 0.35, "mouth": "pout"},
+				{"t": 0.6, "eyes": "tired", "look": [0.4, 0.2]}],
+		"then": {"eyes": "default", "mouth": "tsun"},
+	}))
+	var mix_seq: Array = []
+	await wait_until(func() -> bool:
+		var s2: Dictionary = face.snapshot()
+		var tag: String = "%s/%s" % [s2["eyes"], s2["mouth"]]
+		if mix_seq.is_empty() or mix_seq[-1] != tag:
+			mix_seq.append(tag)
+		return not done_events.is_empty(), 4.0)
+	check(mix_seq.has("really/smirk") and mix_seq.has("really/pout") and mix_seq.has("tired/pout"),
+			"per-unit cues applied in order: %s" % str(mix_seq))
+	check(face.eyes_name == "default" and face.mouth_name == "tsun", "`then` can be a mixed face (%s)" % face.pose_name)
 
 	# --- missing audio: still acts, reports failure, no crash
 	done_events.clear()

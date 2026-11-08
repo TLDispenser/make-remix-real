@@ -14,7 +14,7 @@ func _initialize() -> void:
 	var start := Time.get_ticks_msec()
 	while (Time.get_ticks_msec() - start) < 20000 and not (st["done"] >= 1 and main.log_lines.has("theme")):
 		await process_frame
-	var need := ["pose", "perform", "listening", "notice", "twitch", "theme", "mouth"]
+	var need := ["pose", "perform", "listening", "notice", "twitch", "theme", "mouth", "transcript"]
 	var missing: Array = need.filter(func(k: String) -> bool: return not main.log_lines.has(k))
 	var good: bool = st["online"] and st["done"] >= 1 and st["ok"] and missing.is_empty()
 	print("E2E online=%s performances=%d ok=%s missing=%s" % [st["online"], st["done"], st["ok"], missing])

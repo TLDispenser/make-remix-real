@@ -1,16 +1,38 @@
 # main.py — asyncio entrypoint. Protocol v2 (see godot/PROTOCOL.md).
-# Silent life: vitals -> RuleBrain ($0, no Jev). Typed input (terminal REPL
-# or Godot typing) -> reaction pose -> GLM words -> muted perform + subtitle
-# notice. Voice + persistent memory land in later phases.
+# Silent life: vitals -> RuleBrain ($0, no Jev).
+# An exchange (typed in the terminal or Godot bar, or spoken via push-to-talk):
+#   input -> Jev reaction face (instant) -> GLM words (grounded) ->
+#   [Jev acting plan || espeak voice] -> ONE perform (audio + per-beat faces)
+#   -> settle back to her baseline face.
 import asyncio
+import os
+import socket as _socket
+import threading
 import time
 
-from . import config, jev, rules, speech, vitals, ws_server
+from . import audio, awareness, config, faces, jev, proactive, rules, speech, stt, tts, vitals, ws_server
+from .faces import NEUTRAL, Face
 
 _rule: rules.RuleBrain | None = None
 _jev: jev.JevBrain | None = None
+_ptt: stt.PushToTalk | None = None
+_pro: proactive.Proactive | None = None
+_loop: asyncio.AbstractEventLoop | None = None
 _seq = 0
 _latest_snapshot: dict = {}
+_context: dict = {}              # window/screen facts Godot reports
+_settle_task: asyncio.Task | None = None
+_silent_task: asyncio.Task | None = None
+_gate_task: asyncio.Task | None = None   # audio mute/volume refresher
+_aware_task: asyncio.Task | None = None  # awareness poller (Phase 6)
+_proactive_task: asyncio.Task | None = None
+_typing_at = 0.0
+_face_ready = False              # Godot sent `ready`: she is actually visible
+_last_exchange_at = -1e12        # last time the user said anything
+_ALL_POSES = list(faces.POSES)
+
+SETTLE_S = 5.0                   # after she stops, how long until her face relaxes
+LOOK_POOL = [[-0.35, 0.1], [0.35, -0.1], [0.0, 0.2], [0.2, -0.15]]
 
 
 async def body_loop(rule: rules.RuleBrain) -> None:
@@ -19,84 +41,403 @@ async def body_loop(rule: rules.RuleBrain) -> None:
     async for snap in vitals.stream():
         _latest_snapshot = snap
         await ws_server.send({"type": "vitals", **snap})
-        for msg in rule.update(snap):
+        for msg in rule.update(snap, aware=awareness.current()):
             await ws_server.send(msg)
 
 
-# ------------------------------------------------------- typed input pipeline
+# ------------------------------------------------------------- face helpers
+
+def _cancel(task: asyncio.Task | None) -> None:
+    if task and not task.done():
+        task.cancel()
+
+
+def _schedule_settle() -> None:
+    """Let her face relax to the vitals baseline a few seconds after speaking."""
+    global _settle_task
+    _cancel(_settle_task)
+
+    async def _later() -> None:
+        await asyncio.sleep(SETTLE_S)
+        if _rule is not None:
+            await ws_server.send(_rule.baseline_message())
+
+    _settle_task = asyncio.create_task(_later())
+
+
+def _local_arc(first: Face, beat_list: list) -> list:
+    """$0 acting plan: each beat's face guessed from its own words."""
+    out = []
+    for i, b in enumerate(beat_list):
+        g = faces.guess_face(b)
+        out.append(first if (i == 0 and g == NEUTRAL) else g)
+    return out
+
+
+async def _play_silent(face_list: list, beat_list: list) -> None:
+    """No audio, so Godot can't pace the beats: step through them on reading time."""
+    for i, (f, b) in enumerate(zip(face_list, beat_list)):
+        await ws_server.send(f.msg(look=LOOK_POOL[i % len(LOOK_POOL)]))
+        if i < len(beat_list) - 1:
+            await asyncio.sleep(max(0.8, len(b) * 0.06))
+    _schedule_settle()
+
+
+# -------------------------------------------------------------- the exchange
 
 async def _on_user_text(m: dict) -> None:
-    global _seq
+    global _seq, _silent_task, _last_exchange_at
     text = str(m.get("text", "")).strip()
     if not text:
         return
+    _last_exchange_at = time.monotonic()
+    if text.startswith("/"):
+        await _on_command(text)
+        return
+    _cancel(_settle_task)
+    _cancel(_silent_task)
 
-    # She's visibly alive while upstream thinks (storms can last ~1 min).
-    await ws_server.send({"type": "notice", "text": "// one sec //",
-                          "seconds": 3.0})
-
-    # Left brain: ONE Jev call -> stance + instant pose + beat arc. Any
-    # budget/exhaustion/failure means None and we fall back to the $0 path.
-    decision = None
-    if _jev is not None:
-        decision = await _jev.decide(text, _latest_snapshot)
+    # Left brain: stance + the instant face, before any words exist.
+    decision = await _jev.react(text, _latest_snapshot) if _jev else None
     if decision:
-        await ws_server.send({"type": "pose", "pose": decision.pose,
-                              "look": [0.0, -0.15]})
-        stance = decision.stance
+        face, stance = decision.face, decision.stance
     else:
-        # Instant reaction: eyes up toward the typist, before words exist.
-        await ws_server.send({"type": "pose", "pose": "default",
-                              "look": [0.0, -0.15]})
-        stance = None
+        face, stance = faces.guess_face(text), None   # $0 fallback
+        if _jev:
+            _jev.note_face(face)
+    await ws_server.send(face.msg(look=[0.0, -0.15]))
 
-    reply = await speech.generate_reply(text, vitals=_latest_snapshot,
-                                        stance=stance)
+    # Right brain. Only say "one sec" if she is actually slow.
+    task = asyncio.create_task(speech.generate_reply(
+        text, vitals=_latest_snapshot, stance=stance, context=_context,
+        aware=awareness.current()))
+    done, _ = await asyncio.wait({task}, timeout=1.5)
+    if not done:
+        await ws_server.send({"type": "notice", "text": "// one sec //",
+                              "seconds": 3.0})
+    reply = await task
     if reply is None:
-        text_line = ("// heart present, words absent: no llm key //"
-                 if not config.LLM_API_KEY else
-                 "// brain busy (upstream overloaded). nudge me again //")
-        await ws_server.send({"type": "notice", "text": text_line,
-                              "seconds": 4.0})
-        print("remix-brain: no reply available for a typed line")
+        line = ("// heart present, words absent: no llm key //"
+                if not config.LLM_API_KEY else
+                "// brain busy (upstream overloaded). nudge me again //")
+        await ws_server.send({"type": "notice", "text": line, "seconds": 4.0})
+        print("remix-brain: no reply available")
         return
 
-    # Acting: Jev's per-beat arc if it answered, else the local $0 arc.
+    # Acting plan (Jev, once her words exist) and her voice, in parallel.
     beat_list = speech.beats(reply)
-    if decision:
-        arc = decision.beats or ["default"]
-        rest = decision.resting
-    else:
-        arc = ["default", "smirk"]
-        rest = "default"
-    look_pool = [[-0.35, 0.1], [0.35, -0.1], [0.0, 0.2]]
-    cues = []
-    for i, _beat in enumerate(beat_list):
-        cues.append({"t": float(i),
-                     "pose": arc[min(i, len(arc) - 1)],
-                     "look": look_pool[i % len(look_pool)]})
+    plan_coro = _jev.act(text, beat_list) if _jev else asyncio.sleep(0, None)
+    plan, spoken = await asyncio.gather(
+        plan_coro, tts.synthesize(beat_list, f"p{_seq + 1}"))
+    face_list = list(plan.faces) if plan else _local_arc(face, beat_list)
+    if _jev and not plan:
+        for f in face_list:
+            _jev.note_face(f)
+
     _seq += 1
-    await ws_server.send({"type": "perform", "id": f"t{_seq}", "cues": cues,
-                          "then": {"pose": rest}})
-    # Subtitle: notice is the ONLY text channel (godot contract). No espeak
-    # yet (Phase 7), so words ride subtitles while cues act them out.
-    secs = min(14.0, max(3.5, len(reply) * 0.045))
-    await ws_server.send({"type": "notice", "text": reply, "seconds": secs})
-    print(f"remix-brain: reply ready ({len(beat_list)} beats, "
-          f"{len(reply)} chars) -> perform t{_seq}")
+    pid = f"t{_seq}"
+    await ws_server.send({"type": "say", "text": reply, "final": True})
+    if spoken:
+        cues = [f.cue(spoken.starts[i], LOOK_POOL[i % len(LOOK_POOL)])
+                for i, f in enumerate(face_list)]
+        _rule.pause_for_speech(spoken.total + 1.0)
+        await ws_server.send({"type": "perform", "id": pid, "audio": spoken.path,
+                              "cues": cues, "then": face_list[-1].spec()})
+    else:
+        _silent_task = asyncio.create_task(_play_silent(face_list, beat_list))
+        _rule.pause_for_speech(sum(max(0.8, len(b) * 0.06) for b in beat_list))
+
+    if config.SUBTITLES == "always" or (config.SUBTITLES == "auto" and not spoken):
+        secs = min(14.0, max(3.5, len(reply) * 0.045))
+        await ws_server.send({"type": "notice", "text": reply, "seconds": secs})
+    print(f"remix-brain: reply ready ({len(beat_list)} beats, {len(reply)} chars, "
+          f"voice={'espeak' if spoken else 'none'}, "
+          f"faces={[str(f) for f in face_list]}) -> {pid}")
+
+
+# ------------------------------------------------- proactive lines (Phase 6)
+
+async def _deliver_proactive(line: dict) -> None:
+    """Say an unprompted line through the SAME pipeline as a reply: face,
+    espeak beats, one perform, captions per the on-screen text rule."""
+    global _seq, _silent_task
+    text = str(line.get("text") or "").strip()
+    if not text:
+        return
+    face = line.get("face") or faces.guess_face(text)
+    _cancel(_settle_task)
+    _cancel(_silent_task)
+    await ws_server.send(face.msg(look=line.get("look") or [0.0, -0.1]))
+
+    beat_list = speech.beats(text)
+    _seq += 1
+    pid = f"t{_seq}"
+    spoken = await tts.synthesize(beat_list, pid)
+    await ws_server.send({"type": "say", "text": text, "final": True,
+                          "proactive": True})
+    face_list = [face] * len(beat_list)          # $0 acting: one mood, gaze varies
+    if spoken:
+        cues = [f.cue(spoken.starts[i], LOOK_POOL[i % len(LOOK_POOL)])
+                for i, f in enumerate(face_list)]
+        _rule.pause_for_speech(spoken.total + 1.0)
+        await ws_server.send({"type": "perform", "id": pid, "audio": spoken.path,
+                              "cues": cues, "then": face.spec()})
+    else:
+        _silent_task = asyncio.create_task(_play_silent(face_list, beat_list))
+        _rule.pause_for_speech(sum(max(0.8, len(b) * 0.06) for b in beat_list))
+
+    # On-screen text rule: a caption is flavor, so it shows only when the
+    # machine can't hear her (muted/low) — or when she has no voice at all.
+    if config.SUBTITLES == "always" or (config.SUBTITLES == "auto"
+                                        and (not spoken or audio.quiet())):
+        secs = min(14.0, max(3.5, len(text) * 0.045))
+        await ws_server.send({"type": "notice", "text": text, "seconds": secs})
+    speech.add_assistant(text)   # so the next real exchange knows she said it
+    print(f"remix-brain: proactive [{line.get('trigger')}] \"{text}\" "
+          f"(voice={'espeak' if spoken else 'none'}, face={face})")
+
+
+async def proactive_loop() -> None:
+    """The quiet heartbeat: every tick, decide whether she has reason to
+    speak. The TRIGGER is local and $0 (never Jev); the WORDS are generated
+    fresh through the same $0 pool her replies use. A failed generation is
+    silence — never a canned line."""
+    while True:
+        await asyncio.sleep(config.PROACTIVE_TICK_S)
+        if _pro is None or not _pro.enabled or not _face_ready or _rule is None:
+            continue
+        try:
+            plan = _pro.tick(
+                awareness.current(), _latest_snapshot,
+                mic_open=bool(_ptt and _ptt.listening),
+                last_exchange_at=_last_exchange_at,
+                busy_until=_rule.speak_gate_until)
+        except Exception as e:               # chatter must never crash the brain
+            print(f"remix-brain: proactive tick failed ({e!r})")
+            continue
+        if not plan:
+            continue
+        # Words, born in the moment: same pipeline family as a reply.
+        started = time.monotonic()
+        try:
+            text = await asyncio.wait_for(
+                speech.generate_proactive_line(
+                    plan, vitals=_latest_snapshot, context=_context,
+                    aware=awareness.current()),
+                timeout=config.CHATTER_TIMEOUT_S)
+        except Exception as e:
+            print(f"remix-brain: chatter generation failed ({e!r})")
+            text = None
+        if not text:
+            print(f"remix-brain: chatter [{plan.get('trigger')}] -> "
+                  f"silence (nothing clean came back)")
+            continue
+        # The room may have changed while the words were being written.
+        now = time.monotonic()
+        if (_ptt and _ptt.listening) or now < _rule.speak_gate_until \
+                or _last_exchange_at > started \
+                or awareness.current().get("fullscreen"):
+            print(f"remix-brain: chatter [{plan.get('trigger')}] dropped — "
+                  f"the human needs the room")
+            continue
+        await _deliver_proactive({**plan, "text": text})
+
+
+async def _on_command(text: str) -> None:
+    """Slash commands typed at her: debug + toggles, never sent to any LLM."""
+    cmd = text.split()[0].lower()
+    if cmd == "/poke" and _pro:
+        plan = _pro.force(awareness.current(), _latest_snapshot)
+        text_out = None
+        if plan:
+            try:
+                text_out = await asyncio.wait_for(
+                    speech.generate_proactive_line(
+                        plan, vitals=_latest_snapshot, context=_context,
+                        aware=awareness.current()),
+                    timeout=config.CHATTER_TIMEOUT_S)
+            except Exception as e:
+                print(f"remix-brain: poke generation failed ({e!r})")
+        if text_out:
+            await _deliver_proactive({**plan, "text": text_out})
+        else:
+            await ws_server.send({"type": "notice", "seconds": 4.0,
+                                  "text": "// nothing came out. poke again //"})
+    elif cmd == "/aware":
+        line = f"// {awareness.describe()} //"
+        await ws_server.send({"type": "notice", "text": line, "seconds": 6.0})
+        print(f"remix-brain: awareness: {awareness.describe()}")
+    elif cmd == "/quiet" and _pro:
+        _pro.enabled = not _pro.enabled
+        state = "on" if _pro.enabled else "off"
+        await ws_server.send({"type": "notice", "seconds": 4.0,
+                              "text": f"// unprompted chatter: {state} //"})
+        print(f"remix-brain: proactive chatter {state}")
+    else:
+        await ws_server.send({"type": "notice", "seconds": 3.0,
+                              "text": "// unknown command //"})
+
+
+def _on_perform_done(m: dict) -> None:
+    print(f"remix-brain: perform {m.get('id')} done ok={m.get('ok', True)}"
+          + (f" ({m.get('error')})" if m.get("error") else ""))
+    if _rule:
+        _rule.pause_for_speech(0.6)
+    if m.get("ok", True):
+        _schedule_settle()
+
+
+# ------------------------------------------------------ push-to-talk (ears)
+
+async def _ptt_start() -> None:
+    if _ptt is None or _ptt.listening:
+        return
+    if _ptt.status == "warming":
+        await ws_server.send({"type": "notice", "text": "// ears warming up //",
+                              "seconds": 2.5})
+    result = await _ptt.start()
+    if result == "ok":
+        _cancel(_settle_task)
+        await ws_server.send({"type": "listening", "state": "start"})
+        await ws_server.send(NEUTRAL.msg(look=[0.0, -0.1]))
+    elif result == "no_mic":
+        await ws_server.send({"type": "notice", "seconds": 5.0, "text":
+                              "// can't open the mic. install pipewire-pulse (parec) //"})
+
+
+async def _ptt_stop() -> None:
+    if _ptt is None or not _ptt.listening:
+        return
+    await ws_server.send({"type": "listening", "state": "stop"})
+    await ws_server.send({"type": "mood", "mood": "thinking"})
+    if _ptt.status == "warming":
+        await ws_server.send({"type": "notice", "text": "// ears warming up //",
+                              "seconds": 3.0})
+    heard = await _ptt.stop()
+    if heard.text:
+        await ws_server.send({"type": "transcript", "text": heard.text,
+                              "final": True})
+        await _on_user_text({"type": "user_text", "text": heard.text})
+        return
+    notices = {
+        "silence": "// heard nothing //",
+        "unclear": "// say that again? //",
+        "no_mic": "// the mic gave me nothing //",
+        "error": "// my ears broke. check the brain log //",
+    }
+    if heard.reason in notices:
+        await ws_server.send({"type": "notice", "text": notices[heard.reason],
+                              "seconds": 2.5})
+    await ws_server.send(_rule.baseline_message())
+
+
+def _ptt_command(action: str) -> None:
+    """Thread-safe entry for start/stop from the hotkey socket or Godot."""
+    if _loop is None:
+        return
+    if action == "start":
+        _loop.call_soon_threadsafe(lambda: asyncio.create_task(_ptt_start()))
+    elif action == "stop":
+        _loop.call_soon_threadsafe(lambda: asyncio.create_task(_ptt_stop()))
+
+
+def _start_ptt_server() -> None:
+    """Datagram listener: the global hotkey's one-shot client says start/stop."""
+    def _thread() -> None:
+        sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_DGRAM)
+        try:
+            os.unlink(config.PTT_SOCK)
+        except FileNotFoundError:
+            pass
+        try:
+            sock.bind(config.PTT_SOCK)
+            os.chmod(config.PTT_SOCK, 0o600)  # only this user pokes the mic
+        except OSError as e:
+            print(f"remix-brain: ptt socket unavailable ({e!r}) — hotkey voice "
+                  f"input off (the Godot F2 key still works)")
+            return
+        print(f"remix-brain: ptt listening on {config.PTT_SOCK}")
+        while True:
+            try:
+                action, _addr = sock.recvfrom(32)
+            except OSError:
+                break
+            _ptt_command(action.decode(errors="replace").strip())
+
+    threading.Thread(target=_thread, daemon=True, name="ptt-cmd").start()
+
+
+# ---------------------------------------------------------- godot -> brain
+
+def _on_ready(m: dict) -> None:
+    global _face_ready
+    _face_ready = True
+    _rule.set_available_poses(m.get("poses") or [])
+    _jev.set_available(m.get("eyes"), m.get("mouths"))
+    print(f"remix-brain: face ready — eyes={m.get('eyes')} mouths={m.get('mouths')}")
+
+
+def _on_context(m: dict) -> None:
+    global _context
+    _context = {k: m.get(k) for k in ("window", "screen", "screen_index",
+                                      "area_fraction", "dpi_scale")}
+    print(f"remix-brain: window context {_context.get('window')} on "
+          f"{_context.get('screen')} ({(_context.get('area_fraction') or 0) * 100:.0f}% of area)")
+
+
+def _on_typing(_m: dict) -> None:
+    """Typing in the Godot bar: instant 'thinking' reflex, $0, throttled."""
+    global _typing_at
+    now = time.monotonic()
+    if now - _typing_at < 3.0 or _loop is None:
+        return
+    _typing_at = now
+    _cancel(_settle_task)
+    asyncio.create_task(ws_server.send(NEUTRAL.msg(look=[-0.4, -0.7])))
+
+
+def _on_ptt_msg(m: dict) -> None:
+    _ptt_command("start" if m.get("state") == "start" else "stop")
 
 
 async def main() -> None:
     started = time.monotonic()
-    global _rule
+    global _rule, _jev, _ptt, _loop, _gate_task, _pro, _aware_task, _proactive_task
+    _loop = asyncio.get_running_loop()
     _rule = rules.RuleBrain()
     _jev = jev.JevBrain()
-    ws_server.on_ready(lambda m: (
-        _rule.set_available_poses(m.get("poses") or []),
-        _jev.set_available_poses(m.get("poses") or [])))
-    ws_server.on_perform_done(lambda m: _rule.pause_for_speech(0.6))
-    ws_server.on_user_text(lambda m: asyncio.create_task(_on_user_text(m)))
+    _pro = proactive.Proactive()
+    ws_server.on("ready", _on_ready)
+    ws_server.on("context", _on_context)
+    ws_server.on("perform_done", _on_perform_done)
+    ws_server.on("user_text", lambda m: asyncio.create_task(_on_user_text(m)))
+    ws_server.on("user_typing", _on_typing)
+    ws_server.on("ptt", _on_ptt_msg)
+
+    voice = tts.available()
+    print(f"remix-brain: voice out {'espeak-ng ' + config.TTS_VOICE if voice else 'OFF (no espeak-ng or REMIX_TTS=0) — captions on'}")
+    if config.PTT_ENABLED:
+        def _ears(status: str) -> None:
+            if status == "error" and _loop:
+                _loop.call_soon_threadsafe(lambda: asyncio.create_task(
+                    ws_server.send({"type": "notice", "seconds": 6.0, "text":
+                                    "// ears offline: whisper model failed to load //"})))
+        _ptt = stt.PushToTalk(
+            on_status=_ears,
+            on_timeout=lambda: asyncio.create_task(_ptt_stop()))
+        _start_ptt_server()
+        _ptt.warm()  # background thread; the model is loaded once
+
     body_task = asyncio.create_task(body_loop(_rule))
+    if config.NOTICE_GATE:
+        _gate_task = asyncio.create_task(audio.gate_loop())  # wpctl mute/volume
+    if config.AWARENESS:
+        _aware_task = asyncio.create_task(awareness.watch_loop())
+        _proactive_task = asyncio.create_task(proactive_loop())
+    print(f"remix-brain: awareness {'on' if config.AWARENESS else 'off'} "
+          f"(app names only, titles redacted), proactive "
+          f"{'on' if config.PROACTIVE and config.AWARENESS else 'off'} "
+          f"(max 1 line / {config.PROACTIVE_MIN_GAP_S / 60:.0f} min)")
     try:
         await ws_server.serve()  # runs forever
     except KeyboardInterrupt:
@@ -109,6 +450,11 @@ async def main() -> None:
         print(f"remix-brain: FATAL — {e!r}")
     finally:
         body_task.cancel()
+        _cancel(_gate_task)
+        _cancel(_aware_task)
+        _cancel(_proactive_task)
+        if _ptt:
+            await _ptt.cancel()   # never leave the mic open on the way out
         print(f"remix-brain: stopped after {time.monotonic() - started:.0f}s")
 
 
