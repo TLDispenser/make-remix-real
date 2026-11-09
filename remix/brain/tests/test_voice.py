@@ -118,6 +118,17 @@ class MarkupTests(unittest.TestCase):
         self.assertIn('<break time="380ms"/>', tts._markup("Fine... whatever."))
         self.assertIn('<break time="200ms"/>', tts._markup("it is hot - very hot"))
 
+    def test_sigh_cue_is_a_breath_the_word_never_spoken(self):
+        # The 19:0x live session: espeak said the literal word "sigh"
+        # because the emphasis pass grabbed the cue first.
+        m = tts._markup("*sigh* ...fine. Shutting up.")
+        low = m.lower()
+        self.assertNotIn("sigh", low)
+        self.assertIn("fine", low)          # words after survive
+        self.assertIn("break", low.lower()) # a pause remains to drag on
+        self.assertEqual("", tts._markup("*sigh*          "))   # just a breath
+        self.assertEqual("", tts.speakable("*sigh*          "))
+
     def test_xml_is_escaped(self):
         m = tts._markup("5 < 6 & 7 > 2")
         self.assertIn("&lt;", m)

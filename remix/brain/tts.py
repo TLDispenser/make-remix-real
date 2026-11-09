@@ -38,8 +38,12 @@ class Speech(NamedTuple):
 
 
 def speakable(text: str) -> str:
-    """Clean a beat for espeak: no markup, emoji, or symbols it would read aloud."""
+    """Clean a beat for espeak: no markup, emoji, or symbols it would read aloud.
+    VOICE DIRECTION contract (speech.py SYS_PROMPT): *sigh* is a breathing
+    pause the prosody drags low — the WORD 'sigh' must never reach espeak,
+    so this runs before the generic asterisk-strip."""
     t = _EMOJI.sub("", text)
+    t = re.sub(r"\*\s*sighs?\s*\*", "  ...  ", t, flags=re.I)
     t = re.sub(r"[*_`#>~|\\]", "", t)
     t = re.sub(r"\((.*?)\)", r", \1,", t)                       # parentheses -> pauses
     t = re.sub(r"(\d+(?:\.\d+)?)\s*°?\s*C\b", r"\1 degrees", t)  # 53C -> 53 degrees
@@ -191,6 +195,11 @@ def _markup(text: str, stutter: bool = False) -> str:
     """Raw beat -> SSML body ('' = nothing to say). *word* and ALL-CAPS get
     emphasis, '...' becomes a real pause, dashes a short one. Everything else
     is speakable() exactly as before (and XML-escaped)."""
+    # the *sigh* cue is a BREATH, not a word — and it must be turned into a
+    # pause BEFORE the emphasis regex sees it (else she'd emphasize and then
+    # speak the literal word "sigh"; that's exactly what happened on live
+    # voice 2026-11-08 19:0x). The engine just pauses there; prosody waits.
+    text = re.sub(r"\*\s*sighs?\s*\*", _ELLIPSIS, text, flags=re.I)
     t = re.sub(r"\*([^*\n]{1,40})\*", _EM_OPEN + r"\1" + _EM_CLOSE, text)
     t = re.sub(r"\.{2,}|…", _ELLIPSIS, t)
     t = re.sub(r"\s[—–-]\s|—", _DASH, t)

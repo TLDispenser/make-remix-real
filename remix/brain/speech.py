@@ -190,8 +190,10 @@ def _memory_block() -> str:
     from . import memory
     if not memory.has_journal():
         return ""
+    # The last few rows (what just happened) plus a few scattered older ones,
+    # so "earlier today" stays answerable even after a chatty stretch.
     rows = []
-    for e in memory.lines(limit=6):
+    for e in memory.lines(limit=8, spread=5):
         when = str(e.get("at") or "")
         kind = str(e.get("kind") or "")
         label = "you said" if kind == "her" else (
@@ -203,14 +205,18 @@ def _memory_block() -> str:
     if not rows:
         return ""
     return ("\nWHAT YOU REMEMBER (this is real: dated notes from your own "
-            "journal; nothing else about the past exists)\n"
+            "journal; nothing else about the past exists. Shown here: your "
+            "most recent notes, plus a few scattered picks from further "
+            "back — the list has holes, so absence from it only means "
+            "'not shown', not 'never happened'; if they mention something "
+            "from a time you can't see, say you don't have that page)\n"
             + "\n".join(rows) + "\n"
             "You may reference these outright (quote them loosely, keep your "
-            "voice). Memories NOT in this list do not exist — never invent "
-            "one. When they ask what they said or what happened, find the "
-            "row whose timestamp best matches the moment they mean — not "
-            "just any row sharing a word with the question — and report "
-            "what that row holds. If no row fits, say you don't have it.\n")
+            "voice). Never INVENT one. When they ask what they said or what "
+            "happened, find the row whose timestamp best matches the moment "
+            "they mean — not just any row sharing a word with the question "
+            "— and report what that row holds. If no row fits, say you "
+            "don't have it.\n")
 
 
 def build_system_prompt(vitals: dict | None = None, stance: str | None = None,

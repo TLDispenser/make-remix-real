@@ -194,9 +194,21 @@ def record(kind: str, text: str, when: float | None = None) -> None:
     _mark()
 
 
-def lines(kind: str | None = None, limit: int = 20) -> list:
-    out = [x for x in store()["lines"] if kind is None or x.get("kind") == kind]
-    return out[:limit]
+def lines(kind: str | None = None, limit: int = 20, spread: int = 0) -> list:
+    """Newest-first journal rows. `limit` takes the most recent; `spread`
+    additionally samples rows from the OLDER remainder — evenly spaced,
+    always including the journal's very first row — so 'the morning' stays
+    reachable even when the recent lines have been chatty. No duplicates."""
+    rows = [x for x in store()["lines"] if kind is None or x.get("kind") == kind]
+    out = rows[:limit]
+    if spread and len(rows) > limit:
+        rest = rows[limit:]
+        n = len(rest)
+        picks = {int(k * (n - 1) / spread) for k in range(spread)} | {n - 1}
+        for i in sorted(picks):
+            if rest[i] not in out:
+                out.append(rest[i])
+    return out
 
 
 # ----------------------------------------------------- dedup + variety memory

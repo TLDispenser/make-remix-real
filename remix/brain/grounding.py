@@ -179,7 +179,19 @@ def facts(vitals_text: str, machine: str, context: dict | None,
         lines = []
         app = aware.get("app")
         title = aware.get("title")
-        if app and sees_title:
+        if aware.get("self_focused") and app:
+            # She is what's in focus right now; the stored app is the LAST
+            # one they had open — never present it as current truth.
+            lines.append(f'- The human is looking at YOUR window right now '
+                         f'(nothing else is in focus). The last program they '
+                         f'were using before turning to you: "{app}" — that '
+                         'label is recent history, not the present. So if '
+                         'asked what is focused: it is you.')
+        elif aware.get("self_focused"):
+            lines.append('- The human is looking at YOUR window right now '
+                         '(nothing else is in focus). If asked what is '
+                         'focused: it is you.')
+        elif app and sees_title:
             lines.append(f'- The app in focus right now: "{app}".')
             lines.append(f'- That window\'s title: "{title}" (the user opted '
                          'in to sharing window titles with you; it may be '
@@ -212,7 +224,7 @@ def facts(vitals_text: str, machine: str, context: dict | None,
         if up and up > 120:
             lines.append(f"- This session of yours (your brain running) has "
                          f"been awake about {max(1, round(up / 60))} minutes.")
-        if aware.get("fullscreen"):
+        if aware.get("fullscreen") and not aware.get("self_focused"):
             lines.append("- The focused app is fullscreen: they are likely "
                          "watching or gaming. Keep replies minimal.")
         if aware.get("plugged") is False:

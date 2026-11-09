@@ -167,7 +167,7 @@ def _beat_looks(beat_list: list, lead: list | None = None) -> list:
     out = []
     held = None
     for i, b in enumerate(beat_list):
-        look = awareness.look_for_text(b)
+        look = awareness.look_for_text(b) or awareness.gaze_for_dir(b)
         if look is not None:
             held = list(look)
             out.append(list(held))
@@ -216,10 +216,13 @@ async def _on_user_text(m: dict) -> None:
         if _jev:
             _jev.note_face(face)
     # (5) she looks toward whichever visible window the human just named
-    # (any window on her screen, not only the focused one).
-    aimed = awareness.look_for_text(text)
+    # (any window on her screen, not only the focused one) — or toward the
+    # side they ask about ("which one is to your right?").
+    aimed = awareness.look_for_text(text) or awareness.gaze_for_dir(text)
     if aimed:
-        print(f"remix-brain: gazing toward {awareness.find_mentioned(text)['app']} {aimed}")
+        named = awareness.find_mentioned(text)
+        print(f"remix-brain: gazing toward "
+              f"{named['app'] if named else 'the window you pointed at'} {aimed}")
     await ws_server.send(face.msg(look=aimed or [0.0, -0.15]))
 
     # Right brain. Only say "one sec" if she is actually slow.

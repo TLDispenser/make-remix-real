@@ -40,6 +40,7 @@ _started = time.monotonic()
 _state = {
     "app": None,          # focused app class, e.g. "firefox" (name only)
     "fullscreen": False,  # focused window is fullscreen (DND signal)
+    "self_focused": False,  # the human is looking at HER window right now
     "idle_s": None,       # seconds since cursor or window last changed
     "plugged": None,      # True on AC, False on battery, None = unknown
     "muted": None,        # True while system audio is muted or very low
@@ -301,6 +302,25 @@ def look_for_text(text: str) -> list | None:
     return list(w["look"]) if w and w.get("look") else None
 
 
+_DIR_WORDS = ("my right", "my left", "above me", "below me", "beside me",
+              "behind me", "over me", "under me")
+
+
+def gaze_for_dir(text: str) -> list | None:
+    """Aim her eyes at the window a direction phrase points at ("to my
+    right", "above me", "the one beside me"...). Pairs with look_for_text:
+    those need an app NAME, this catches the plain geometry words she (or
+    the human) actually use. None when nothing on her screen matches."""
+    low = (text or "").lower()
+    if not any(k in low for k in _DIR_WORDS):
+        return None
+    for w in around().get("windows", []):
+        d = (w.get("dir") or "").lower()
+        if any(k in low and k in d for k in _DIR_WORDS):
+            return list(w["look"]) if w.get("look") else None
+    return None
+
+
 def gaze_toward(app: str | None = None) -> list | None:
     """Gaze at the focused window (or the one named `app`), measured from HER
     window — not from the screen center (she is a floating window, not the
@@ -473,15 +493,22 @@ def _observe_window(now: float) -> None:
     global _last_app, _active_at, _state
     parsed = parse_window_json(_hyprctl(["activewindow", "-j"]) or "")
     if parsed is None:
-        # No readable window (desktop, locked, non-Hyprland): keep last app,
-        # but never keep a stale title.
+        # No readable window (bare desktop, locked, non-Hyprland): the machine
+        # told her nothing this tick — so nothing is CURRENT truth. Keep the
+        # last app only as history; app goes None so she never claims a
+        # focus label she can't see (the 2026-11-08 "stale brave" bug).
         _state.pop("title", None)
+        _state["app"] = None
+        _state["self_focused"] = False
         return
     if is_self(parsed["app"], parsed["title"]):
-        # The human is typing AT her. That's activity — but she isn't "the
-        # app in focus": keep the last real app so she can still talk about it.
+        # The human is typing AT her. That's activity — and an honest fact:
+        # SHE is what's in focus right now, not the last app they had open.
+        # Keep the last real app (she can still talk about it), but say so.
         _active_at = now
+        _state["self_focused"] = True
         return
+    _state["self_focused"] = False
     app = parsed["app"]
     if app != _last_app:
         _last_app = app
@@ -594,7 +621,8 @@ def seed_for_test(**kw) -> None:
 def reset_for_test() -> None:
     global _last_cursor, _last_app, _active_at, _quiet_since, _monitors, _monitors_at
     _monitors, _monitors_at = [], 0.0
-    _state.update(around=None, app=None, fullscreen=False, idle_s=None, plugged=None,
+    _state.update(around=None, app=None, fullscreen=False, self_focused=False,
+                  idle_s=None, plugged=None,
                   muted=None, muted_s=None, app_since=None,
                   up_s=0.0, at=0.0)
     _state.pop("title", None)

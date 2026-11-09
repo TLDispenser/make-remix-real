@@ -46,6 +46,21 @@ class JournalTests(MemoryBase):
         self.assertEqual("line %d" % i, rows[0]["text"])   # newest first
         self.assertIn("at", rows[0])                       # dated
 
+    def test_spread_reaches_back_beyond_the_recent_window(self):
+        # The 18:58 failure: a chatty session buried the whole morning;
+        # 'what do you remember from the morning' had nothing to read.
+        for i in range(60):
+            memory.record("thought", f"row {i:02d}")
+        spread = memory.lines(limit=8, spread=5)
+        self.assertEqual("row 59", spread[0]["text"])      # newest first
+        self.assertEqual("row 00", spread[-1]["text"])     # journal's first row
+        self.assertEqual(14, len(spread))                  # 8 recent + 6 picks
+        older = {r["text"] for r in spread[8:]}
+        self.assertIn("row 21", older)                     # mid-journal pick
+        self.assertTrue(older.issubset(
+            {f"row {i:02d}" for i in range(0, 52)}))       # nothing from recent
+        self.assertEqual(len(spread), len({r["text"] for r in spread}))
+
     def test_said_set_survives_a_reload(self):
         memory.note_said("get to the point ALREADY!!")
         memory.flush()

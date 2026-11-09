@@ -71,7 +71,7 @@ async def run() -> int:
                 continue
             await ws.send(json.dumps({"v": 2, "type": "user_text",
                                       "text": line}))
-            print("(sent — watch her face)")
+            print(f"\ryou: {line}\nyou> ", end="", flush=True)
 
 
 if __name__ == "__main__":

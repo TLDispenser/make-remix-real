@@ -208,6 +208,21 @@ class MentionTests(unittest.TestCase):
         self.assertEqual([0.4, 0.4], looks[0])         # lead starts
         self.assertEqual(kt, looks[1])                 # kitty takes over
 
+    def test_direction_words_aim_the_eyes_too(self):
+        # 19:04 in her live log: said "to my right, right beside me" and
+        # just STOOD there — she needs geometry words to gesture.
+        me = client("Remix", "Remix", 600, 760, 480, 270,
+                    floating=True, pinned=True)
+        right = client("firefox", "x", 1100, 700, 300, 200, focus=1)
+        awareness.seed_for_test(around=around([me, right]))
+        w = awareness.around()["windows"][0]
+        self.assertIn("my right", (w.get("dir") or "").lower())
+        self.assertEqual(w["look"], awareness.gaze_for_dir(
+            "it's that one, to my right, right beside me"))
+        self.assertIsNone(awareness.gaze_for_dir("right now it's fine"))
+        self.assertIsNone(awareness.gaze_for_dir(
+            "the one below me"))          # dir words, but no such window
+
 
 class FocusHandlingTests(unittest.TestCase):
     def setUp(self):
@@ -215,6 +230,17 @@ class FocusHandlingTests(unittest.TestCase):
 
     def tearDown(self):
         awareness.reset_for_test()
+
+    def test_no_window_read_means_no_focus_claim_to_make(self):
+        # clicking the bare desktop: `activewindow` communicates precisely
+        # nothing, so the stale app must never pose as current again.
+        awareness.seed_for_test(app="kitty", self_focused=True)
+        with mock.patch.object(awareness, "_hyprctl", return_value=""):
+            awareness._observe_window(1.0)
+        a = awareness.current()
+        self.assertIsNone(a["app"])
+        self.assertFalse(a["self_focused"])
+        self.assertIsNone(a.get("title"))
 
     def test_focus_on_her_does_not_replace_the_real_app(self):
         fx = json.dumps({"class": "firefox", "title": "t", "fullscreen": 0,
@@ -226,6 +252,18 @@ class FocusHandlingTests(unittest.TestCase):
         with mock.patch.object(awareness, "_hyprctl", return_value=me):
             awareness._observe_window(2.0)
         self.assertEqual("firefox", awareness.current()["app"])
+        # (2026-11-08) THE 18:55 bug: she then reported firefox as "the
+        # focused app right now" while the human was looking at HER.
+        self.assertTrue(awareness.current()["self_focused"])
+        t = grounding.facts("cpu 5%", "a laptop", None, awareness.current())
+        self.assertIn("looking at YOUR window", t)
+        self.assertNotIn('The focused app right now', t)
+        # and back to the real app: the label is current again
+        with mock.patch.object(awareness, "_hyprctl", return_value=fx):
+            awareness._observe_window(3.0)
+        self.assertFalse(awareness.current()["self_focused"])
+        t2 = grounding.facts("cpu 5%", "a laptop", None, awareness.current())
+        self.assertIn('The focused app right now: "firefox"', t2)
 
 
 class GroundingTests(unittest.TestCase):
