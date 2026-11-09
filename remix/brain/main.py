@@ -76,13 +76,56 @@ async def memory_loop() -> None:
 
 
 async def body_loop(rule: rules.RuleBrain) -> None:
-    """The nervous system: vitals stream -> RuleBrain -> v2 messages."""
+    """The nervous system: vitals stream -> RuleBrain -> v2 messages. On top
+    of vitals posing, she WATCHES the room ($0 reflexes, no words): a glance
+    when the focused window changes, a small perk when you come back from a
+    long absence. Both are suppressed while she's speaking."""
     global _latest_snapshot
+    prev_app = None
+    prev_idle = None
+    perk_task = None
     async for snap in vitals.stream():
         _latest_snapshot = snap
         await ws_server.send({"type": "vitals", **snap})
         for msg in rule.update(snap, aware=awareness.current()):
             await ws_server.send(msg)
+
+        # ---------------------------------------------------- watch reflexes
+        aware = awareness.current()
+        if (aware.get("up_s", 0.0) > 15.0      # skip the boot sighting flurry
+                and time.monotonic() >= rule.speak_gate_until):
+            app = aware.get("app")
+            if app and app != prev_app:
+                if prev_app is not None:       # the first sight isn't an event
+                    aim = awareness.gaze_toward(app)
+                    if aim:
+                        print(f"remix-brain: watched you move to {app}")
+                        perk_task = _perk(rule, aim, perk_task)
+                prev_app = app
+            idle = aware.get("idle_s")
+            if idle is not None:
+                # deep idle (>=2 min) broken by the human coming back
+                if prev_idle is not None and prev_idle >= 120.0 and idle < 90.0:
+                    print("remix-brain: watched you come back")
+                    perk_task = _perk(rule, None, perk_task)
+                prev_idle = idle
+
+
+def _perk(rule: rules.RuleBrain, aim: list | None, prior) -> asyncio.Task:
+    """A quick 'noticed you' micro-reaction ($0, wordless): pointer-eyes for
+    under a second — aimed at the window you moved to when there is one —
+    then settle back to the vitals-driven baseline."""
+    _cancel(prior)
+
+    async def _perk() -> None:
+        msg = {"type": "pose", "eyes": "really"}
+        if aim:
+            msg["look"] = list(aim)
+        await ws_server.send(msg)
+        await asyncio.sleep(0.8)
+        await ws_server.send(rule.baseline_message())
+
+    return asyncio.create_task(_perk())
 
 
 # ------------------------------------------------------------- face helpers
@@ -115,17 +158,26 @@ def _local_arc(first: Face, beat_list: list) -> list:
 
 
 def _beat_looks(beat_list: list, lead: list | None = None) -> list:
-    """One gaze per beat. If a beat NAMES a window she can see (\"firefox\",
-    \"your terminal\"), her eyes turn toward it for that beat; otherwise the
-    ambient drift. `lead` (what she was asked about) holds for beat 0 when
-    that beat doesn't name anything itself. Without this the per-beat cues
-    overwrote the gaze the instant her voice started."""
+    """One gaze per beat. If a beat NAMES a window she can see ("firefox",
+    "your terminal"), her eyes turn toward it for that beat; otherwise the
+    ambient drift. (2026-11-08: the gesture STICKS - once a named target or
+    the `lead` aim takes hold, every later beat keeps pointer-eyes until the
+    line ends. Random per-beat drift kept snapping the aim away mid-sentence,
+    which is why gestures read as broken.)"""
     out = []
+    held = None
     for i, b in enumerate(beat_list):
         look = awareness.look_for_text(b)
-        if look is None and i == 0 and lead:
-            look = lead
-        out.append(look or LOOK_POOL[i % len(LOOK_POOL)])
+        if look is not None:
+            held = list(look)
+            out.append(list(held))
+        elif held is not None:
+            out.append(list(held))        # point the whole line, like a hand
+        elif i == 0 and lead:
+            held = list(lead)
+            out.append(list(held))
+        else:
+            out.append(LOOK_POOL[i % len(LOOK_POOL)])
     return out
 
 
@@ -231,6 +283,17 @@ async def _on_user_text(m: dict) -> None:
 
 # ------------------------------------------------- proactive lines (Phase 6)
 
+def _chatter_uses_voice(audible: bool | None) -> bool:
+    """REMIX_CHATTER_VOICE — whether an UNPROMPTED line gets espeak.
+    never = captions only; always = talk regardless of the room; auto
+    (default) = polite: she stays verbal-silent while the room is audible
+    (music, videos — she doesn't talk over them) and captions instead."""
+    if config.CHATTER_VOICE == "never":
+        return False
+    if config.CHATTER_VOICE == "always":
+        return True
+    return not audible
+
 async def _deliver_proactive(line: dict) -> None:
     """Say an unprompted line through the SAME pipeline as a reply: face,
     espeak beats, one perform, captions per the on-screen text rule."""
@@ -255,9 +318,10 @@ async def _deliver_proactive(line: dict) -> None:
     _seq += 1
     pid = f"t{_seq}"
     audible = audio.quiet() is False      # None (can't tell) counts audible
-    spoken = None if audible else await tts.synthesize(
+    spoken = (await tts.synthesize(
         beat_list, pid, faces=[face] * len(beat_list),
         strain=tts.strain_from(_latest_snapshot))
+        if _chatter_uses_voice(audible) else None)
     await ws_server.send({"type": "say", "text": text, "final": True,
                           "proactive": True})
     face_list = [face] * len(beat_list)          # $0 acting: one mood, gaze varies
@@ -279,9 +343,14 @@ async def _deliver_proactive(line: dict) -> None:
         secs = min(14.0, max(3.5, len(text) * 0.045))
         await ws_server.send({"type": "notice", "text": text, "seconds": secs})
     speech.add_assistant(text)   # so the next real exchange knows she said it
+    why = ("chosen-quiet" if (spoken is None and audible
+                              and config.CHATTER_VOICE == "auto")
+           else "muted-room" if (spoken is None and audible)
+           else "chatter_voice=never" if (spoken is None
+                                          and config.CHATTER_VOICE == "never")
+           else "espeak" if spoken else "none")
     print(f"remix-brain: proactive [{line.get('trigger')}] \"{text}\" "
-          f"(voice={'muted-room' if (spoken is None and audible) else 'espeak' if spoken else 'none'}, "
-          f"face={face})")
+          f"(voice={why}, face={face})")
 
 
 async def proactive_loop() -> None:

@@ -34,6 +34,7 @@ FIREFOX = client("firefox", "Secret bank - user@example.com — Mozilla Firefox"
 KITTY = client("kitty", "~/work/private", 1020, 20, 880, 400, focus=2)
 UNDER = client("spotify", "Spotify", 1450, 800, 400, 250, focus=3)
 OTHER_WS = client("discord", "friends", 0, 0, 800, 600, ws=3, focus=7)
+BRAVE = client("brave-origin", "New Tab - Brave", 0, 0, 1000, 1080, focus=4)
 
 
 def around(clients, **kw):
@@ -156,6 +157,17 @@ class MentionTests(unittest.TestCase):
         self.assertEqual("firefox", awareness.find_mentioned(
             "your browser is hogging RAM")["app"])
 
+    def test_brave_class_flavors_all_mean_brave(self):
+        for cls in ("brave-origin", "brave-bin", "brave"):
+            view = awareness.build_around(
+                awareness.parse_clients_json(json.dumps([ME, client(cls, "x", 0, 0, 10, 10)])),
+                awareness.parse_monitors_json(MON))
+            awareness.seed_for_test(around=view)
+            self.assertEqual(cls, awareness.find_mentioned("what's on brave?")["app"],
+                             f"class {cls!r} should match the word 'brave'")
+            self.assertEqual(cls, awareness.find_mentioned("the browser")["app"],
+                             f"class {cls!r} should match the word 'browser'")
+
     def test_first_mention_wins(self):
         self.assertEqual("kitty", awareness.find_mentioned(
             "the terminal, not the browser")["app"])
@@ -173,13 +185,28 @@ class MentionTests(unittest.TestCase):
         looks = brain_main._beat_looks(beats)
         fx = awareness.look_for_text("firefox")
         self.assertEqual(fx, looks[1])                 # the naming beat aims
-        self.assertEqual(brain_main.LOOK_POOL[0], looks[0])   # others drift
-        self.assertEqual(brain_main.LOOK_POOL[2], looks[2])
+        self.assertEqual(brain_main.LOOK_POOL[0], looks[0])   # before: drift
+        self.assertEqual(fx, looks[2])                 # after: aim HOLDS
 
-    def test_lead_holds_for_first_beat_only(self):
+    def test_the_gaze_sticks_once_something_takes_it(self):
+        # Random per-beat drift used to snap the aim away mid-sentence,
+        # which read as broken gestures. Once a named beat takes pointer-eyes
+        # (or the lead does), every later beat keeps them until the line ends.
+        beats = ["firefox, again.", "hm.", "and more."]
+        looks = brain_main._beat_looks(beats)
+        fx = awareness.look_for_text("firefox")
+        self.assertEqual([fx, fx, fx], looks)
+
+    def test_lead_holds_for_the_whole_line_too(self):
         looks = brain_main._beat_looks(["hm.", "ok."], lead=[0.1, 0.2])
-        self.assertEqual([0.1, 0.2], looks[0])
-        self.assertEqual(brain_main.LOOK_POOL[1], looks[1])
+        self.assertEqual([[0.1, 0.2], [0.1, 0.2]], looks)
+
+    def test_a_later_named_beat_steals_the_gaze_it_names(self):
+        beats = ["hm.", "there, kitty's awake."]
+        looks = brain_main._beat_looks(beats, lead=[0.4, 0.4])
+        kt = awareness.look_for_text("kitty")
+        self.assertEqual([0.4, 0.4], looks[0])         # lead starts
+        self.assertEqual(kt, looks[1])                 # kitty takes over
 
 
 class FocusHandlingTests(unittest.TestCase):

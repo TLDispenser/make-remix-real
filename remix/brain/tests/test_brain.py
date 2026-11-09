@@ -10,6 +10,7 @@ import time
 import unittest
 import wave
 from collections import Counter
+from unittest import mock
 
 os.environ.setdefault("REMIX_TTS_DIR", tempfile.mkdtemp(prefix="remix-test-voice-"))
 
@@ -391,6 +392,68 @@ class ExchangeTests(unittest.TestCase):
 
     def test_settle_message_restates_the_baseline(self):
         self.assertEqual(brain_main._rule.baseline_message(), {"type": "pose", "pose": "default"})
+
+
+class ChatterVoiceTests(unittest.TestCase):
+    """REMIX_CHATTER_VOICE: the room policy for unprompted lines."""
+
+    def _modes(self, mode):
+        with mock.patch.object(config, "CHATTER_VOICE", mode):
+            return [brain_main._chatter_uses_voice(audible)
+                    for audible in (True, False, None)]
+
+    def test_auto_is_polite_talks_only_into_a_quiet_room(self):
+        self.assertEqual(self._modes("auto"), [False, True, True])
+
+    def test_always_talks_over_anything(self):
+        self.assertEqual(self._modes("always"), [True, True, True])
+
+    def test_never_is_captions_only(self):
+        self.assertEqual(self._modes("never"), [False, False, False])
+
+
+class WatchTests(unittest.IsolatedAsyncioTestCase):
+    """She reacts to what the human does: a wordless perk when they switch
+    windows or come back from deep idle. $0, no speech, self-restoring."""
+
+    def setUp(self):
+        self.sent = []
+        self._send = brain_main.ws_server.send
+
+        async def send(msg: dict) -> None:
+            self.sent.append(msg)
+
+        brain_main.ws_server.send = send
+
+    def tearDown(self):
+        brain_main.ws_server.send = self._send
+
+    async def test_perk_aims_then_reassumes_the_baseline(self):
+        rule = rules.RuleBrain()
+        real_sleep = asyncio.sleep
+
+        async def fast(_s):
+            await real_sleep(0)
+
+        with mock.patch.object(brain_main.asyncio, "sleep", fast):
+            task = brain_main._perk(rule, [-0.6, 0.2], None)
+            await task
+        self.assertEqual(self.sent[0],
+                         {"type": "pose", "eyes": "really", "look": [-0.6, 0.2]})
+        self.assertEqual(self.sent[1], rule.baseline_message())
+
+    async def test_perk_without_aim_is_bare_pointer_eyes(self):
+        rule = rules.RuleBrain()
+        real_sleep = asyncio.sleep
+
+        async def fast(_s):
+            await real_sleep(0)
+
+        with mock.patch.object(brain_main.asyncio, "sleep", fast):
+            await brain_main._perk(rule, None, None)
+        self.assertEqual(self.sent[0], {"type": "pose", "eyes": "really"})
+        # eyes-only pose: Godot keeps/recenters gaze itself, no explicit look
+        self.assertNotIn("look", self.sent[0])
 
 
 if __name__ == "__main__":

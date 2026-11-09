@@ -70,7 +70,8 @@ import math
 _ODD_TRANSFORMS = {1, 3, 5, 7}     # rotated outputs swap width/height
 _CATEGORY = {                      # friendly words -> app classes she may mean
     "browser": {"firefox", "chromium", "chrome", "google-chrome", "brave",
-                "brave-browser", "zen", "librewolf", "vivaldi", "floorp",
+                "brave-browser", "brave-origin", "brave-bin", "zen",
+                "librewolf", "vivaldi", "floorp",
                 "qutebrowser", "epiphany", "microsoft-edge"},
     "terminal": {"kitty", "alacritty", "foot", "footclient", "wezterm",
                  "konsole", "ghostty", "gnome-terminal", "xterm", "st",
@@ -276,9 +277,13 @@ def find_mentioned(text: str) -> dict | None:
         return None
     best = None                          # (position in text, window)
     for w in around().get("windows", []):
-        names = {_name_of(w["app"])}
+        app = _name_of(w["app"])
+        names = {app}
+        stem = app.split("-", 1)[0]     # 'brave-origin' -> whom they say: brave
+        if stem != app and len(stem) >= 4:
+            names.add(stem)
         for word, apps in _CATEGORY.items():
-            if _name_of(w["app"]) in apps:
+            if app in apps:
                 names.add(word)
         for n in names:
             if len(n) < 3:

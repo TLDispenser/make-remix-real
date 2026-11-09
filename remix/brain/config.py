@@ -211,6 +211,10 @@ TTS_DIR = _env(
     (os.environ.get("XDG_RUNTIME_DIR", "/tmp") + "/remix-voice"))
 # Captions on her face (the notice line): auto = only when she has no voice.
 SUBTITLES = (_env("SUBTITLES", "auto") or "auto").lower()   # auto|always|never
+# Whether her CHATTER (unprompted lines) gets a voice. auto = polite: she
+# stays spoken-silent while the room is audible (music, videos) and captions
+# instead; always = espeak regardless of the room; never = captions only.
+CHATTER_VOICE = (_env("CHATTER_VOICE", "auto") or "auto").lower()  # auto|always|never
 
 # ---- Right brain (System 2) — OpenAI-compatible chat, $0 default ----
 # Primary: Z.ai GLM-4.7-Flash (permanent free tier). Its free tier sheds load
