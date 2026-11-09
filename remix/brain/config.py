@@ -109,6 +109,15 @@ SURROUNDINGS_MAX = int(_env("SURROUNDINGS_MAX", "8"))   # nearest N windows
 # class "Remix" or "godot"; the title is "Remix" (your windowrule uses it).
 SELF_MATCH = _env("SELF_MATCH", "remix")
 
+# Where-she-is (2026-11-09): Godot's `context` message carries "pos" (her
+# window's position WITHIN the screen she's on) + screen_count; grounding
+# turns that into plain placement words ("parked in the top-right area of
+# the 1920x1080 screen, screen 2 of 2") and re-reports whenever she's moved.
+# 0 = ignore pos entirely — she then honestly says she isn't told where
+# she's parked. Kill switch for compositors that report junk positions
+# (Wayland-native builds can read (0,0) forever on some setups).
+WINDOW_POS = _env("WINDOW_POS", "1") == "1"
+
 # Unprompted lines (proactive.py). The TRIGGER is local and $0 (never Jev);
 # the WORDS are written fresh by the same $0 provider pool her replies use
 # (speech.generate_proactive_line), grounded + screened + deduped. No

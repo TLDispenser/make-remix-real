@@ -101,18 +101,68 @@ def _fl(v):
         return None
 
 
+def _where_phrase(pos, w, h, scr) -> str:
+    """Her window's center as plain region words: 'in the top-right area',
+    'toward the left', 'near the middle'. '' when the numbers are junk.
+    Rough words on purpose: she gets a sense of placement, not coordinates
+    to recite (she'd quote them wrong, and nobody talks in pixel offsets)."""
+    try:
+        px, py = float(pos[0]), float(pos[1])
+        sw, sh = float(scr[0]), float(scr[1])
+        fw, fh = float(w), float(h)
+    except (TypeError, ValueError, IndexError):
+        return ""
+    if sw <= 0 or sh <= 0 or fw <= 0 or fh <= 0:
+        return ""
+    fx = min(1.0, max(0.0, (px + fw / 2.0) / sw))
+    fy = min(1.0, max(0.0, (py + fh / 2.0) / sh))
+    v = "top" if fy < 1 / 3 else "bottom" if fy >= 2 / 3 else ""
+    hz = "left" if fx < 1 / 3 else "right" if fx >= 2 / 3 else ""
+    if v and hz:
+        return f"in the {v}-{hz} area"
+    if v:
+        return f"along the {v}"
+    if hz:
+        return f"toward the {hz}"
+    return "near the middle"
+
+
 def describe_screen(context: dict | None) -> str:
+    """Where she is, from the facts Godot actually reports (context msg:
+    window size, screen size, screen index/count, pos within her screen).
+    That data is LIVE — Godot re-sends it whenever she moves — so the line
+    stays honest about being 'right now', not a fixed address. When the
+    position isn't trusted (no pos, or REMIX_WINDOW_POS=0), she says so
+    instead of guessing: she never invents a location."""
     if not context or not context.get("window"):
-        return "You're shown in a small window on the user's screen."
+        return ("You're shown in a small window on the user's screen. They "
+                "can park that window anywhere; you're not told exactly "
+                "where right now.")
     w, h = context["window"]
     scr = context.get("screen") or [0, 0]
     frac = context.get("area_fraction") or 0
-    where = f"{w}x{h}"
+    screens = ""
+    count, idx = context.get("screen_count"), context.get("screen_index")
+    if isinstance(count, int) and count > 1 and isinstance(idx, int) \
+            and 0 <= idx < count:
+        screens = f" (screen {idx + 1} of {count})"
+    place = ""
     if scr and scr[0] and scr[1]:
-        pct = f", about {round(frac * 100)}% of the {scr[0]}x{scr[1]} screen you're on"
-    else:
-        pct = ""
-    return f"You're shown in a {where} window{pct}."
+        if config.WINDOW_POS and context.get("pos"):
+            phrase = _where_phrase(context["pos"], w, h, scr)
+            if phrase:
+                place = (f" {phrase} of the {scr[0]}x{scr[1]} screen"
+                         f"{screens}")
+    if place:
+        pct = f", about {round(frac * 100)}% of it" if frac else ""
+        return (f"You're a {w}x{h} window, parked{place}{pct}. They move "
+                "you around; that's just where you are right now.")
+    where = f"You're shown in a {w}x{h} window"
+    if scr and scr[0] and scr[1]:
+        where += (f" on the {scr[0]}x{scr[1]} screen{screens}, about "
+                  f"{round(frac * 100)}% of it")
+    return (where + ". They can park that window anywhere; exactly where "
+            "right now isn't something you're told.")
 
 
 def facts(vitals_text: str, machine: str, context: dict | None,
@@ -355,6 +405,8 @@ def check(reply: str, user_text: str, history_text: str, vitals: dict | None,
         named = [k for k, ws in VITAL_WORDS.items() if any(w in ctx for w in ws)]
         if unit.startswith("°") or unit.startswith("deg") or unit == "c":
             cands = ["temp"]
+        elif not named and re.search(r"\b(?:screen|window)\b", ctx):
+            continue    # her own window fraction ("6% of the screen"), not a vital
         else:
             cands = [k for k in named if k != "temp"] or ["cpu", "ram", "battery", "disk"]
         real = [vit[k] for k in cands if vit.get(k) is not None]

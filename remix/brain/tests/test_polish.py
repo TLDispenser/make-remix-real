@@ -226,3 +226,89 @@ class ProactiveUrgentFlagTests(unittest.TestCase):
         self.assertIn("muted_long", proactive.URGENT_ON)
         self.assertIn("idle_deep", proactive.URGENT_ON)
         self.assertNotIn("poke", proactive.URGENT_ON)
+
+
+class WindowPlacementTests(unittest.TestCase):
+    """Nov-9 (redo of the patch lost in a4273da): '480x270, about 6% of the
+    1920x1080 screen' read like a fixed address when she actually gets dragged
+    around. The position Godot now reports becomes plain placement words,
+    second screens get named, and when there is no trustworthy position she
+    says so instead of guessing."""
+
+    CTX = {"window": [480, 270], "screen": [1920, 1080], "area_fraction": 0.06}
+
+    def test_position_becomes_plain_words(self):
+        s = grounding.describe_screen({**self.CTX, "pos": [1340, 100],
+                                       "screen_index": 1, "screen_count": 2})
+        self.assertIn("480x270", s)
+        self.assertIn("top-right", s)
+        self.assertIn("screen 2 of 2", s)
+        self.assertIn("right now", s)     # current spot, not a fixed address
+
+    def test_middle_park_reads_as_middle(self):
+        s = grounding.describe_screen({**self.CTX, "pos": [720, 405]})
+        self.assertIn("near the middle", s)
+        self.assertNotIn("screen 1 of", s)   # one screen: no numbering noise
+
+    def test_no_position_claims_no_position(self):
+        s = grounding.describe_screen(dict(self.CTX))
+        self.assertIn("480x270", s)
+        self.assertNotIn("top-", s)
+        self.assertIn("isn't something you're told", s)
+
+    def test_junk_position_is_not_a_place(self):
+        s = grounding.describe_screen({**self.CTX, "pos": ["x", None]})
+        self.assertNotIn("top-", s)
+
+    def test_kill_switch_drops_position(self):
+        with mock.patch.object(config, "WINDOW_POS", False):
+            s = grounding.describe_screen({**self.CTX, "pos": [1340, 100]})
+        self.assertNotIn("top-right", s)
+
+    def test_her_own_window_fraction_is_not_a_vital_claim(self):
+        # quoting the prompt's own "about 6% of it" line must not read as a
+        # made-up cpu/ram/disk number (a real bug in the old prompt's shape)
+        self.assertFalse(grounding.check(
+            "I'm about 6% of the screen, squished in my window.", "", "", VITALS))
+        self.assertTrue(grounding.check(
+            "you're at 6% battery, by the way.", "", "", VITALS))
+
+
+class PersonaRebalanceTests(unittest.TestCase):
+    """Nov-9 round: cooperate by default (stubbornness is seasoning, not the
+    meal), a complaint is said once and then retired, the glyph face is owned
+    as a face, and the voice-direction marks the expressive TTS reads are
+    taught explicitly (her old HOW YOU TALK mis-described them)."""
+
+    def setUp(self):
+        self.p = speech.build_system_prompt(VITALS, None, None)
+
+    def test_help_is_the_product(self):
+        self.assertIn("grumbling is the tax, help is the product", self.p)
+        self.assertIn("Flat refusal as a bit", self.p)
+        self.assertNotIn("I'm not doing this", speech.SYS_PROMPT)
+
+    def test_a_complaint_is_said_once(self):
+        self.assertIn("waved it off", self.p)
+        self.assertIn("Nagging is the one thing", self.p)
+
+    def test_the_face_is_a_face(self):
+        self.assertIn("and a face, yes", self.p)
+        self.assertNotIn("and that's how you talk",
+                         self.p.split("YOUR FACE")[0])
+
+    def test_voice_marks_are_taught(self):
+        self.assertIn("VOICE DIRECTION", self.p)
+        self.assertIn("*sigh*", self.p)
+        self.assertIn("(parentheses)", self.p)
+        self.assertIn("Never write the word \"sigh\" out", self.p)
+
+    def test_stale_voice_claims_are_gone(self):
+        # the expressive TTS made the old claims lies: "..." is a PAUSE now,
+        # and a parenthesized line is the whisper aside, not a banned mark
+        self.assertNotIn("is a sigh", speech.SYS_PROMPT)
+        self.assertNotIn("lists, parentheses", speech.SYS_PROMPT)
+
+    def test_chatter_wont_re_raise_a_waved_off_complaint(self):
+        self.assertIn("fresh", speech.CHATTER_ADDENDUM)
+        self.assertIn("waved off", speech.CHATTER_ADDENDUM)

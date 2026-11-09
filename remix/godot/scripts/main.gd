@@ -50,6 +50,7 @@ var _voice: AudioStreamPlayer
 var _voice_bus := -1
 var _window_scale := 1.0        # mouse-wheel multiplier on the fitted size
 var _screen_seen := Vector2i.ZERO
+var _pos_seen := Vector2i.ZERO  # last reported window position (move watch)
 var _screen_poll := 0.0
 var _context_in := -1.0         # >=0: seconds until the debounced context report
 
@@ -89,6 +90,7 @@ func _setup_window() -> void:
 	w.always_on_top = true
 	w.min_size = min_window
 	_fit_window_to_screen()
+	_pos_seen = w.position   # move-watch baseline: don't re-report the boot spot
 	Engine.max_fps = fps_idle
 
 
@@ -139,12 +141,15 @@ func _queue_context() -> void:
 func context() -> Dictionary:
 	var w := get_window()
 	var scr := _screen_size()
+	var scr_pos := DisplayServer.screen_get_position(w.current_screen)
 	var area := 0.0
 	if scr.x > 0 and scr.y > 0:
 		area = float(w.size.x) * float(w.size.y) / (float(scr.x) * float(scr.y))
 	return {"v": PROTOCOL, "type": "context",
 		"window": [w.size.x, w.size.y], "screen": [scr.x, scr.y],
+		"pos": [w.position.x - scr_pos.x, w.position.y - scr_pos.y],
 		"screen_index": w.current_screen,
+		"screen_count": DisplayServer.get_screen_count(),
 		"area_fraction": snappedf(area, 0.001),
 		"face_scale": snappedf(face.scale.x, 0.001),
 		"dpi_scale": snappedf(DisplayServer.screen_get_scale(w.current_screen), 0.01),
@@ -158,6 +163,10 @@ func _tick_context(delta: float) -> void:
 		var now := _screen_size()
 		if now != Vector2i.ZERO and now != _screen_seen:   # new monitor / resolution
 			_fit_window_to_screen()
+		var w := get_window()
+		if w.position != _pos_seen:   # she got moved: re-report where she is
+			_pos_seen = w.position
+			_queue_context()
 	if _context_in >= 0.0:
 		_context_in -= delta
 		if _context_in < 0.0:

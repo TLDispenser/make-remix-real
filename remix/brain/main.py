@@ -475,9 +475,13 @@ def _on_ready(m: dict) -> None:
 def _on_context(m: dict) -> None:
     global _context
     _context = {k: m.get(k) for k in ("window", "screen", "screen_index",
-                                      "area_fraction", "dpi_scale")}
-    print(f"remix-brain: window context {_context.get('window')} on "
-          f"{_context.get('screen')} ({(_context.get('area_fraction') or 0) * 100:.0f}% of area)")
+                                      "screen_count", "area_fraction",
+                                      "dpi_scale", "pos")}
+    print(f"remix-brain: window context {_context.get('window')} at "
+          f"{_context.get('pos')} on screen "
+          f"{(_context.get('screen_index') or 0) + 1}/"
+          f"{_context.get('screen_count') or '?'} "
+          f"({(_context.get('area_fraction') or 0) * 100:.0f}% of area)")
 
 
 def _on_typing(_m: dict) -> None:

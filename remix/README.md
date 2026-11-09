@@ -78,6 +78,14 @@ geometry only: no contents, and titles only through the same `REMIX_TITLES` /
 turns the whole thing off; `REMIX_SURROUNDINGS_MAX` (8) caps the list.
 `/aware` prints it.
 
+**Where she is (Nov-9).** Godot's `context` message now carries her window's
+position *within* its screen plus the screen count, and re-reports when you
+drag her (2 s move watch). The prompt turns that into plain placement words —
+"parked in the top-right area of the 1920x1080 screen, screen 2 of 2" — not a
+fixed address, and when the position isn't trusted she says so instead of
+guessing. `REMIX_WINDOW_POS=0` is the kill switch for compositors that report
+junk positions.
+
 **Gesturing (fixed).** Two bugs, both mine: (1) the gaze was measured from the
 *screen center*, as if she filled the screen — she's a floating quarter-screen
 window, so it's now measured from *her own window* to the target; (2) the gaze

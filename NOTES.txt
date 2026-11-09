@@ -1,4 +1,59 @@
-Remix update 2026-11-08c — surroundings + gesture fix (overwrite same paths)
+Remix update 2026-11-09 — sysprompt rebalance + where-she-is (redo of the patch
+that was committed stale in d85b197 and deleted in a4273da; same intent, adapted
+to the current tree and re-tested)
+
+1) SYS_PROMPT (brain/speech.py), the criticism round:
+   - THE FACE IS A FACE. It now describes what actually renders (face_shapes.gd:
+     two tall bars + a short flat bar at rest, expressions bend them) and owns
+     it: "Glyphs, yes — and a face, yes." Also tells her the truth about the
+     new voice: it follows the face she's making, she doesn't write that part.
+   - COOPERATION IS THE DEFAULT. "grumbling is the tax, help is the product";
+     refusal is for genuinely bad ideas, once, with a reason, then stand down.
+     The rehearsed-refusal example line ("I'm not doing this, and yes, that IS
+     me doing it") is gone; "do the thing you hate -> ...ugh. fine. Doing it."
+     added; NEVER bans flat refusal as a bit.
+   - A COMPLAINT IS SAID ONCE. Heard + waved off = settled, "not now" is an
+     answer, the disk only comes up when it's actually nearly full — no
+     re-raising, no sulking, no working it into unrelated lines. The chatter
+     addendum now asks for a FRESH complaint (never one they already waved
+     off). This was the storage-nagging fix.
+   - VOICE DIRECTION (new block): teaches the expressive-TTS marks her voice
+     really reads (tts.py): *word* emphasis, CAPS, "..." = real pause, " - " =
+     short beat, a whole (parenthesized) line = whispered aside, *sigh* =
+     breath. Deletes the two claims the expressive voice turned into lies:
+     'A trailing "..." is a sigh' and the NEVER-ban on parentheses.
+
+2) WHERE SHE IS (no more made-up-feeling fixed address):
+   - Godot (scripts/main.gd): `context` now carries "pos" (her window's
+     position WITHIN the screen she's on) + "screen_count", and a 2 s move
+     watch re-reports when you drag her. +9 lines, tabs intact.
+   - Brain: grounding.describe_screen turns the live numbers into plain
+     placement words — "parked in the top-right area of the 1920x1080 screen
+     (screen 2 of 2), about 6% of it" — and says honestly "exactly where right
+     now isn't something you're told" when position is missing or untrusted
+     (REMIX_WINDOW_POS=0 kill switch for compositors that report junk).
+   - grounding.check: quoting her own window fraction ("6% of the screen")
+     no longer reads as a made-up vital number.
+   - Docs: PROTOCOL.md context row, .env.example (REMIX_WINDOW_POS),
+     README "Where she is" paragraph.
+
+3) Tests: 187 offline green (python3 -m unittest discover -s brain/tests -t .
+   from remix/). 12 new (WindowPlacementTests, PersonaRebalanceTests),
+   mutation-checked: 9 of them fail against the old prompt/grounding.
+   Godot headless suite NOT run for this update (no godot binary in the
+   sandbox that produced it); the .gd hunks are 9 + 1 lines and mirror the
+   previously Godot-4.7-tested pattern — run it on your machine.
+
+4) Housekeeping: the repo also tracks a 64 KiB binary junk file named "-" at
+   the top level (looked like an accidental redirect). Left it alone; delete
+   it whenever.
+
+Files: remix/brain/{speech,grounding,config,main}.py
+       remix/brain/tests/test_polish.py
+       remix/godot/scripts/main.gd  remix/godot/tests/protocol_test.gd
+       remix/godot/PROTOCOL.md  remix/.env.example  remix/README.md
+
+--- previous notes ---
 
 1) SURROUNDINGS: she now knows the windows around hers (app class + where they
    sit relative to HER window: "to my left", "above me", "behind me", other

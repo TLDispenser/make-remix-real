@@ -130,6 +130,7 @@ func _initialize() -> void:
 	# she is told where she is
 	var cx: Dictionary = main.context()
 	check(cx["type"] == "context" and cx["window"].size() == 2 and cx["screen"].size() == 2 and cx.has("area_fraction"), "context carries window/screen facts")
+	check(cx.has("pos") and cx["pos"].size() == 2 and cx.has("screen_count") and cx["screen_count"] >= 1, "context carries her position and screen count")
 
 	# robustness
 	main._handle("not json at all")

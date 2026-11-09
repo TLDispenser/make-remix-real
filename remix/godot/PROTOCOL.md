@@ -62,7 +62,7 @@ does not require it).
 | type | fields | when |
 |---|---|---|
 | `ready` | `poses[]`, `eyes[]`, `mouths[]`, `moods[]` | every time the socket opens; `eyes` / `mouths` are Jev's option lists |
-| `context` | `window [w,h]`, `screen [w,h]`, `screen_index`, `area_fraction`, `face_scale`, `dpi_scale`, `focused` | on connect, and (debounced) whenever the window or screen changes; the brain tells her where she is |
+| `context` | `window [w,h]`, `screen [w,h]`, `pos [x,y]`, `screen_index`, `screen_count`, `area_fraction`, `face_scale`, `dpi_scale`, `focused` | on connect, and (debounced) whenever the window or screen changes — including when she is MOVED (2 s move watch); `pos` is her position within the screen she's on; the brain turns it into placement words for her, and `REMIX_WINDOW_POS=0` ignores it |
 | `perform_done` | `id`, `ok`, optional `error` | performance ended (finished, cancelled, or failed) |
 | `user_text` | `text` | a line typed into the on-screen text bar |
 | `user_typing` | | you are typing in the bar (throttled): the brain answers with an instant "thinking" look |
