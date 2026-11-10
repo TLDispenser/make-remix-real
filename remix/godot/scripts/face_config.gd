@@ -12,6 +12,14 @@
 #   From the reference folder (Bashful, Eyes-Closed-Thunking, Scribble,
 #   Strange/-, You-like-Krabby-Patties...): bashful thunk scribble strange smug.
 #
+# A shape may also carry a third thing: the PROP UNIT. In the SVG these are
+# polygons tagged .cls-4 (static prop) or .cls-5 (spinning prop) — extra
+# geometry that rides with the eyes but is neither eye nor mouth. Thunking
+# carries a loading spinner in the corner (.cls-5); Bashful's blush hatching
+# and Scribble's knot ride in the shape's stroke list ("lines", any count),
+# and each shape may set a per-stroke teleport radius ("jitter", Scribble.
+# Edit them in the SVGs, not here; re-run tools/svg_to_shapes.py.
+#
 # All distances are SVG design-space pixels (the 1920x1080 canvas).
 #
 # EYES entries

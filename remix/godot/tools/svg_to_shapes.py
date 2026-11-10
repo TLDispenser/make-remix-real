@@ -18,7 +18,15 @@ THE RIBBON CONTRACT (why every pose can ease into every other)
 Per pose the generator extracts:
   left_eye, right_eye, mouth   10 points each, relative to screen center
   eye_fill / eye_stroke        filled eyes vs. outline eyes (Spooked)
-  lines                        thin extra strokes (Spooked, Tired); 0 or 4
+  lines                        thin extra strokes, any count (Spooked 4,
+                               Tired 4, Bashful 10 blush, Scribble knot 21)
+  props                        the PROP UNIT: extra polygons that ride with
+                               the eyes but are neither eye nor mouth
+                               (.cls-4 = static, .cls-5 = spins; Bashful's
+                               blush could live here, Thunking's loading
+                               spinner does), placed absolutely
+  jitter                       per-stroke-endpoint teleport radius (JITTER,
+                               Scribble's pulsing knot)
 Coordinates are in the SVG's 1920x1080 design space, shifted so (0,0) is the
 screen center.
 """
@@ -40,6 +48,11 @@ RUNGS = 5
 # and the Squidward smug grin -> smug.
 POSES = ["default", "anger", "smirk", "pout", "spooked", "tired", "tsun",
          "bashful", "thunk", "scribble", "strange", "smug"]
+
+# PER-STROKE TELEPORT RADIUS (design px) per pose. The engine teleports each
+# stroke endpoint around its defined point on a per-point clock (Scribble's
+# pulsing knot). 0 = settled strokes, as for blush.
+JITTER = {"scribble": 45.0}
 
 # Horizontal: every pose's eye pair and mouth are centered on x = 0 (always on).
 # Vertical: your SVGs put the whole face ABOVE the screen's middle (the default
@@ -99,7 +112,8 @@ def mirror_ok(pts, side):
 def center_units(p):
     """Per pose, find each unit's own horizontal origin and shift it to x = 0:
     the EYE unit (both eyes + their lines, as one block) and the MOUTH.
-    Vertical placement is left exactly as drawn (a low Tired mouth is on purpose)."""
+    Vertical placement is left exactly as drawn (a low Tired mouth is on purpose).
+    Props are EXEMPT: they're placed absolutely in the SVG (corner spinner)."""
     xs = [q[0] for q in p["left_eye"] + p["right_eye"]]
     ex = (min(xs) + max(xs)) / 2
     p["left_eye"] = [(round(x - ex, 3), y) for x, y in p["left_eye"]]
@@ -121,6 +135,7 @@ def shift_y(p, dy):
     p["right_eye"] = [(x, round(y + dy, 3)) for x, y in p["right_eye"]]
     p["mouth"] = [(x, round(y + dy, 3)) for x, y in p["mouth"]]
     p["lines"] = [((a[0], round(a[1] + dy, 3)), (b[0], round(b[1] + dy, 3)), w) for a, b, w in p["lines"]]
+    p["props"] = [{"pts": [(x, round(y + dy, 3)) for x, y in pr["pts"]], "spin": pr["spin"]} for pr in p["props"]]
 
 
 def centroid(pts):
@@ -151,10 +166,19 @@ def classify(polys):
 def parse_pose(name: str) -> dict:
     svg = (ART / f"{name}.svg").read_text()
     styles = parse_styles(svg)
-    polys, outline_of = [], {}
+    # PROP UNIT: .cls-4 = a static prop polygon, .cls-5 = one that spins.
+    # Kept out of `polys` so classify (which needs exactly 2 eye polygons and
+    # an optional mouth) never sees them.
+    STATIC_PROP, SPINNER_PROP = "cls-4", "cls-5"
+    polys, props = [], []
+    outline_of = {}
     for m in re.finditer(r'<polygon points="([^"]+)" class="([^"]+)"', svg):
         pts = parse_points(m.group(1))
-        sty = styles.get(m.group(2), {})
+        cls = m.group(2)
+        if cls in (STATIC_PROP, SPINNER_PROP):
+            props.append({"pts": pts, "spin": cls == SPINNER_PROP})
+            continue
+        sty = styles.get(cls, {})
         outline_of[id(pts)] = float(sty.get("stroke-width", "0")) if sty.get("fill") == "none" else 0.0
         polys.append(pts)
     lines = []
@@ -182,6 +206,11 @@ def parse_pose(name: str) -> dict:
         "mouth": [rel(p) for p in to_ribbon(feats["mouth"])] if has_mouth else None,
         "eye_outline": eye_outline,
         "lines": [(rel(a), rel(b), w) for a, b, w in lines],
+        # Props: absolute design coords (never re-centered horizontally), as
+        # designed. These ARE ribbon-shaped (10 pts) whenever the engine fills
+        # them as ribbons; 4-point props are allowed too (engine decides).
+        "props": [{"pts": [rel(q) for q in pr["pts"]], "spin": pr["spin"]} for pr in props],
+        "jitter": JITTER.get(name, 0.0),
     }
 
 
@@ -212,6 +241,12 @@ def emit(poses: dict) -> str:
         out.append(f'\t\t\t"eye_outline": {p["eye_outline"]:g},')
         ls = ", ".join(f"[{v(a)}, {v(b)}, {w:g}]" for a, b, w in p["lines"])
         out.append(f'\t\t\t"lines": [{ls}],')
+        ps = ", ".join(
+            f'{{"pts": PackedVector2Array([{", ".join(v(q) for q in pr["pts"])}]), "spin": {str(pr["spin"]).lower()}}}'
+            for pr in p["props"]
+        )
+        out.append(f'\t\t\t"props": [{ps}],')
+        out.append(f'\t\t\t"jitter": {p["jitter"]:g},')
         out.append("\t\t},")
     out.append("\t}")
     out.append("")
@@ -245,7 +280,8 @@ def main():
     OUT.write_text(emit(poses))
     print(f"wrote {OUT.relative_to(ROOT)}: {len(poses)} poses")
     for name, p in poses.items():
-        print(f"  {name:8s} outline={p['eye_outline']:g} lines={len(p['lines'])} mouth_drawn={p['has_mouth']}")
+        print(f"  {name:8s} outline={p['eye_outline']:g} lines={len(p['lines'])} "
+              f"props={len(p['props'])} jitter={p['jitter']:g} mouth_drawn={p['has_mouth']}")
 
 
 if __name__ == "__main__":

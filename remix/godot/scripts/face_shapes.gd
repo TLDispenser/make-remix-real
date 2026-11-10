@@ -16,6 +16,8 @@ static func all() -> Dictionary:
 			"has_mouth": true,
 			"eye_outline": 0,
 			"lines": [],
+			"props": [],
+			"jitter": 0,
 		},
 		"anger": {
 			"left_eye": PackedVector2Array([Vector2(-181.035, 81.703), Vector2(-181.035, -1.417), Vector2(-181.035, -85.092), Vector2(-181.035, -143.367), Vector2(-225.662, -192.216), Vector2(-33.91, -76.785), Vector2(-71.132, -84.116), Vector2(-71.132, -41.363), Vector2(-71.132, -1.417), Vector2(-71.132, 81.703)]),
@@ -24,6 +26,8 @@ static func all() -> Dictionary:
 			"has_mouth": true,
 			"eye_outline": 0,
 			"lines": [],
+			"props": [],
+			"jitter": 0,
 		},
 		"smirk": {
 			"left_eye": PackedVector2Array([Vector2(-242.267, 13.467), Vector2(-197.64, -1.417), Vector2(-197.64, -85.092), Vector2(-197.64, -169.406), Vector2(-242.267, -192.216), Vector2(-87.738, -192.216), Vector2(-87.738, -169.406), Vector2(-87.738, -85.092), Vector2(-87.738, -1.417), Vector2(-54.214, 13.467)]),
@@ -32,6 +36,8 @@ static func all() -> Dictionary:
 			"has_mouth": true,
 			"eye_outline": 0,
 			"lines": [],
+			"props": [],
+			"jitter": 0,
 		},
 		"pout": {
 			"left_eye": PackedVector2Array([Vector2(-195.67, 13.467), Vector2(-195.67, -28.241), Vector2(-195.67, -70.227), Vector2(-195.67, -99.632), Vector2(-240.297, -123.98), Vector2(-41.826, -123.98), Vector2(-85.768, -99.632), Vector2(-85.768, -70.227), Vector2(-85.768, -28.241), Vector2(-85.768, 13.467)]),
@@ -40,6 +46,8 @@ static func all() -> Dictionary:
 			"has_mouth": true,
 			"eye_outline": 0,
 			"lines": [],
+			"props": [],
+			"jitter": 0,
 		},
 		"spooked": {
 			"left_eye": PackedVector2Array([Vector2(-197.64, 81.703), Vector2(-197.64, -1.417), Vector2(-197.64, -85.092), Vector2(-197.64, -169.406), Vector2(-242.267, -192.216), Vector2(-87.738, -192.216), Vector2(-87.738, -169.406), Vector2(-87.738, -85.092), Vector2(-87.738, -1.417), Vector2(-87.738, 81.703)]),
@@ -48,6 +56,8 @@ static func all() -> Dictionary:
 			"has_mouth": false,
 			"eye_outline": 7,
 			"lines": [[Vector2(-221.828, 36.164), Vector2(-221.828, -118.891), 3], [Vector2(-211.227, 60.641), Vector2(-211.227, -143.367), 3], [Vector2(221.828, 36.164), Vector2(221.828, -118.891), 3], [Vector2(211.227, 60.641), Vector2(211.227, -143.367), 3]],
+			"props": [],
+			"jitter": 0,
 		},
 		"tired": {
 			"left_eye": PackedVector2Array([Vector2(-197.64, 81.703), Vector2(-197.64, -1.417), Vector2(-197.64, -85.092), Vector2(-197.64, -169.406), Vector2(-242.267, -192.216), Vector2(-87.738, -192.216), Vector2(-87.738, -169.406), Vector2(-87.738, -85.092), Vector2(-87.738, -1.417), Vector2(-87.738, 81.703)]),
@@ -56,6 +66,8 @@ static func all() -> Dictionary:
 			"has_mouth": true,
 			"eye_outline": 0,
 			"lines": [[Vector2(-187.719, 94.453), Vector2(-100.301, 94.453), 6], [Vector2(-176.438, 113.18), Vector2(-111.582, 113.18), 6], [Vector2(95.383, 96.453), Vector2(182.801, 96.453), 6], [Vector2(106.664, 115.18), Vector2(171.519, 115.18), 6]],
+			"props": [],
+			"jitter": 0,
 		},
 		"tsun": {
 			"left_eye": PackedVector2Array([Vector2(-254.033, 10.992), Vector2(-172.174, -40.516), Vector2(-90.315, -92.024), Vector2(-172.174, -144.448), Vector2(-254.033, -196.873), Vector2(-210.94, -196.873), Vector2(-131.936, -144.448), Vector2(-52.932, -92.024), Vector2(-131.936, -40.516), Vector2(-210.94, 10.992)]),
@@ -64,6 +76,8 @@ static func all() -> Dictionary:
 			"has_mouth": true,
 			"eye_outline": 0,
 			"lines": [],
+			"props": [],
+			"jitter": 0,
 		},
 		"bashful": {
 			"left_eye": PackedVector2Array([Vector2(-171.21, 94.926), Vector2(-171.21, 11.807), Vector2(-171.21, -20.869), Vector2(-171.21, -57.183), Vector2(-215.836, -79.992), Vector2(-61.307, -79.992), Vector2(-61.307, -57.183), Vector2(-61.307, -20.869), Vector2(-61.307, 11.807), Vector2(-61.307, 94.926)]),
@@ -72,6 +86,8 @@ static func all() -> Dictionary:
 			"has_mouth": true,
 			"eye_outline": 0,
 			"lines": [[Vector2(-335.184, 118.338), Vector2(-367.822, 181.554), 6], [Vector2(-295.8, 118.338), Vector2(-328.439, 181.554), 6], [Vector2(-256.417, 118.338), Vector2(-289.055, 181.554), 6], [Vector2(-217.033, 118.338), Vector2(-249.671, 181.554), 6], [Vector2(-177.65, 118.338), Vector2(-210.288, 181.554), 6], [Vector2(171.993, 118.338), Vector2(204.631, 181.554), 6], [Vector2(211.377, 118.338), Vector2(244.015, 181.554), 6], [Vector2(250.76, 118.338), Vector2(283.399, 181.554), 6], [Vector2(290.144, 118.338), Vector2(322.782, 181.554), 6], [Vector2(329.528, 118.338), Vector2(362.166, 181.554), 6]],
+			"props": [],
+			"jitter": 0,
 		},
 		"thunk": {
 			"left_eye": PackedVector2Array([Vector2(-259.924, 72.137), Vector2(-242, 72.137), Vector2(-218, 72.137), Vector2(-194.137, 72.137), Vector2(-84.234, 72.137), Vector2(-84.234, 91.269), Vector2(-194.137, 91.269), Vector2(-218, 83.503), Vector2(-242, 78.703), Vector2(-259.924, 74.903)]),
@@ -80,6 +96,8 @@ static func all() -> Dictionary:
 			"has_mouth": false,
 			"eye_outline": 0,
 			"lines": [],
+			"props": [{"pts": PackedVector2Array([Vector2(724.51, 344.133), Vector2(748.92, 365.543), Vector2(758, 396.703), Vector2(748.92, 427.863), Vector2(724.51, 449.273), Vector2(742.26, 487.333), Vector2(784.34, 450.433), Vector2(800, 396.703), Vector2(784.34, 342.973), Vector2(742.26, 306.073)]), "spin": true}, {"pts": PackedVector2Array([Vector2(675.49, 449.273), Vector2(651.08, 427.863), Vector2(642, 396.703), Vector2(651.08, 365.543), Vector2(675.49, 344.133), Vector2(657.74, 306.073), Vector2(615.66, 342.973), Vector2(600, 396.703), Vector2(615.66, 450.433), Vector2(657.74, 487.333)]), "spin": true}],
+			"jitter": 0,
 		},
 		"scribble": {
 			"left_eye": PackedVector2Array([Vector2(-200, -58.297), Vector2(-200, -58.297), Vector2(-200, -58.297), Vector2(-200, -58.297), Vector2(-200, -58.297), Vector2(-200, -58.297), Vector2(-200, -58.297), Vector2(-200, -58.297), Vector2(-200, -58.297), Vector2(-200, -58.297)]),
@@ -88,6 +106,8 @@ static func all() -> Dictionary:
 			"has_mouth": false,
 			"eye_outline": 0,
 			"lines": [[Vector2(-593.625, -101.188), Vector2(-31.422, 477.812), 12], [Vector2(-31.422, 477.812), Vector2(459.984, -101.188), 12], [Vector2(459.984, -101.188), Vector2(-464.188, 425.765), 12], [Vector2(-464.188, 425.765), Vector2(-270.516, -350.313), 12], [Vector2(-270.516, -350.313), Vector2(260.922, 181.125), 12], [Vector2(260.922, 181.125), Vector2(774.516, -37.578), 12], [Vector2(774.516, -37.578), Vector2(603.172, -313.844), 12], [Vector2(603.172, -313.844), Vector2(156.391, -135.609), 12], [Vector2(156.391, -135.609), Vector2(488.438, 513.719), 12], [Vector2(488.438, 513.719), Vector2(-7.625, 214.428), 12], [Vector2(-7.625, 214.428), Vector2(-676.734, 129.273), 12], [Vector2(-676.734, 129.273), Vector2(-211.922, -37.578), 12], [Vector2(-211.922, -37.578), Vector2(-500.859, -282.891), 12], [Vector2(-500.859, -282.891), Vector2(121.406, -313.844), 12], [Vector2(121.406, -313.844), Vector2(811.531, 299.453), 12], [Vector2(811.531, 299.453), Vector2(260.344, 403.572), 12], [Vector2(260.344, 403.572), Vector2(-121.234, -76.053), 12], [Vector2(-121.234, -76.053), Vector2(-811.531, -208.828), 12], [Vector2(-811.531, -208.828), Vector2(-693.062, 461.141), 12], [Vector2(-693.062, 461.141), Vector2(-167.906, 129.273), 12], [Vector2(-167.906, 129.273), Vector2(-593.625, -101.188), 12]],
+			"props": [],
+			"jitter": 45,
 		},
 		"strange": {
 			"left_eye": PackedVector2Array([Vector2(-211.792, 118.338), Vector2(-211.792, 76.63), Vector2(-211.792, 34.644), Vector2(-211.792, 5.239), Vector2(-256.418, -19.108), Vector2(-57.947, -19.108), Vector2(-101.889, 5.239), Vector2(-101.889, 34.644), Vector2(-101.889, 76.63), Vector2(-101.889, 118.338)]),
@@ -96,6 +116,8 @@ static func all() -> Dictionary:
 			"has_mouth": true,
 			"eye_outline": 0,
 			"lines": [],
+			"props": [],
+			"jitter": 0,
 		},
 		"smug": {
 			"left_eye": PackedVector2Array([Vector2(-275.7, 94.453), Vector2(-231.074, 74.593), Vector2(-231.074, 10.759), Vector2(-231.074, -18.646), Vector2(-275.7, -42.993), Vector2(-77.229, -42.993), Vector2(-121.171, -18.646), Vector2(-121.171, 10.759), Vector2(-121.171, 74.593), Vector2(-77.229, 94.453)]),
@@ -104,5 +126,7 @@ static func all() -> Dictionary:
 			"has_mouth": true,
 			"eye_outline": 0,
 			"lines": [],
+			"props": [],
+			"jitter": 0,
 		},
 	}

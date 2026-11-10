@@ -19,6 +19,9 @@
 #   blink     the eye unit squashes to a line (not in every pose)
 #   twitch    brief bottom-lid flick (the "bottomlid" eye shape), eye shapes opt in
 #   life      breathing glow, tiny gaze drift, tremble (Spooked)
+#   props     the PROP UNIT: extra polygons riding with the eye unit
+#             (.cls-5 = spins, .cls-4 = static; Thunking's loading spinner),
+#             plus per-stroke-endpoint teleport jitter (Scribble's pulsing knot)
 #
 # Godot draws only. Everything that decides WHICH pose lives in the brain.
 extends Node2D
@@ -36,6 +39,9 @@ const EYE_KEYS := ["left_eye", "right_eye"]
 @export var aa_width := 2.0          # antialiasing outline (design px)
 @export var level_attack := 42.0     # mouth opens fast ...
 @export var level_release := 14.0    # ... and closes a bit slower
+@export var spinner_speed := 300.0   # spinning prop, degrees per second
+@export var jitter_min := 0.06       # stroke endpoint rerolls between ...
+@export var jitter_max := 0.30       # ... these many seconds
 
 var eyes_name := "default"
 var mouth_name := "default"
@@ -55,6 +61,7 @@ var _sc := {
 	"outline_w": [7.0, 0.0, 7.0],  # outline thickness
 	"mouth": [1.0, 0.0, 1.0],      # mouth opacity (Spooked hides it when silent)
 	"lines": [0.0, 0.0, 0.0],      # extra line strokes opacity
+	"props": [0.0, 0.0, 0.0],      # prop polygons opacity (thunk's spinner)
 }
 var _ln_a := PackedVector2Array()
 var _ln_b := PackedVector2Array()
@@ -63,6 +70,16 @@ var _ln_vb := PackedVector2Array()
 var _ln_tgt_a := PackedVector2Array()
 var _ln_tgt_b := PackedVector2Array()
 var _ln_w := PackedFloat32Array()
+
+# PROP UNIT: geometry rides with the eye unit, but no springs — the spinner is
+# rigid, so it rotates directly (a spring would wobble it out of round).
+var _pr_base: Array[PackedVector2Array] = []   # authored points, rel design space
+var _pr_hub: Array[Vector2] = []               # rotation center (bbox center)
+var _pr_spin: Array[bool] = []                 # .cls-5 props rotate, .cls-4 don't
+var _spin_a := 0.0                             # spinner angle in degrees
+var _jit_r := 0.0                              # stroke teleport radius (0 = settled)
+var _jit_o := PackedVector2Array()             # live offset, ONE per stroke endpoint
+var _jit_t := PackedFloat32Array()             # seconds until each endpoint rerolls
 
 var _eye_off := Vector2.ZERO
 var _eye_off_v := Vector2.ZERO
@@ -97,14 +114,6 @@ func _ready() -> void:
 	_cur["mouth"] = PackedVector2Array(m_src["mouth"])
 	_vel["mouth"] = _zeros(POINTS)
 	_tgt["mouth"] = PackedVector2Array(m_src["mouth"])
-	for i in 4:
-		_ln_a.append(Vector2.ZERO)
-		_ln_b.append(Vector2.ZERO)
-		_ln_va.append(Vector2.ZERO)
-		_ln_vb.append(Vector2.ZERO)
-		_ln_tgt_a.append(Vector2.ZERO)
-		_ln_tgt_b.append(Vector2.ZERO)
-		_ln_w.append(3.0)
 	_blink_in = _next_blink_gap()
 	_twitch_in = randf_range(10.0, 25.0)
 
@@ -187,6 +196,8 @@ func set_theme_color(c: Color) -> void:
 func is_active() -> bool:
 	if speaking or _blink_p >= 0.0 or _twitch_left > 0.0:
 		return true
+	if _sc["props"][0] > 0.01 or _jit_r > 0.0:
+		return true   # a spinning spinner or a teleporting knot never rests
 	for key in _vel:
 		for v: Vector2 in _vel[key]:
 			if v.length_squared() > 4.0:
@@ -271,6 +282,7 @@ func _retarget(eyes_changed: bool) -> void:
 
 	if eyes_changed:
 		_retarget_lines(eye_shape)
+		_retarget_props(eye_shape)
 		if not _ecfg()["blink"]:
 			_blink_p = -1.0
 		_blink_in = _next_blink_gap()
@@ -304,30 +316,85 @@ func _home_y(pts: PackedVector2Array) -> float:
 	return ys[2]
 
 
+## Stroke count varies per shape (blush 10, spooked 4, scribble's knot 21), so
+## the stroke arrays grow to fit. Returns how many entries were just appended
+## (brand-new strokes must "draw on" instead of sliding in from off-screen).
+func _ensure_lines(n: int) -> int:
+	var old := _ln_a.size()
+	while _ln_a.size() < n:
+		_ln_a.append(Vector2.ZERO)
+		_ln_b.append(Vector2.ZERO)
+		_ln_va.append(Vector2.ZERO)
+		_ln_vb.append(Vector2.ZERO)
+		_ln_tgt_a.append(Vector2.ZERO)
+		_ln_tgt_b.append(Vector2.ZERO)
+		_ln_w.append(3.0)
+		# One jitter slot per stroke endpoint.
+		_jit_o.append(Vector2.ZERO)
+		_jit_o.append(Vector2.ZERO)
+		_jit_t.append(randf_range(jitter_min, jitter_max))
+		_jit_t.append(randf_range(jitter_min, jitter_max))
+	return _ln_a.size() - old
+
+
 func _retarget_lines(shape: Dictionary) -> void:
 	var lines: Array = shape["lines"]
+	var appended := _ensure_lines(lines.size())
 	if lines.is_empty():
 		# Retract in place, then fade.
-		for i in 4:
+		for i in _ln_a.size():
 			var mid := (_ln_a[i] + _ln_b[i]) * 0.5
 			_ln_tgt_a[i] = mid
 			_ln_tgt_b[i] = mid
 		_scalar_target("lines", 0.0)
+	else:
+		var from_hidden: bool = _sc["lines"][0] < 0.05
+		for i in _ln_a.size():
+			if i < lines.size():
+				var l: Array = lines[i]
+				_ln_tgt_a[i] = l[0]
+				_ln_tgt_b[i] = l[1]
+				_ln_w[i] = float(l[2])
+				if from_hidden or i >= _ln_a.size() - appended:
+					# Draw on from the middle of the line instead of
+					# sliding in (fresh strokes must never trace from
+					# the screen's origin).
+					var mid: Vector2 = ((l[0] as Vector2) + (l[1] as Vector2)) * 0.5
+					_ln_a[i] = mid
+					_ln_b[i] = mid
+					_ln_va[i] = Vector2.ZERO
+					_ln_vb[i] = Vector2.ZERO
+			else:
+				# Strokes the new shape doesn't have: shrink into their
+				# own middle until they're dots (and so, invisible).
+				var dead := (_ln_a[i] + _ln_b[i]) * 0.5
+				_ln_tgt_a[i] = dead
+				_ln_tgt_b[i] = dead
+		_scalar_target("lines", 1.0)
+	# Teleport radius: per-shape (Scribble's knot stutters; blush stays put).
+	var jit := float(shape.get("jitter", 0.0))
+	if jit != _jit_r:
+		_jit_r = jit
+		for i in _jit_t.size():
+			_jit_t[i] = randf_range(jitter_min, jitter_max)
+			_jit_o[i] = Vector2.ZERO
+
+
+## Swap in this shape's prop polygons (none for every pose but Thunking so far).
+## Props fade with the "props" spring and keep spinning while they fade out.
+func _retarget_props(shape: Dictionary) -> void:
+	var props: Array = shape["props"]
+	_scalar_target("props", 1.0 if not props.is_empty() else 0.0)
+	if props.is_empty():
 		return
-	var from_hidden: bool = _sc["lines"][0] < 0.05
-	for i in 4:
-		var l: Array = lines[i]
-		_ln_tgt_a[i] = l[0]
-		_ln_tgt_b[i] = l[1]
-		_ln_w[i] = float(l[2])
-		if from_hidden:
-			# Draw on from the middle of the line instead of sliding in.
-			var mid: Vector2 = ((l[0] as Vector2) + (l[1] as Vector2)) * 0.5
-			_ln_a[i] = mid
-			_ln_b[i] = mid
-			_ln_va[i] = Vector2.ZERO
-			_ln_vb[i] = Vector2.ZERO
-	_scalar_target("lines", 1.0)
+	_pr_base.clear()
+	_pr_hub.clear()
+	_pr_spin.clear()
+	for pr in props:
+		var pts: PackedVector2Array = pr["pts"]
+		_pr_base.append(PackedVector2Array(pts))
+		_pr_hub.append(_bbox_center(pts))
+		_pr_spin.append(bool(pr["spin"]))
 
 
 # ------------------------------------------------------------------ simulation
@@ -348,7 +415,7 @@ func _process(delta: float) -> void:
 			ci[i] += vi[i] * delta
 		_cur[key] = ci
 		_vel[key] = vi
-	for i in 4:
+	for i in _ln_a.size():
 		_ln_va[i] += ((_ln_tgt_a[i] - _ln_a[i]) * stiffness - _ln_va[i] * damping) * delta
 		_ln_vb[i] += ((_ln_tgt_b[i] - _ln_b[i]) * stiffness - _ln_vb[i] * damping) * delta
 		_ln_a[i] += _ln_va[i] * delta
@@ -359,8 +426,24 @@ func _process(delta: float) -> void:
 		var s: Array = _sc[key]
 		s[1] += ((s[2] - s[0]) * stiffness - s[1] * damping) * delta
 		s[0] += s[1] * delta
-	for key in ["fill", "outline", "mouth", "lines"]:
+	for key in ["fill", "outline", "mouth", "lines", "props"]:
 		_sc[key][0] = clampf(_sc[key][0], 0.0, 1.0)
+
+	# PROP UNIT: the spinner turns; stroke endpoints teleport. A teleport is a
+	# clock expiring, then the endpoint either SNAPS home (re-forms with the
+	# knot, the "gather" beat) or snaps to a fresh spot at random — instant
+	# jumps on purpose; lerping them would just look like mush.
+	_spin_a = fmod(_spin_a + spinner_speed * delta, 360.0)
+	if _jit_r > 0.0:
+		for i in _jit_t.size():
+			_jit_t[i] -= delta
+			if _jit_t[i] <= 0.0:
+				_jit_t[i] = randf_range(jitter_min, jitter_max)
+				if randf() < 0.35:
+					_jit_o[i] = Vector2.ZERO
+				else:
+					var d := randf_range(_jit_r * 0.3, _jit_r)
+					_jit_o[i] = Vector2.from_angle(randf_range(0.0, TAU)) * d
 
 	# Unit offsets: gaze scaled by this pose's limits (mouth moves less).
 	# Critically damped on purpose, so a unit can never overshoot its limit.
@@ -540,16 +623,35 @@ func _draw() -> void:
 	var lines_a: float = _sc["lines"][0]
 	if lines_a > 0.01:
 		var lc := _alpha(col, lines_a)
-		for i in 4:
-			var a := _xf_point(_ln_a[i], eye_off, Vector2(0.0, eye_cy), Vector2(1.0, sy))
-			var b := _xf_point(_ln_b[i], eye_off, Vector2(0.0, eye_cy), Vector2(1.0, sy))
-			draw_line(a, b, lc, maxf(_ln_w[i], 1.0), true)
+		var jit_on := _jit_r > 0.0
+		for i in _ln_a.size():
+			var a := _ln_a[i]
+			var b := _ln_b[i]
+			if jit_on:
+				a += _jit_o[2 * i]
+				b += _jit_o[2 * i + 1]
+			draw_line(
+				_xf_point(a, eye_off, Vector2(0.0, eye_cy), Vector2(1.0, sy)),
+				_xf_point(b, eye_off, Vector2(0.0, eye_cy), Vector2(1.0, sy)),
+				lc, maxf(_ln_w[i], 1.0), true
+			)
 
 	# ---- mouth unit: the ENTIRE mouth opens with sound (uniformly, per rung)
 	var mouth_a: float = _sc["mouth"][0]
 	if mouth_a > 0.01:
 		var mpts := _xform(_open_mouth(_cur["mouth"]), mouth_off, Vector2.ONE, Vector2.ZERO, Vector2.ONE)
 		_fill_ribbon(mpts, _alpha(col, mouth_a))
+
+	# ---- prop unit: rides with the EYE unit's drift (gaze, tremble) but never
+	# blinks — the spinner is a thought, not a body part. Rigid rotate; no
+	# springs, so the band stays perfectly round while it turns.
+	var props_a: float = _sc["props"][0]
+	if props_a > 0.01:
+		var pc := _alpha(col, props_a)
+		var rad := deg_to_rad(_spin_a)
+		for p in _pr_base.size():
+			var pts := _rot_pts(_pr_base[p], _pr_hub[p], rad if _pr_spin[p] else 0.0)
+			_fill_ribbon(_xform(pts, eye_off, Vector2.ONE, Vector2.ZERO, Vector2.ONE), pc)
 
 
 func _alpha(c: Color, a: float) -> Color:
@@ -565,6 +667,20 @@ func _xform(pts: PackedVector2Array, off: Vector2, _unused: Vector2, pivot: Vect
 	out.resize(pts.size())
 	for i in pts.size():
 		out[i] = _xf_point(pts[i], off, pivot, scale_xy)
+	return out
+
+
+## Rotate a polygon about `hub` by `rad` radians (0 = pass through untouched).
+func _rot_pts(pts: PackedVector2Array, hub: Vector2, rad: float) -> PackedVector2Array:
+	if rad == 0.0:
+		return pts
+	var s := sin(rad)
+	var c := cos(rad)
+	var out := PackedVector2Array()
+	out.resize(pts.size())
+	for i in pts.size():
+		var d := pts[i] - hub
+		out[i] = hub + Vector2(d.x * c - d.y * s, d.x * s + d.y * c)
 	return out
 
 

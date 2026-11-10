@@ -1,8 +1,10 @@
 extends SceneTree
 # Contract audit for the generated shapes + hand config.
 #   godot --headless --path . --script res://tests/shapes_audit.gd
-# Every pose: 10 finite points per eye/mouth, 0 or 4 lines, a config entry,
-# and both eyes mirror each other's point layout (same rung order).
+# Every pose: 10 finite points per eye/mouth, a config entry, both eyes mirror
+# each other's point layout (same rung order), and legal prop/jitter data.
+# Strokes ("lines") are variable count: spooked 4, blush 10, scribble's 21-seg
+# knot; props are the extra polygons riding with the eyes (thunk's spinner).
 
 func _initialize() -> void:
 	var bad := 0
@@ -18,9 +20,23 @@ func _initialize() -> void:
 			for p in pts:
 				if not (is_finite(p.x) and is_finite(p.y)):
 					print("FAIL %s/%s non-finite point" % [pose_name, key]); bad += 1
-		var n: int = (s["lines"] as Array).size()
-		if n != 0 and n != 4:
-			print("FAIL %s has %d lines (need 0 or 4)" % [pose_name, n]); bad += 1
+		for l: Array in s["lines"]:
+			var la: Vector2 = l[0]
+			var lb: Vector2 = l[1]
+			if not (is_finite(la.x) and is_finite(la.y) and is_finite(lb.x) and is_finite(lb.y)) \
+					or float(l[2]) <= 0.0:
+				print("FAIL %s has a bad stroke" % pose_name); bad += 1
+		for prop: Dictionary in s["props"]:
+			var pp: PackedVector2Array = prop["pts"]
+			for q in pp:
+				if not (is_finite(q.x) and is_finite(q.y)):
+					print("FAIL %s prop point non-finite" % pose_name); bad += 1
+			if pp.size() != FaceShapes.POINTS:
+				print("FAIL %s prop has %d points (ribbons only)" % [pose_name, pp.size()]); bad += 1
+			if not (prop["spin"] is bool):
+				print("FAIL %s prop spin flag not a bool" % pose_name); bad += 1
+		if float(s["jitter"]) < 0.0:
+			print("FAIL %s negative jitter" % pose_name); bad += 1
 		# Eyes face each other: point 0 is the OUTER bottom corner on both sides.
 		var l: PackedVector2Array = s["left_eye"]
 		var r: PackedVector2Array = s["right_eye"]

@@ -43,8 +43,8 @@ EYES_TEXT = {
     "tsun": "squeezed > < chevron eyes: flustered, embarrassed, cringing, denying she cares",
     # ---- from the reference folder ----
     "bashful": "default-tall eyes sitting LOW on the face, with little hatched blush strokes on the cheeks: bashful, caught out, pleased and trying very hard to look normal about it",
-    "thunk": "eyes as two thin closed lids, asleep: powered down, thunking out, resting, politely not here",
-    "scribble": "THE ENTIRE FACE IS ONE WILD SCRIBBLE, trembling: short-circuited, overloaded, error, kernel panic; words no longer available",
+    "thunk": "eyes as two thin closed lids, asleep, with a little loading wheel spinning in the corner of the face: powered down, thunking out, resting, politely not here",
+    "scribble": "THE ENTIRE FACE IS ONE WILD SCRIBBLE whose knot stutters and teleports around itself, pulsing: short-circuited, overloaded, error, kernel panic; words no longer available",
     "strange": "one eye dropped short and low, the other stretched tall with a slanted top: glitching, deranged, something is wrong and she can feel it",
     "smug": "bars squeezed narrow with flared caps, I-beam slits: smug, sly, teasing, needling, squidward-tier self-satisfaction",
 }

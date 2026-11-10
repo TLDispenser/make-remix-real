@@ -77,7 +77,8 @@ func _initialize() -> void:
 				"mouth %s y within limit" % m)
 
 	# 2b) EYES AND MOUTH ARE INDEPENDENT: every eyes x mouth pair settles on its own
-	#     two shapes (49 faces), and changing one unit never disturbs the other.
+	#     two shapes (7 x 7 originally; the count now follows the config), and
+	#     changing one unit never disturbs the other.
 	var mixes := 0
 	for e: String in FaceConfig.EYES:
 		for m: String in FaceConfig.MOUTHS:
@@ -90,7 +91,8 @@ func _initialize() -> void:
 					and max_err("mouth", ms["mouth"]) < 1.0
 			check(ok, "mix %s eyes + %s mouth settles on both shapes" % [e, m])
 			mixes += 1
-	check(mixes == 49, "all 49 eyes x mouth faces exist (%d)" % mixes)
+	check(mixes == FaceConfig.EYES.size() * FaceConfig.MOUTHS.size(),
+			"all %d eyes x mouth faces exist (%d)" % [FaceConfig.EYES.size() * FaceConfig.MOUTHS.size(), mixes])
 	face.set_face("tired", "smirk", Vector2(0.5, 0.2)); step(150)
 	var lk_before: Vector2 = face.look
 	var eyes_before: PackedVector2Array = face._cur["left_eye"].duplicate()

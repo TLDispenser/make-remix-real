@@ -4,6 +4,8 @@
     <style>
       .cls-1{fill:#0d1018}
       .cls-2{fill:#ff5148}
+      .cls-4{fill:#ff5148}
+      .cls-5{fill:#ff5148}
     </style>
   </defs>
   <title>Eyes Closed (Thunking)</title>
@@ -14,5 +16,14 @@
          by hand (tip rung narrows to ~3px, full thickness inner). -->
     <polygon points="700.076,533.2 718,537 742,541.8 765.863,549.566 875.766,549.566 875.766,530.434 765.863,530.434 742,530.434 718,530.434 700.076,530.434" class="cls-2"/>
     <polygon points="1044.234,549.566 1154.137,549.566 1178,541.8 1200,537 1219.924,533.2 1219.924,530.434 1200,530.434 1178,530.434 1154.137,530.434 1044.234,530.434" class="cls-2"/>
+    <!-- PROP UNIT: the loading spinner, lower-right of the face window.
+         Two 130-degree arc bands mirroring each other about the hub
+         (1660, 855), r_inner 58 / r_outer 100 (both cls-5 = spin). Kept
+         point-symmetric about the hub so the engine can rotate the pair
+         around its bounding-box center without wobble. Each band is a
+         10-point ribbon: rung k pairs the inner and outer edge at the
+         same angle (-65, -32.5, 0, 32.5, 65 degrees). -->
+    <polygon points="1684.51,802.43 1708.92,823.84 1718,855 1708.92,886.16 1684.51,907.57 1702.26,945.63 1744.34,908.73 1760,855 1744.34,801.27 1702.26,764.37" class="cls-5"/>
+    <polygon points="1635.49,907.57 1611.08,886.16 1602,855 1611.08,823.84 1635.49,802.43 1617.74,764.37 1575.66,801.27 1560,855 1575.66,908.73 1617.74,945.63" class="cls-5"/>
   </g>
 </svg>
