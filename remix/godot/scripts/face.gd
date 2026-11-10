@@ -20,8 +20,13 @@
 #   twitch    brief bottom-lid flick (the "bottomlid" eye shape), eye shapes opt in
 #   life      breathing glow, tiny gaze drift, tremble (Spooked)
 #   props     the PROP UNIT: extra polygons riding with the eye unit
-#             (.cls-5 = spins, .cls-4 = static; Thunking's loading spinner),
-#             plus per-stroke-endpoint teleport jitter (Scribble's pulsing knot)
+#             (.cls-5 = spins, .cls-4 = static; Thunking's loading wheel —
+#             ONE ring band, hub-built so its bbox center is the true hub),
+#             plus per-JOINT teleport jitter (Scribble): the knot's strokes
+#             share endpoints, so a node teleports both its strokes with it.
+#             Closed-bar shapes (thunk's lids) stack their ribbon rungs
+#             bottom-to-top like real eye shapes do, so closing is a
+#             vertical squash — no 90-degree rung spin, no winding shut.
 #
 # Godot draws only. Everything that decides WHICH pose lives in the brain.
 extends Node2D
@@ -78,8 +83,10 @@ var _pr_hub: Array[Vector2] = []               # rotation center (bbox center)
 var _pr_spin: Array[bool] = []                 # .cls-5 props rotate, .cls-4 don't
 var _spin_a := 0.0                             # spinner angle in degrees
 var _jit_r := 0.0                              # stroke teleport radius (0 = settled)
-var _jit_o := PackedVector2Array()             # live offset, ONE per stroke endpoint
-var _jit_t := PackedFloat32Array()             # seconds until each endpoint rerolls
+var _jit_node := PackedInt32Array()            # endpoint index -> joint node id
+var _jit_o := PackedVector2Array()             # live offset, ONE per joint node
+var _jit_t := PackedFloat32Array()             # seconds until each node rerolls
+var _blush_on := true                          # bashful's cheek hatching toggle
 
 var _eye_off := Vector2.ZERO
 var _eye_off_v := Vector2.ZERO
@@ -227,7 +234,7 @@ func snapshot() -> Dictionary:
 		"pose": pose_name, "eyes": eyes_name, "mouth": mouth_name,
 		"look": look, "eye_off": _eye_off, "mouth_off": _mouth_off,
 		"level": level, "mouth_alpha": _sc["mouth"][0], "fill": _sc["fill"][0],
-		"outline": _sc["outline"][0], "lines": _sc["lines"][0],
+		"outline": _sc["outline"][0], "lines": _sc["lines"][0], "props": _sc["props"][0],
 		"blink_scale": _blink_scale(), "mouth_width": _mouth_width(),
 		"mouth_height": _mouth_height(), "mouth_open_scale": _mouth_open_scale(),
 	}
@@ -329,18 +336,47 @@ func _ensure_lines(n: int) -> int:
 		_ln_tgt_a.append(Vector2.ZERO)
 		_ln_tgt_b.append(Vector2.ZERO)
 		_ln_w.append(3.0)
-		# One jitter slot per stroke endpoint.
-		_jit_o.append(Vector2.ZERO)
-		_jit_o.append(Vector2.ZERO)
-		_jit_t.append(randf_range(jitter_min, jitter_max))
-		_jit_t.append(randf_range(jitter_min, jitter_max))
 	return _ln_a.size() - old
+
+
+## Blush toggle: off hides the cheek hatching (bashful eyes draw their blush
+## through the stroke channel; no other shape is affected). Retargets the
+## stroke channel directly — a full _retarget(false) wouldn't even call
+## _retarget_lines (that's eye-change-gated).
+func set_blush(on: bool) -> void:
+	_blush_on = on
+	_retarget_lines(_shapes[_ecfg()["src"]])
+
+
+func toggle_blush() -> bool:
+	set_blush(not _blush_on)
+	return _blush_on
+
+
+func blush_on() -> bool:
+	return _blush_on
 
 
 func _retarget_lines(shape: Dictionary) -> void:
 	var lines: Array = shape["lines"]
 	var appended := _ensure_lines(lines.size())
-	if lines.is_empty():
+	# THE LINE STROKES ARE ONE DRAWING: for shapes whose strokes chain
+	# (Scribble's knot is a closed polyline), consecutive lines share the
+	# same joint point, and a shared point must teleport WHOLE — both its
+	# strokes move together, or the knot scatters into disconnected dashes.
+	# So the teleport units are JOINTS: build the map endpoint -> joint id.
+	var joints := {}
+	_jit_node.resize(_ln_a.size() * 2)
+	for i in lines.size():
+		for e in 2:
+			var pt: Vector2 = lines[i][e]
+			if not joints.has(pt):
+				joints[pt] = joints.size()
+			_jit_node[2 * i + e] = joints[pt]
+	for i in range(2 * lines.size(), _jit_node.size()):
+		_jit_node[i] = 0   # dead slots lie collapsed; node 0 keeps them put
+	var blush_off_here := (not _blush_on) and bool(_ecfg().get("blush", false))
+	if lines.is_empty() or blush_off_here:
 		# Retract in place, then fade.
 		for i in _ln_a.size():
 			var mid := (_ln_a[i] + _ln_b[i]) * 0.5
@@ -373,11 +409,13 @@ func _retarget_lines(shape: Dictionary) -> void:
 		_scalar_target("lines", 1.0)
 	# Teleport radius: per-shape (Scribble's knot stutters; blush stays put).
 	var jit := float(shape.get("jitter", 0.0))
-	if jit != _jit_r:
+	if jit != _jit_r or _jit_t.size() != joints.size():
 		_jit_r = jit
+		_jit_o.resize(joints.size())
+		_jit_o.fill(Vector2.ZERO)
+		_jit_t.resize(joints.size())
 		for i in _jit_t.size():
 			_jit_t[i] = randf_range(jitter_min, jitter_max)
-			_jit_o[i] = Vector2.ZERO
 
 
 ## Swap in this shape's prop polygons (none for every pose but Thunking so far).
@@ -429,10 +467,12 @@ func _process(delta: float) -> void:
 	for key in ["fill", "outline", "mouth", "lines", "props"]:
 		_sc[key][0] = clampf(_sc[key][0], 0.0, 1.0)
 
-	# PROP UNIT: the spinner turns; stroke endpoints teleport. A teleport is a
-	# clock expiring, then the endpoint either SNAPS home (re-forms with the
+	# PROP UNIT: the spinner turns; stroke joints teleport. A teleport is a
+	# clock expiring, then the node either SNAPS home (re-forms with the
 	# knot, the "gather" beat) or snaps to a fresh spot at random — instant
-	# jumps on purpose; lerping them would just look like mush.
+	# jumps on purpose; lerping them would just look like mush. Since every
+	# stroke that shares a joint moves with it, the drawn knot STAYS ONE
+	# connected scribble as it stutters.
 	_spin_a = fmod(_spin_a + spinner_speed * delta, 360.0)
 	if _jit_r > 0.0:
 		for i in _jit_t.size():
@@ -628,8 +668,8 @@ func _draw() -> void:
 			var a := _ln_a[i]
 			var b := _ln_b[i]
 			if jit_on:
-				a += _jit_o[2 * i]
-				b += _jit_o[2 * i + 1]
+				a += _jit_o[_jit_node[2 * i]]
+				b += _jit_o[_jit_node[2 * i + 1]]
 			draw_line(
 				_xf_point(a, eye_off, Vector2(0.0, eye_cy), Vector2(1.0, sy)),
 				_xf_point(b, eye_off, Vector2(0.0, eye_cy), Vector2(1.0, sy)),
@@ -644,14 +684,15 @@ func _draw() -> void:
 
 	# ---- prop unit: rides with the EYE unit's drift (gaze, tremble) but never
 	# blinks — the spinner is a thought, not a body part. Rigid rotate; no
-	# springs, so the band stays perfectly round while it turns.
+	# springs, so the ring band stays perfectly round while it turns. Fills
+	# via triangulation (props may carry ANY point count; the wheel has 42).
 	var props_a: float = _sc["props"][0]
 	if props_a > 0.01:
 		var pc := _alpha(col, props_a)
 		var rad := deg_to_rad(_spin_a)
 		for p in _pr_base.size():
 			var pts := _rot_pts(_pr_base[p], _pr_hub[p], rad if _pr_spin[p] else 0.0)
-			_fill_ribbon(_xform(pts, eye_off, Vector2.ONE, Vector2.ZERO, Vector2.ONE), pc)
+			_fill_poly(_xform(pts, eye_off, Vector2.ONE, Vector2.ZERO, Vector2.ONE), pc)
 
 
 func _alpha(c: Color, a: float) -> Color:
@@ -706,3 +747,22 @@ func _outline_ribbon(p: PackedVector2Array, col: Color, width: float) -> void:
 	var loop := PackedVector2Array(p)
 	loop.append(p[0])
 	draw_polyline(loop, col, width, true)
+
+
+## Fill an ARBITRARY simple polygon (props: the wheel ring is a 42-point
+## C-band). Triangulated once per frame — props are few and still, so the
+## cost is nothing. Same antialiased rim as the ribbons.
+func _fill_poly(p: PackedVector2Array, col: Color) -> void:
+	var tris := Geometry2D.triangulate_polygon(p)
+	if tris.is_empty():
+		return
+	var cols := PackedColorArray([col, col, col])
+	var no_uv := PackedVector2Array()
+	for i in range(0, tris.size(), 3):
+		draw_primitive(
+			PackedVector2Array([p[tris[i]], p[tris[i + 1]], p[tris[i + 2]]]),
+			cols, no_uv
+		)
+	var loop := PackedVector2Array(p)
+	loop.append(p[0])
+	draw_polyline(loop, col, aa_width, true)

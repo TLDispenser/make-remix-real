@@ -180,6 +180,67 @@ func _initialize() -> void:
 	var dp: Dictionary = FaceConfig.resolve("deadpan")
 	check(dp["eyes"] == "really" and dp["mouth"] == "default", "deadpan is a mixed face (really eyes, flat mouth)")
 
+	# 9) CLOSING LIDS DON'T WIND: thunk's lid ribbon stacks its rungs
+	#    bottom-to-top like the eye shapes, so EVERY point travels almost
+	#    straight down. The old vertical-rung layout forced each rung to
+	#    swing 90 degrees mid-morph (the eyes visibly rotated shut).
+	for e_key in ["left_eye", "right_eye"]:
+		face.set_pose("default"); step(150)
+		var cur: PackedVector2Array = face._cur[e_key].duplicate()
+		face.set_face("thunk", "none")
+		var dx_max := 0.0
+		var dy_max := 0.0
+		var th: PackedVector2Array = face._tgt[e_key]
+		for i in 10:
+			dy_max = maxf(dy_max, absf(th[i].y - cur[i].y))
+			dx_max = maxf(dx_max, absf(th[i].x - cur[i].x))
+		check(dx_max <= 70.0, "closing into thunk drops nearly straight down (%s max dx %.0f <= 70)" % [e_key, dx_max])
+		check(dy_max >= 100.0, "closing into thunk travels vertically (%s max dy %.0f >= 100)" % [e_key, dy_max])
+
+	# 10) props: the wheel ring arrives with the pose and spins forever (the
+	#     spinner is one ring band; the hub is its bbox center — authored
+	#     that way). The pose never goes idle while props show.
+	face.set_pose("thunk"); step(120)
+	check(face.snapshot()["props"] > 0.98, "thunk shows its prop wheel")
+	check(face.is_active(), "a spinning wheel keeps the face active")
+	check(face._pr_hub[0].distance_to(Vector2(700, 396.7)) < 0.5, "wheel hub is its true center (rel 700, 396.7)")
+	face.set_pose("smug"); step(120)
+	check(face.snapshot()["props"] < 0.02, "the wheel fades out with the pose")
+
+	# 11) scribble's knot teleports as CONNECTED joints: strokes share
+	#     endpoints exactly when one is the next's — the whole knot moves
+	#     together, no detached dashes.
+	face.set_face("scribble", "none"); step(30)
+	check(face._jit_r == 45.0, "scribble carries its teleport radius")
+	var knot: Array = shapes["scribble"]["lines"]
+	check(face._jit_o.size() == 21, "the closed 21-segment knot has 21 joints (%d)" % face._jit_o.size())
+	var chained := true
+	for i in knot.size() - 1:
+		if face._jit_node[2 * i + 1] != face._jit_node[2 * i + 2]:
+			chained = false
+	check(chained, "each stroke's end joint is the next stroke's start joint")
+	check(face._jit_node[2 * (knot.size() - 1) + 1] == face._jit_node[0], "the knot is closed: last stroke returns to the first's joint")
+	face.set_pose("scribble"); step(150)   # let the springs settle onto the knot
+	var seam_gap: float = 0.0
+	for i in knot.size() - 1:
+		# Drawn geometry = spring position + its joint's offset; two strokes
+		# sharing a joint use the same offset, so their drawn tips touch.
+		seam_gap = maxf(seam_gap, face._ln_b[i].distance_to(face._ln_a[i + 1]))
+	check(seam_gap < 1.0, "strokes share their joints on the knot (max seam %.2f px < 1)" % seam_gap)
+
+	# 12) blush toggle: bashful's cheek hatching retracts when blush is off
+	#     and comes back when on (other shapes never lose their strokes).
+	face.set_pose("bashful"); step(120)
+	check(face.snapshot()["lines"] > 0.98, "bashful shows the blush hatching")
+	face.set_blush(false); step(120)
+	check(face.snapshot()["lines"] < 0.02, "blush off retracts the hatching")
+	face.set_pose("tired"); step(120)
+	check(face.snapshot()["lines"] > 0.98, "tired's under-eye lines ignore the blush toggle")
+	face.set_pose("bashful"); step(120)
+	check(face.snapshot()["lines"] < 0.02, "blush stays off across poses")
+	face.set_blush(true); step(120)
+	check(face.snapshot()["lines"] > 0.98, "blush on brings the hatching back")
+
 	await process_frame
 	print("ENGINE_%s fails=%d poses=%d mixes=%d" % ["OK" if fails == 0 else "FAILED", fails, names.size(), mixes])
 	quit(1 if fails > 0 else 0)

@@ -90,13 +90,13 @@ static func all() -> Dictionary:
 			"jitter": 0,
 		},
 		"thunk": {
-			"left_eye": PackedVector2Array([Vector2(-259.924, 72.137), Vector2(-242, 72.137), Vector2(-218, 72.137), Vector2(-194.137, 72.137), Vector2(-84.234, 72.137), Vector2(-84.234, 91.269), Vector2(-194.137, 91.269), Vector2(-218, 83.503), Vector2(-242, 78.703), Vector2(-259.924, 74.903)]),
-			"right_eye": PackedVector2Array([Vector2(84.234, 72.137), Vector2(194.137, 72.137), Vector2(218, 72.137), Vector2(240, 72.137), Vector2(259.924, 72.137), Vector2(259.924, 74.903), Vector2(240, 78.703), Vector2(218, 83.503), Vector2(194.137, 91.269), Vector2(84.234, 91.269)]),
+			"left_eye": PackedVector2Array([Vector2(-194.137, 91.269), Vector2(-208.8, 86.503), Vector2(-226.5, 81.803), Vector2(-250.5, 76.903), Vector2(-259.924, 72.137), Vector2(-84.234, 72.137), Vector2(-84.234, 76.903), Vector2(-84.234, 81.803), Vector2(-84.234, 86.503), Vector2(-84.234, 91.269)]),
+			"right_eye": PackedVector2Array([Vector2(194.137, 91.269), Vector2(208.8, 86.503), Vector2(226.5, 81.803), Vector2(250.5, 76.903), Vector2(259.924, 72.137), Vector2(84.234, 72.137), Vector2(84.234, 76.903), Vector2(84.234, 81.803), Vector2(84.234, 86.503), Vector2(84.234, 91.269)]),
 			"mouth": PackedVector2Array([Vector2(-139.092, 192.216), Vector2(-70.123, 192.216), Vector2(-2.534, 192.216), Vector2(68.401, 192.216), Vector2(139.092, 192.216), Vector2(139.092, 170.892), Vector2(68.401, 170.892), Vector2(-2.534, 170.892), Vector2(-70.123, 170.892), Vector2(-139.092, 170.892)]),
 			"has_mouth": false,
 			"eye_outline": 0,
 			"lines": [],
-			"props": [{"pts": PackedVector2Array([Vector2(724.51, 344.133), Vector2(748.92, 365.543), Vector2(758, 396.703), Vector2(748.92, 427.863), Vector2(724.51, 449.273), Vector2(742.26, 487.333), Vector2(784.34, 450.433), Vector2(800, 396.703), Vector2(784.34, 342.973), Vector2(742.26, 306.073)]), "spin": true}, {"pts": PackedVector2Array([Vector2(675.49, 449.273), Vector2(651.08, 427.863), Vector2(642, 396.703), Vector2(651.08, 365.543), Vector2(675.49, 344.133), Vector2(657.74, 306.073), Vector2(615.66, 342.973), Vector2(600, 396.703), Vector2(615.66, 450.433), Vector2(657.74, 487.333)]), "spin": true}],
+			"props": [{"pts": PackedVector2Array([Vector2(613.4, 446.703), Vector2(603.41, 422.583), Vector2(600, 396.703), Vector2(603.41, 370.823), Vector2(613.4, 346.703), Vector2(629.29, 325.993), Vector2(650, 310.103), Vector2(674.12, 300.113), Vector2(700, 296.703), Vector2(725.88, 300.113), Vector2(750, 310.103), Vector2(770.71, 325.993), Vector2(786.6, 346.703), Vector2(796.59, 370.823), Vector2(800, 396.703), Vector2(796.59, 422.583), Vector2(786.6, 446.703), Vector2(770.71, 467.413), Vector2(750, 483.303), Vector2(725.88, 493.293), Vector2(700, 496.703), Vector2(700, 454.703), Vector2(715.01, 452.723), Vector2(729, 446.933), Vector2(741.01, 437.713), Vector2(750.23, 425.703), Vector2(756.02, 411.713), Vector2(758, 396.703), Vector2(756.02, 381.693), Vector2(750.23, 367.703), Vector2(741.01, 355.693), Vector2(729, 346.473), Vector2(715.01, 340.683), Vector2(700, 338.703), Vector2(684.99, 340.683), Vector2(671, 346.473), Vector2(658.99, 355.693), Vector2(649.77, 367.703), Vector2(643.98, 381.693), Vector2(642, 396.703), Vector2(643.98, 411.713), Vector2(649.77, 425.703)]), "spin": true}],
 			"jitter": 0,
 		},
 		"scribble": {

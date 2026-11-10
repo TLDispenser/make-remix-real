@@ -31,13 +31,14 @@ func _initialize() -> void:
 			for q in pp:
 				if not (is_finite(q.x) and is_finite(q.y)):
 					print("FAIL %s prop point non-finite" % pose_name); bad += 1
-			if pp.size() != FaceShapes.POINTS:
-				print("FAIL %s prop has %d points (ribbons only)" % [pose_name, pp.size()]); bad += 1
+			if pp.size() < 3:
+				print("FAIL %s prop has %d points (need >= 3)" % [pose_name, pp.size()]); bad += 1
 			if not (prop["spin"] is bool):
 				print("FAIL %s prop spin flag not a bool" % pose_name); bad += 1
 		if float(s["jitter"]) < 0.0:
 			print("FAIL %s negative jitter" % pose_name); bad += 1
-		# Eyes face each other: point 0 is the OUTER bottom corner on both sides.
+		# Eyes face each other: point 0 is bottom and on the outer half on
+		# both sides (closed-bar shapes stack rungs bottom-to-top too).
 		var l: PackedVector2Array = s["left_eye"]
 		var r: PackedVector2Array = s["right_eye"]
 		if not (l[0].x < 0.0 and r[0].x > 0.0):

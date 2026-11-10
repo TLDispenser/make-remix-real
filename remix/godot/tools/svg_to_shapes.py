@@ -207,8 +207,8 @@ def parse_pose(name: str) -> dict:
         "eye_outline": eye_outline,
         "lines": [(rel(a), rel(b), w) for a, b, w in lines],
         # Props: absolute design coords (never re-centered horizontally), as
-        # designed. These ARE ribbon-shaped (10 pts) whenever the engine fills
-        # them as ribbons; 4-point props are allowed too (engine decides).
+        # designed. Any point count — the engine triangulates; the spinner
+        # ring is authored hub-symmetric so its bbox center is the true hub.
         "props": [{"pts": [rel(q) for q in pr["pts"]], "spin": pr["spin"]} for pr in props],
         "jitter": JITTER.get(name, 0.0),
     }

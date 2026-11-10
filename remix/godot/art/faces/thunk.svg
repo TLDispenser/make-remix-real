@@ -11,19 +11,23 @@
   <title>Eyes Closed (Thunking)</title>
   <g id="Layer_1">
     <rect x="0" y="0" width="1920" height="1080" class="cls-1"/>
-    <!-- closed lids: flat top bar, tapering tail toward the outer side.
-         Reference wedges were 4-point; expanded to the 10-point ribbon
-         by hand (tip rung narrows to ~3px, full thickness inner). -->
-    <polygon points="700.076,533.2 718,537 742,541.8 765.863,549.566 875.766,549.566 875.766,530.434 765.863,530.434 742,530.434 718,530.434 700.076,530.434" class="cls-2"/>
-    <polygon points="1044.234,549.566 1154.137,549.566 1178,541.8 1200,537 1219.924,533.2 1219.924,530.434 1200,530.434 1178,530.434 1154.137,530.434 1044.234,530.434" class="cls-2"/>
     <!-- PROP UNIT: the loading spinner, lower-right of the face window.
-         Two 130-degree arc bands mirroring each other about the hub
-         (1660, 855), r_inner 58 / r_outer 100 (both cls-5 = spin). Kept
-         point-symmetric about the hub so the engine can rotate the pair
-         around its bounding-box center without wobble. Each band is a
-         10-point ribbon: rung k pairs the inner and outer edge at the
-         same angle (-65, -32.5, 0, 32.5, 65 degrees). -->
-    <polygon points="1684.51,802.43 1708.92,823.84 1718,855 1708.92,886.16 1684.51,907.57 1702.26,945.63 1744.34,908.73 1760,855 1744.34,801.27 1702.26,764.37" class="cls-5"/>
-    <polygon points="1635.49,907.57 1611.08,886.16 1602,855 1611.08,823.84 1635.49,802.43 1617.74,764.37 1575.66,801.27 1560,855 1575.66,908.73 1617.74,945.63" class="cls-5"/>
+         ONE continuous ring band (inner r 58, outer r 100) sweeping 300
+         degrees with a 60-degree notch (cls-5 = spin). The notch spans
+         [90,150) exactly, so the shape's bbox stays hub-symmetric and the
+         engine (which spins props about their bbox center) turns it dead
+         smooth. Polygon: 21 outer pts top-down + 21 inner pts back up. -->
+    <polygon points="1573.40,905.00 1563.41,880.88 1560.00,855.00 1563.41,829.12 1573.40,805.00 1589.29,784.29 1610.00,768.40 1634.12,758.41 1660.00,755.00 1685.88,758.41 1710.00,768.40 1730.71,784.29 1746.60,805.00 1756.59,829.12 1760.00,855.00 1756.59,880.88 1746.60,905.00 1730.71,925.71 1710.00,941.60 1685.88,951.59 1660.00,955.00 1660.00,913.00 1675.01,911.02 1689.00,905.23 1701.01,896.01 1710.23,884.00 1716.02,870.01 1718.00,855.00 1716.02,839.99 1710.23,826.00 1701.01,813.99 1689.00,804.77 1675.01,798.98 1660.00,797.00 1644.99,798.98 1631.00,804.77 1618.99,813.99 1609.77,826.00 1603.98,839.99 1602.00,855.00 1603.98,870.01 1609.77,884.00" class="cls-5"/>
+    <!-- closed lids: flat top bar, tapering tail toward the outer side
+         (same wedge the reference draws, sampled along the same curve).
+         CRITICAL ribbon layout: the rungs are HORIZONTAL cross-sections
+         stacked BOTTOM-TO-TOP, matching how the eye shapes stack their
+         rungs. Rung k pairs the left/right point of the wedge at one
+         height. That way the morph into/out of open eyes (whose rungs are
+         also bottom-to-top) is a near-vertical squash -- the way lids
+         actually close -- instead of the old vertical-rung layout, whose
+         rungs had to rotate 90 degrees mid-morph (the eyes spun shut). -->
+    <polygon points="765.863,549.566 751.2,544.8 733.5,540.1 709.5,535.2 700.076,530.434 875.766,530.434 875.766,535.2 875.766,540.1 875.766,544.8 875.766,549.566" class="cls-2"/>
+    <polygon points="1154.137,549.566 1168.8,544.8 1186.5,540.1 1210.5,535.2 1219.924,530.434 1044.234,530.434 1044.234,535.2 1044.234,540.1 1044.234,544.8 1044.234,549.566" class="cls-2"/>
   </g>
 </svg>

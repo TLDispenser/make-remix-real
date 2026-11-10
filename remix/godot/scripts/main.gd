@@ -523,3 +523,5 @@ func _input(event: InputEvent) -> void:
 			face.debug_cycle(-1)
 		KEY_F10:
 			face.twitch()
+		KEY_B:
+			face.toggle_blush()
