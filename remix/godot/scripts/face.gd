@@ -391,8 +391,12 @@ func _process(delta: float) -> void:
 		if _blink_p >= 0.0:
 			_blink_p += delta / (blink_seconds / float(ecfg["blink_speed"]))
 			if _blink_p >= 1.0:
-				_blink_p = -1.0
-				_blink_in = _next_blink_gap()
+				# About one blink in five she does the quick second flick:
+				# restart mid-blink (from the hold, so it's shallow and fast)
+				# instead of scheduling a fresh full gap.
+				_blink_p = 0.55 if randf() < 0.18 else -1.0
+				if _blink_p < 0.0:
+					_blink_in = _next_blink_gap()
 		else:
 			_blink_in -= delta
 			if _blink_in <= 0.0:
@@ -416,9 +420,24 @@ func _process(delta: float) -> void:
 # --------------------------------------------------------------------- drawing
 
 func _blink_scale() -> float:
+	# Eye-openness multiplier over one blink (_blink_p 0..1), the OLD sine
+	# replaced 2026-11-09: the sine is symmetric and boneless, so every blink
+	# read as the same slow metronome sweep. A real blink is: shut FAST, waste
+	# a moment with the lids down, then a slower open with a little overshoot
+	# pop (the eyes spring past rest for an instant — that's what reads alive).
 	if _blink_p < 0.0:
 		return 1.0
-	return 1.0 - 0.94 * sin(PI * _blink_p)
+	var p := _blink_p
+	if p < 0.35:                      # close: fast out of the gate, easing shut
+		var u: float = p / 0.35
+		return 1.0 - 0.96 * (1.0 - (1.0 - u) * (1.0 - u) * (1.0 - u))
+	if p < 0.5:                       # a quick hold, nearly but not fully shut
+		return 0.04
+	var u: float = (p - 0.5) / 0.5
+	# open: ease-out-back — rises to ~1.06 then settles exactly on 1.0
+	var back: float = 1.0 + 2.70158 * (u - 1.0) * (u - 1.0) * (u - 1.0) \
+			+ 1.70158 * (u - 1.0) * (u - 1.0)
+	return 0.04 + 0.96 * back
 
 
 func _bbox_center(pts: PackedVector2Array) -> Vector2:

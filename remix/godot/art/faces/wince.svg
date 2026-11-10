@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1920 1080">
+  <defs>
+    <style>
+      .cls-1{fill:#0d1018}
+      .cls-2{fill:#ff5148}
+    </style>
+  </defs>
+  <title>Wince/Yikes</title>
+  <g id="Layer_1">
+    <rect x="0" y="0" width="1920" height="1080" class="cls-1"/>
+    <polygon points="830,654 895,636 960,654 1025,636 1090,654 1090,638 1025,620 960,638 895,620 830,638" class="cls-2"/>
+    <polygon points="762.36,540 790,538 818,538 846,537 872.262,536 872.262,516 846,505 818,494 790,486 762.36,478" class="cls-2"/>
+    <polygon points="1157.64,540 1157.64,480 1157.64,430 1157.64,390 1157.64,358 1047.738,358 1047.738,390 1047.738,430 1047.738,480 1047.738,540" class="cls-2"/>
+  </g>
+</svg>

@@ -32,8 +32,12 @@ OUT = ROOT / "scripts" / "face_shapes.gd"
 
 CENTER = (960.0, 540.0)
 RUNGS = 5
-# svg file stem -> pose name. Add new SVGs here.
-POSES = ["default", "anger", "smirk", "pout", "spooked", "tired", "tsun"]
+# svg file stem -> pose name. Add new SVGs here. First 7: the originals
+# (user's reference art). Second 9: the 2026-11-09 expressive-range batch —
+# drafts on the same ribbon contract, meant for the user to redraw/tweak.
+POSES = ["default", "anger", "smirk", "pout", "spooked", "tired", "tsun",
+         "halflid", "squint", "sparkle", "shock", "dead", "wince", "glare",
+         "soft", "dizzy"]
 
 # Horizontal: every pose's eye pair and mouth are centered on x = 0 (always on).
 # Vertical: your SVGs put the whole face ABOVE the screen's middle (the default

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1920 1080">
+  <defs>
+    <style>
+      .cls-1{fill:#0d1018}
+      .cls-2{fill:#ff5148}
+      .cls-3{fill:none;stroke:#ff5148;stroke-width:22;stroke-miterlimit:10}
+    </style>
+  </defs>
+  <title>Sparkle/Grin</title>
+  <g id="Layer_1">
+    <rect x="0" y="0" width="1920" height="1080" class="cls-1"/>
+    <polygon points="810,650 895,668 960,674 1025,668 1100,650 1100,630 1025,648 960,654 895,648 810,630" class="cls-2"/>
+    <polygon points="762.36,540 762.36,462 762.36,396 762.36,330 762.36,266 872.262,266 872.262,330 872.262,396 872.262,462 872.262,540" class="cls-2"/>
+    <polygon points="1157.64,540 1157.64,462 1157.64,396 1157.64,330 1157.64,266 1047.738,266 1047.738,330 1047.738,396 1047.738,462 1047.738,540" class="cls-2"/>
+    <line x1="660" y1="396" x2="940" y2="396" class="cls-3"/>
+    <line x1="980" y1="396" x2="1260" y2="396" class="cls-3"/>
+  </g>
+</svg>

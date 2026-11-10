@@ -2,9 +2,9 @@
 # godot/scripts/face_config.gd (EYES / MOUTHS / POSES); Godot's `ready` message
 # carries the live lists and the brain narrows to them (set_available()).
 #
-# Eyes and mouth are two independent units, so a Face is a PAIR. Seven drawings
-# give 7 eye shapes x 7 mouth shapes = 49 faces; the descriptions below say what
-# each shape READS as, because that is what Jev picks from.
+# Eyes and mouth are two independent units, so a Face is a PAIR. Sixteen
+# drawings give 16 eye shapes x 16 mouth shapes = 256 faces; the descriptions
+# below say what each shape READS as, because that is what Jev picks from.
 from typing import NamedTuple
 
 
@@ -41,6 +41,19 @@ EYES_TEXT = {
     "spooked": "hollow trembling outline eyes: startled, scared, something is wrong",
     "tired": "plain eyes with bags under them: exhausted, drained, numb, over it",
     "tsun": "squeezed > < chevron eyes: flustered, embarrassed, cringing, denying she cares",
+    # ---- 2026-11-09 expressive-range batch (drafts) ----
+    "halflid": "lids dropped to half: wary, guarded, giving you a look, settling in to judge",
+    "squint": "slitted and tilted: suspicious, disbelieving, sizing up, saw right through it",
+    "sparkle": ("EYES SHOT THROUGH WITH BRIGHT ARMS: starry, delighted, genuinely lit up. "
+                "RARE — use only for a real moment (a gift, a win she cares about, a "
+                "surprise she's glad about); on ordinary lines it reads as broken"),
+    "shock": "tall thin narrowed-wide eyes: alarmed, blindsided, did NOT see that coming",
+    "dead": "flat thin slits: hollow, checked out, running on fumes, refusing the bit",
+    "wince": "one eye cranked shut while the other stays wide: cringing, bracing, that hurt, yikes",
+    "glare": "tapered cold eyes under a hard brow line: seething quietly, watching from a door she just closed",
+    "soft": ("eyes settled low, tilted gently inward: softened, moved, quietly glad. "
+             "RARE — only when something genuinely touches her; never for flattery"),
+    "dizzy": "crossed asterisk eyes that tremble: spun around, scrambled, no thoughts remaining",
 }
 
 # What each MOUTH shape reads as.
@@ -52,6 +65,16 @@ MOUTHS_TEXT = {
     "trauma": "drops low and flat: resigned, haunted, long-suffering, dead inside",
     "tsun": "peaked tent shape: flustered, awkward, embarrassed",
     "none": "no mouth at all: stunned, speechless, alarmed",
+    # ---- 2026-11-09 batch (drafts) ----
+    "flat": "short flat line: polite deadlock, waiting, deliberately saying nothing",
+    "slit": "thin pressed line: holding the words back, tight-lipped",
+    "grin": "wide curve, corners up: an actual smile she didn't quite plan",
+    "oh": "small tall o: caught mid-gasp, brief honest surprise",
+    "gone": "long paper-thin line: nothing left in the tank, deadpan clear through the floor",
+    "yikes": "jagged wavy line: pained wince, why-me, cannot look",
+    "grit": "bar pinched thicker at the ends: teeth shut, swallowing what she wanted to say",
+    "touched": "small soft curve dipping gently: a quiet 'oh' of being moved",
+    "wobble": "uneven wobbling line: barely holding together, about to laugh or rattle apart",
 }
 
 # Named shortcuts (the original seven drawings). RuleBrain thinks in these.
@@ -63,6 +86,16 @@ POSES = {
     "spooked": Face("spooked", "none"),
     "tired": Face("tired", "trauma"),
     "tsun": Face("tsun", "tsun"),
+    # ---- 2026-11-09 batch shortcuts (mirror face_config.gd POSES) ----
+    "half": Face("halflid", "flat"),
+    "suspicious": Face("squint", "slit"),
+    "starry": Face("sparkle", "grin"),
+    "gasp": Face("shock", "oh"),
+    "gone": Face("dead", "gone"),
+    "yikes": Face("wince", "yikes"),
+    "seethe": Face("glare", "grit"),
+    "touched": Face("soft", "touched"),
+    "dizzy": Face("dizzy", "wobble"),
 }
 
 NEUTRAL = Face("default", "default")
@@ -99,6 +132,14 @@ _GUESS = [
     (r"\b(die|dead|kill|crash|overheat|on fire|panic|help)\b", Face("spooked", "none")),
     (r"\b(lol|haha|funny|joke|sure,? buddy|keep telling yourself|wow)\b", Face("bottomlid", "smirk")),
     (r"\b(whatever|fine|if you say so|i guess|meh|boring)\b", Face("really", "default")),
+    (r"\b(ouch+|ow+|yikes|cringe|that (hurt|looked|had to)|brutal)\b", Face("wince", "yikes")),
+    (r"\b(suspicious|shady|sus|hmm+h|don'?t buy it|convenient)\b", Face("squint", "slit")),
+    (r"\b(no way|you'?re kidding|blindsided|didn'?t see that|did not see that)\b", Face("shock", "oh")),
+    (r"\b(furious|seething|hate (this|that|it)|absolutely not)\b", Face("glare", "grit")),
+    (r"\b(no thoughts|brain empty|checked out|nothing left|running on fumes)\b", Face("dead", "gone")),
+    (r"\b(spun|dizzy|scrambled|overloaded|too much at once)\b", Face("dizzy", "wobble")),
+    (r"\b(aw+w|that'?s (sweet|kind)|proud of (you|me)|appreciate (you|that))\b", Face("soft", "touched")),
+    (r"\b(excited|can'?t wait|let'?s go)\b", Face("sparkle", "grin")),
     (r"\b(morning|hey|hi|yo|hello|sup)\b", Face("default", "default")),
     (r"\?\s*$", Face("default", "default")),
 ]

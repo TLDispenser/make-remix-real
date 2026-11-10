@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1920 1080">
+  <defs>
+    <style>
+      .cls-1{fill:#0d1018}
+      .cls-2{fill:#ff5148}
+    </style>
+  </defs>
+  <title>Shock/Oh</title>
+  <g id="Layer_1">
+    <rect x="0" y="0" width="1920" height="1080" class="cls-1"/>
+    <polygon points="916,666 932,682 960,682 988,682 1004,666 1004,594 988,578 960,578 932,578 916,594" class="cls-2"/>
+    <polygon points="810,540 810,458 810,376 810,310 810,258 865,258 865,310 865,376 865,458 865,540" class="cls-2"/>
+    <polygon points="1055,540 1055,458 1055,376 1055,310 1055,258 1110,258 1110,310 1110,376 1110,458 1110,540" class="cls-2"/>
+  </g>
+</svg>
