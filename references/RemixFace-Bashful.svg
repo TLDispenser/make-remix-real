@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1920 1080">
+  <defs>
+    <style>
+      .cls-1{fill:#0d1018}
+      .cls-2{fill:#ff5148}
+      .cls-3{fill:none;stroke:#ff5148;stroke-width:10;stroke-miterlimit:10}
+    </style>
+  </defs>
+  <title>Bashful</title>
+  <g id="Layer_13" data-name="Layer 13">
+  </g>
+  <g id="Layer_12" data-name="Layer 12">
+  </g>
+  <g id="Layer_11" data-name="Layer 11">
+  </g>
+  <g id="Layer_10" data-name="Layer 10">
+    <rect x="0" y="0" width="1920" height="1080" class="cls-1"/>
+    <polygon points="788.79,553.223 788.79,470.104 788.79,437.428 788.79,401.114 744.164,378.305 898.693,378.305 898.693,401.114 898.693,437.428 898.693,470.104 898.693,553.223" class="cls-2"/>
+    <polygon points="1131.21,553.223 1131.21,470.104 1131.21,437.428 1131.21,401.114 1175.836,378.305 1021.307,378.305 1021.307,401.114 1021.307,437.428 1021.307,470.104 1021.307,553.223" class="cls-2"/>
+    <polygon points="820.908,733.513 889.877,733.513 957.466,733.513 1028.401,733.513 1099.092,733.513 1099.092,712.189 1028.401,712.189 957.466,712.189 889.877,712.189 820.908,712.189" class="cls-2"/>
+    <g>
+      <g>
+        <line x1="624.816" y1="576.635" x2="592.178" y2="639.851" class="cls-3"/>
+      </g>
+      <g>
+        <line x1="664.2" y1="576.635" x2="631.561" y2="639.851" class="cls-3"/>
+      </g>
+      <g>
+        <line x1="703.583" y1="576.635" x2="670.945" y2="639.851" class="cls-3"/>
+      </g>
+      <g>
+        <line x1="742.967" y1="576.635" x2="710.329" y2="639.851" class="cls-3"/>
+      </g>
+      <g>
+        <line x1="782.35" y1="576.635" x2="749.712" y2="639.851" class="cls-3"/>
+      </g>
+    </g>
+    <g>
+      <g>
+        <line x1="1131.993" y1="576.635" x2="1164.631" y2="639.851" class="cls-3"/>
+      </g>
+      <g>
+        <line x1="1171.377" y1="576.635" x2="1204.015" y2="639.851" class="cls-3"/>
+      </g>
+      <g>
+        <line x1="1210.76" y1="576.635" x2="1243.399" y2="639.851" class="cls-3"/>
+      </g>
+      <g>
+        <line x1="1250.144" y1="576.635" x2="1282.782" y2="639.851" class="cls-3"/>
+      </g>
+      <g>
+        <line x1="1289.528" y1="576.635" x2="1322.166" y2="639.851" class="cls-3"/>
+      </g>
+    </g>
+  </g>
+  <g id="Layer_9" data-name="Layer 9">
+  </g>
+  <g id="Layer_8" data-name="Layer 8">
+  </g>
+  <g id="Layer_7" data-name="Layer 7">
+  </g>
+  <g id="Layer_6" data-name="Layer 6">
+  </g>
+  <g id="Layer_5" data-name="Layer 5">
+  </g>
+  <g id="Layer_4" data-name="Layer 4">
+  </g>
+  <g id="Layer_3" data-name="Layer 3">
+  </g>
+  <g id="Layer_1" data-name="Layer 1">
+    <g id="Layer_2" data-name="Layer 2" data-vc-layer="sublayer">
+    </g>
+  </g>
+</svg>
