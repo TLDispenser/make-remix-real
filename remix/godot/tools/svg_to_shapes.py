@@ -33,11 +33,13 @@ OUT = ROOT / "scripts" / "face_shapes.gd"
 CENTER = (960.0, 540.0)
 RUNGS = 5
 # svg file stem -> pose name. Add new SVGs here. First 7: the originals
-# (user's reference art). Second 9: the 2026-11-09 expressive-range batch —
-# drafts on the same ribbon contract, meant for the user to redraw/tweak.
+# (user's reference art). Last 5: poses from the reference folder that were
+# never wired in until now: Bashful (lowered eyes + blush hatching),
+# Eyes-Closed-Thunking (wedge lids) -> thunk, Scribble (the 21-segment knot,
+# carried as degenerate eyes + line strokes), Strange/- (asymmetric deranged),
+# and the Squidward smug grin -> smug.
 POSES = ["default", "anger", "smirk", "pout", "spooked", "tired", "tsun",
-         "halflid", "squint", "sparkle", "shock", "dead", "wince", "glare",
-         "soft", "dizzy"]
+         "bashful", "thunk", "scribble", "strange", "smug"]
 
 # Horizontal: every pose's eye pair and mouth are centered on x = 0 (always on).
 # Vertical: your SVGs put the whole face ABOVE the screen's middle (the default

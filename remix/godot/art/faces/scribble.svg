@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1920 1080">
+  <defs>
+    <style>
+      .cls-1{fill:#0d1018}
+      .cls-2{fill:#ff5148}
+      .cls-3{fill:none;stroke:#ff5148;stroke-width:12;stroke-miterlimit:10}
+    </style>
+  </defs>
+  <title>Scribble (short-circuited)</title>
+  <g id="Layer_1">
+    <rect x="0" y="0" width="1920" height="1080" class="cls-1"/>
+    <!-- The face is one wild tangle (reference is a single 21-vertex knot).
+         The ribbon contract can't morph that, so the EYES carry as
+         degenerate (zero-area) points and the knot travels in `lines`
+         strokes, which face.gd already fades in/out per shape. -->
+    <polygon points="760,400 760,400 760,400 760,400 760,400 760,400 760,400 760,400 760,400 760,400" class="cls-2"/>
+    <polygon points="1160,400 1160,400 1160,400 1160,400 1160,400 1160,400 1160,400 1160,400 1160,400 1160,400" class="cls-2"/>
+    <line x1="366.375" y1="357.109" x2="928.578" y2="936.109" class="cls-3"/>
+    <line x1="928.578" y1="936.109" x2="1419.984" y2="357.109" class="cls-3"/>
+    <line x1="1419.984" y1="357.109" x2="495.812" y2="884.062" class="cls-3"/>
+    <line x1="495.812" y1="884.062" x2="689.484" y2="107.984" class="cls-3"/>
+    <line x1="689.484" y1="107.984" x2="1220.922" y2="639.422" class="cls-3"/>
+    <line x1="1220.922" y1="639.422" x2="1734.516" y2="420.719" class="cls-3"/>
+    <line x1="1734.516" y1="420.719" x2="1563.172" y2="144.453" class="cls-3"/>
+    <line x1="1563.172" y1="144.453" x2="1116.391" y2="322.688" class="cls-3"/>
+    <line x1="1116.391" y1="322.688" x2="1448.438" y2="972.016" class="cls-3"/>
+    <line x1="1448.438" y1="972.016" x2="952.375" y2="672.725" class="cls-3"/>
+    <line x1="952.375" y1="672.725" x2="283.266" y2="587.57" class="cls-3"/>
+    <line x1="283.266" y1="587.57" x2="748.078" y2="420.719" class="cls-3"/>
+    <line x1="748.078" y1="420.719" x2="459.141" y2="175.406" class="cls-3"/>
+    <line x1="459.141" y1="175.406" x2="1081.406" y2="144.453" class="cls-3"/>
+    <line x1="1081.406" y1="144.453" x2="1771.531" y2="757.75" class="cls-3"/>
+    <line x1="1771.531" y1="757.75" x2="1220.344" y2="861.869" class="cls-3"/>
+    <line x1="1220.344" y1="861.869" x2="838.766" y2="382.244" class="cls-3"/>
+    <line x1="838.766" y1="382.244" x2="148.469" y2="249.469" class="cls-3"/>
+    <line x1="148.469" y1="249.469" x2="266.938" y2="919.438" class="cls-3"/>
+    <line x1="266.938" y1="919.438" x2="792.094" y2="587.57" class="cls-3"/>
+    <line x1="792.094" y1="587.57" x2="366.375" y2="357.109" class="cls-3"/>
+  </g>
+</svg>

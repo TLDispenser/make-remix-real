@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1920 1080">
+  <defs>
+    <style>
+      .cls-1{fill:#0d1018}
+      .cls-2{fill:#ff5148}
+    </style>
+  </defs>
+  <title>Eyes Closed (Thunking)</title>
+  <g id="Layer_1">
+    <rect x="0" y="0" width="1920" height="1080" class="cls-1"/>
+    <!-- closed lids: flat top bar, tapering tail toward the outer side.
+         Reference wedges were 4-point; expanded to the 10-point ribbon
+         by hand (tip rung narrows to ~3px, full thickness inner). -->
+    <polygon points="700.076,533.2 718,537 742,541.8 765.863,549.566 875.766,549.566 875.766,530.434 765.863,530.434 742,530.434 718,530.434 700.076,530.434" class="cls-2"/>
+    <polygon points="1044.234,549.566 1154.137,549.566 1178,541.8 1200,537 1219.924,533.2 1219.924,530.434 1200,530.434 1178,530.434 1154.137,530.434 1044.234,530.434" class="cls-2"/>
+  </g>
+</svg>

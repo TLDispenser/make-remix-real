@@ -4,12 +4,13 @@
 #
 # EYES and MOUTH are two separate units, in expression too. Every SVG you drew
 # holds one eye shape and one mouth shape (the slash in a file title, e.g.
-# "Tired/Trauma", is exactly that split). Currently 16 drawings -> 16 eye
-# shapes x 16 mouth shapes, and any eyes can pair with any mouth: 256 faces.
+# "Tired/Trauma", is exactly that split). Currently 12 drawings -> 12 eye
+# shapes and 10 mouths (Thunk and Scribble are mouthless and reuse "none"),
+# and any eyes can pair with any mouth.
 # A POSE is just a named shortcut for one eyes+mouth pair.
-#   Original 7 drawings: default anger smirk pout spooked tired tsun.
-#   2026-11-09 drafts (yours to redraw/tweak): halflid squint sparkle shock
-#   dead wince glare soft dizzy.
+#   Original 7: default anger smirk pout spooked tired tsun.
+#   From the reference folder (Bashful, Eyes-Closed-Thunking, Scribble,
+#   Strange/-, You-like-Krabby-Patties...): bashful thunk scribble strange smug.
 #
 # All distances are SVG design-space pixels (the 1920x1080 canvas).
 #
@@ -78,25 +79,17 @@ const EYES := {
 		"blink_gap": 0.7, "blink_speed": 0.55, "tremble": 0.0, "twitch": false},
 	"tsun": {"src": "tsun", "range": Vector2(30, 20), "blink": true,
 		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0, "twitch": false},
-	# ---- 2026-11-09 expressive-range batch (drafts; tweak freely) ----
-	"halflid": {"src": "halflid", "range": Vector2(55, 30), "blink": true,
-		"blink_gap": 0.9, "blink_speed": 0.7, "tremble": 0.0, "twitch": false},
-	"squint": {"src": "squint", "range": Vector2(45, 20), "blink": true,
-		"blink_gap": 1.2, "blink_speed": 0.8, "tremble": 0.0, "twitch": true},
-	"sparkle": {"src": "sparkle", "range": Vector2(45, 25), "blink": false,
-		"blink_gap": 1.0, "blink_speed": 1.4, "tremble": 0.0, "twitch": false},
-	"shock": {"src": "shock", "range": Vector2(20, 18), "blink": false,
-		"blink_gap": 1.8, "blink_speed": 1.3, "tremble": 1.5, "twitch": false},
-	"dead": {"src": "dead", "range": Vector2(60, 30), "blink": true,
-		"blink_gap": 0.5, "blink_speed": 0.5, "tremble": 0.0, "twitch": false},
-	"wince": {"src": "wince", "range": Vector2(30, 15), "blink": false,
-		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 1.0, "twitch": false},
-	"glare": {"src": "glare", "range": Vector2(25, 15), "blink": true,
-		"blink_gap": 1.5, "blink_speed": 1.1, "tremble": 0.0, "twitch": true},
-	"soft": {"src": "soft", "range": Vector2(40, 30), "blink": true,
-		"blink_gap": 1.1, "blink_speed": 0.6, "tremble": 0.0, "twitch": false},
-	"dizzy": {"src": "dizzy", "range": Vector2(35, 25), "blink": false,
-		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 2.5, "twitch": false},
+	# ---- from the reference folder ----
+	"bashful": {"src": "bashful", "range": Vector2(60, 40), "blink": true,
+		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0, "twitch": false},
+	"thunk": {"src": "thunk", "range": Vector2(30, 15), "blink": false,
+		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0, "twitch": false},
+	"scribble": {"src": "scribble", "range": Vector2(25, 15), "blink": false,
+		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 2.0, "twitch": false},
+	"strange": {"src": "strange", "range": Vector2(35, 20), "blink": true,
+		"blink_gap": 1.4, "blink_speed": 0.9, "tremble": 0.5, "twitch": true},
+	"smug": {"src": "smug", "range": Vector2(30, 18), "blink": true,
+		"blink_gap": 1.2, "blink_speed": 1.0, "tremble": 0.0, "twitch": false},
 }
 
 const MOUTHS := {
@@ -106,18 +99,12 @@ const MOUTHS := {
 	"pout": {"src": "pout", "range": Vector2(25, 12), "open": 3.0, "silent": true},
 	"trauma": {"src": "tired", "range": Vector2(25, 15), "open": 2.6, "silent": true},
 	"tsun": {"src": "tsun", "range": Vector2(20, 12), "open": 3.0, "silent": true},
-	# No mouth drawn at all (the Spooked drawing); borrows Default's shape when she speaks.
+	# No mouth drawn at all (Spooked, Thunk, Scribble); borrows Default's shape when she speaks.
 	"none": {"src": "spooked", "range": Vector2(15, 10), "open": 3.0, "silent": false},
-	# ---- 2026-11-09 batch: one new mouth per new drawing (name != src stem) ----
-	"flat": {"src": "halflid", "range": Vector2(25, 12), "open": 3.0, "silent": true},
-	"slit": {"src": "squint", "range": Vector2(20, 10), "open": 3.0, "silent": true},
-	"grin": {"src": "sparkle", "range": Vector2(30, 18), "open": 3.2, "silent": true},
-	"oh": {"src": "shock", "range": Vector2(15, 12), "open": 2.4, "silent": true},
-	"gone": {"src": "dead", "range": Vector2(30, 15), "open": 3.0, "silent": true},
-	"yikes": {"src": "wince", "range": Vector2(20, 12), "open": 3.0, "silent": true},
-	"grit": {"src": "glare", "range": Vector2(18, 10), "open": 2.6, "silent": true},
-	"touched": {"src": "soft", "range": Vector2(22, 12), "open": 3.0, "silent": true},
-	"wobble": {"src": "dizzy", "range": Vector2(25, 16), "open": 3.0, "silent": true},
+	# ---- from the reference folder ----
+	"bashful": {"src": "bashful", "range": Vector2(30, 18), "open": 3.0, "silent": true},
+	"strange": {"src": "strange", "range": Vector2(25, 12), "open": 3.0, "silent": true},
+	"smug": {"src": "smug", "range": Vector2(30, 20), "open": 3.2, "silent": true},
 }
 
 # Your original 7 drawings as named shortcuts: pose -> eyes + mouth.
@@ -129,16 +116,12 @@ const POSES := {
 	"spooked": {"eyes": "spooked", "mouth": "none"},
 	"tired": {"eyes": "tired", "mouth": "trauma"},
 	"tsun": {"eyes": "tsun", "mouth": "tsun"},
-	# ---- 2026-11-09 batch shortcuts ----
-	"half": {"eyes": "halflid", "mouth": "flat"},
-	"suspicious": {"eyes": "squint", "mouth": "slit"},
-	"starry": {"eyes": "sparkle", "mouth": "grin"},
-	"gasp": {"eyes": "shock", "mouth": "oh"},
-	"gone": {"eyes": "dead", "mouth": "gone"},
-	"yikes": {"eyes": "wince", "mouth": "yikes"},
-	"seethe": {"eyes": "glare", "mouth": "grit"},
-	"touched": {"eyes": "soft", "mouth": "touched"},
-	"dizzy": {"eyes": "dizzy", "mouth": "wobble"},
+	# ---- from the reference folder ----
+	"bashful": {"eyes": "bashful", "mouth": "bashful"},
+	"thunk": {"eyes": "thunk", "mouth": "none"},
+	"scribble": {"eyes": "scribble", "mouth": "none"},
+	"strange": {"eyes": "strange", "mouth": "strange"},
+	"smug": {"eyes": "smug", "mouth": "smug"},
 }
 
 # Moods the brain may still send (old protocol) and plain-English synonyms.
@@ -148,7 +131,6 @@ const ALIASES := {
 	"idle": {"pose": "default"},
 	"happy": {"pose": "smirk"},
 	"proud": {"pose": "smirk"},
-	"smug": {"pose": "smirk"},
 	"stressed": {"pose": "spooked"},
 	"alert": {"pose": "spooked"},
 	"scared": {"pose": "spooked"},
@@ -167,25 +149,19 @@ const ALIASES := {
 	"skeptical": {"eyes": "really", "mouth": "smirk"},
 	"sheepish": {"eyes": "tsun", "mouth": "pout"},
 	"numb": {"eyes": "tired", "mouth": "default"},
-	# ---- 2026-11-09 batch synonyms ----
-	"wary": {"pose": "half"},
-	"guarding": {"pose": "half"},
-	"sizingyou": {"pose": "suspicious"},
-	"unconvinced": {"pose": "suspicious"},
-	"excited": {"pose": "starry"},
-	"delighted": {"pose": "starry"},
-	"shocked": {"pose": "gasp"},
-	"surprised": {"pose": "gasp"},
-	"stunned": {"pose": "gasp"},
-	"empty": {"pose": "gone"},
-	"hollow": {"pose": "gone"},
-	"cringing": {"pose": "yikes"},
-	"bracing": {"pose": "yikes"},
-	"furious": {"pose": "seethe"},
-	"seething": {"pose": "seethe"},
-	"moved": {"pose": "touched"},
-	"warmed": {"pose": "touched"},
-	"wobbly": {"pose": "dizzy"},
+	# ---- from the reference folder ----
+	"flattered": {"pose": "bashful"},
+	"blushy": {"pose": "bashful"},
+	"shutdown": {"pose": "thunk"},
+	"rebooting": {"pose": "thunk"},
+	"asleep": {"pose": "thunk"},
+	"scrambled": {"pose": "scribble"},
+	"overloaded": {"pose": "scribble"},
+	"glitched": {"pose": "scribble"},
+	"unhinged": {"pose": "strange"},
+	"glitchy": {"pose": "strange"},
+	"gloating": {"pose": "smug"},
+	"grinning": {"pose": "smug"},
 }
 
 
