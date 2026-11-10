@@ -46,6 +46,8 @@ class RuleBrain:
         self.last_notice_at = now   # no notices in the first quiet minutes
         self.last_twitch_at = now
         self.speak_gate_until = 0.0  # pause silent posing while she talks
+        self.listen_gate_until = 0.0  # ... and while she listens to you (listening.py)
+        self._listen_self_load = False
 
     # ------------------------------------------------------------------ API
 
@@ -58,6 +60,27 @@ class RuleBrain:
 
     def pause_for_speech(self, seconds: float) -> None:
         self.speak_gate_until = time.monotonic() + max(0.0, seconds)
+
+    def speaking(self) -> bool:
+        """True while a reply (or chatter) is being performed."""
+        return time.monotonic() < self.speak_gate_until
+
+    def release_listening(self) -> None:
+        """The line is over (sent, cleared, or abandoned)."""
+        self.listen_gate_until = 0.0
+        self._listen_self_load = False
+
+    def hold_listening(self, seconds: float, self_load: bool = False) -> None:
+        """She is listening to you: keep the silent life (drift, twitches,
+        vitals-driven pose changes, notices) out of her face. Real alarms
+        (overheat, pegged CPU) still get through.
+
+        self_load: the load may be HER OWN (local Whisper transcribing partials
+        while you hold the key), so a CPU-spike alarm is ignored; a real
+        temperature alarm still passes."""
+        self.listen_gate_until = max(self.listen_gate_until,
+                                     time.monotonic() + max(0.0, seconds))
+        self._listen_self_load = bool(self_load)
 
     def update(self, snap: dict, now=None, aware=None) -> list:
         """Feed one vitals snapshot (+ optional awareness state); return
@@ -75,9 +98,13 @@ class RuleBrain:
 
         if now < self.speak_gate_until:
             return []
+        listening = now < self.listen_gate_until
 
         target, look, alarm = self._pick(cpu, ram, temp, battery, d_cpu)
-        if alarm or self._change_earned(target, now):
+        if (listening and self._listen_self_load and alarm
+                and not (temp is not None and temp >= config.TEMP_ALARM_C)):
+            target, look, alarm = None, None, False   # that spike is her own ears
+        if alarm or (not listening and self._change_earned(target, now)):
             if target is not None and target != self.pose:
                 self.pose = target
                 self.last_switch = now
@@ -88,11 +115,12 @@ class RuleBrain:
                     msg["look"] = list(look)
                     self.last_look_at = now
                 out.append(msg)
-        elif self.candidate != target:
+        elif not listening and self.candidate != target:
             self.candidate = target
             self.candidate_count = 0
 
-        out.extend(self._idle_life(snap, cpu, now, aware))
+        if not listening:
+            out.extend(self._idle_life(snap, cpu, now, aware))
         return out
 
     # ------------------------------------------------------------- internals

@@ -370,7 +370,10 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(set(p["then"]), {"eyes", "mouth"})
         self.assertNotIn("notice", by, "no captions when she has a voice (and no 'one sec' when fast)")
         self.assertIn("pose", by)                                    # the instant reaction came first
-        self.assertEqual(self.sent[0]["type"], "pose")
+        # typed text echoes FIRST (for the human's own HUD/terminal), then
+        # her instant reaction pose
+        self.assertEqual(self.sent[0]["type"], "transcript")
+        self.assertEqual(self.sent[1]["type"], "pose")
 
     def test_no_voice_shows_captions_and_steps_faces_on_the_brain_clock(self):
         saved = config.TTS_ENABLED

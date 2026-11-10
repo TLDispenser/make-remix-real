@@ -100,9 +100,15 @@ class PushToTalk:
     """One held-key recording; thread guards + a watchdog for missed key-up."""
 
     def __init__(self, on_status: Callable | None = None,
-                 on_timeout: Callable | None = None) -> None:
+                 on_timeout: Callable | None = None,
+                 on_partial: Callable | None = None) -> None:
         self.on_status = on_status
         self.on_timeout = on_timeout
+        # on_partial(text): called (in the event loop) with what has been said
+        # so far, every LISTEN_STT_INTERVAL_S while the key is held. Local
+        # Whisper only; nothing leaves the machine. See listening.py.
+        self.on_partial = on_partial
+        self._partial_task: asyncio.Task | None = None
         self._proc = None
         self._hold_task: asyncio.Task | None = None
         self._pcm = bytearray()
@@ -148,7 +154,54 @@ class PushToTalk:
         self._started_at = time.monotonic()
         asyncio.create_task(self._drain())
         self._hold_task = asyncio.create_task(self._watchdog())
+        if self.on_partial and config.LISTEN_STT_PARTIALS:
+            self._partial_task = asyncio.create_task(self._partial_loop())
         return "ok"
+
+    # ------------------------------------------------------------- partials
+
+    async def _partial_loop(self) -> None:
+        """While the key is held, transcribe what has been said so far and
+        hand each CHANGED result to on_partial. Best effort: any failure just
+        ends the partials; the final transcript at key-up is unaffected."""
+        last = ""
+        try:
+            while self.listening:
+                await asyncio.sleep(max(0.2, config.LISTEN_STT_INTERVAL_S))
+                if not self.listening or self._model is None:
+                    continue          # key up, or the model is still warming
+                text = await self._partial_once()
+                if text and text != last and self.listening and self.on_partial:
+                    last = text
+                    self.on_partial(text)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"remix-brain: ptt partials stopped ({e!r})")
+
+    async def _partial_once(self) -> str:
+        raw = bytes(self._pcm)
+        raw = raw[: len(raw) // 2 * 2]                 # whole samples only
+        if len(raw) < config.LISTEN_STT_MIN_S * 32000:  # 16 kHz s16le mono
+            return ""
+        import numpy as np
+        pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        if float(np.abs(pcm).max(initial=0.0)) < config.PTT_MIN_PEAK:
+            return ""
+        model = self._model
+
+        def _run() -> str:
+            segs, _info = model.transcribe(
+                pcm, language=config.PTT_LANGUAGE or "en", vad_filter=True,
+                condition_on_previous_text=False, beam_size=1)
+            return clean_segments(list(segs))
+
+        return await asyncio.to_thread(_run)
+
+    def _stop_partials(self) -> None:
+        if self._partial_task is not None:
+            self._partial_task.cancel()
+            self._partial_task = None
 
     async def _drain(self) -> None:
         assert self._proc is not None
@@ -185,6 +238,7 @@ class PushToTalk:
 
     async def cancel(self) -> None:
         """Shutdown path: never leave the mic open."""
+        self._stop_partials()
         if self._proc is not None:
             try:
                 self._proc.terminate()
@@ -197,6 +251,7 @@ class PushToTalk:
 
     async def _finalize(self) -> HoldResult:
         me = asyncio.current_task()
+        self._stop_partials()
         if self._hold_task is not None and self._hold_task is not me:
             self._hold_task.cancel()
         self._hold_task = None
@@ -214,6 +269,7 @@ class PushToTalk:
         # drain task still holds the tail after EOF; give it one beat
         await asyncio.sleep(0.05)
         chunks = bytes(self._pcm)
+        chunks = chunks[: len(chunks) // 2 * 2]   # a read can end mid-sample
         self._pcm.clear()  # audio dropped after use (never stored, ever)
 
         if dur < config.PTT_MIN_PRESS_S:

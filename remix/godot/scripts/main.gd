@@ -77,7 +77,7 @@ func _ready() -> void:
 	resized.connect(_layout)
 	get_window().size_changed.connect(_queue_context)
 	hud.text_submitted.connect(_send_text)
-	hud.typing.connect(func() -> void: send_json({"v": PROTOCOL, "type": "user_typing"}))
+	hud.typing.connect(func(text: String) -> void: send_json({"v": PROTOCOL, "type": "user_typing", "text": text}))
 	_layout()
 	_ws.connect_to_url(WS_URL)
 

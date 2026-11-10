@@ -104,7 +104,12 @@ func _initialize() -> void:
 	hud.open_input()
 	hud._on_changed("a"); hud._on_changed("ab"); hud._on_changed("abc")
 	check(sent.size() == types_before + 1 and sent[-1]["type"] == "user_typing", "user_typing fires once per burst")
+	check(sent[-1].get("text", "") == "a", "user_typing carries the partial line (leading edge)")
+	hud._edit.text = "abc"
+	hud._flush_typing()
+	check(sent[-1].get("type", "") == "user_typing" and sent[-1].get("text", "") == "abc", "the trailing edge sends the latest text")
 	hud.close_input()
+	check(sent[-1].get("type", "") == "user_typing" and sent[-1].get("text", "x") == "", "Esc (closing unsent) clears what she was listening to")
 
 	# window fit: a quarter of the screen's area on any screen, face-shaped (16:9)
 	var F: Callable = main.fit_window

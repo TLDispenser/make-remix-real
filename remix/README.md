@@ -134,6 +134,39 @@ captions only per the on-screen text rule.
 `/aware` (print the redacted snapshot — verify redaction live), `/quiet`
 (toggle unprompted chatter at runtime).
 
+## Listening: she reacts while you type or talk (2026-11-09)
+
+The old loop was strictly turn-based (you finish -> she reacts -> words). Now
+she reacts to the PARTIAL line, which is the "negative latency" idea: her
+reaction can already be on screen before you hit Enter or let go of the key.
+Logic lives in `brain/listening.py` (pure, offline-tested).
+
+- **Local reflexes ($0, nothing leaves the machine; `REMIX_LISTEN=1`).** Her
+  gaze reads along the bar as the line grows; strong cues in the last few
+  words change her face (insults, thanks, "so tired", "overheating", lol);
+  rhythm tells: a big deletion gets a deadpan, a wall of text gets tired eyes,
+  a stall makes her look at you, then twitch, then give up. Silent life (drift,
+  twitches, vitals poses) stays out of her face while she listens; real alarms
+  still get through.
+- **Voice partials (`REMIX_LISTEN_STT_PARTIALS=1`).** While the key is held,
+  local Whisper transcribes what's been said so far every ~1 s and feeds the
+  same reflexes. Same model, so this costs CPU while you hold the key.
+- **Jev peek (OPT-IN: `REMIX_LISTEN_JEV=1`).** At a pause on a 4+ word line she
+  asks Jev how she'd feel about it so far and shows it. If the final line still
+  fits (same words, up to 3 more), that reaction is REUSED: the react call is
+  skipped (no wait, no credit). Peeks stop `REMIX_LISTEN_JEV_RESERVE` (20)
+  calls before the hourly cap, max 2 per line, 2 s apart. Off by default
+  because it spends credits AND sends a line you might still delete to the
+  cloud (until now only submitted lines left the machine).
+- **Measuring it.** Type `/listen` at her: lines, local reflexes, peeks asked /
+  shown / reused / discarded / stale, average lead time (how long her reaction
+  was on screen before you sent).
+- **Not yet:** speculative LLM drafting, streaming her reply beat by beat, and
+  barge-in (you talk over her, she stops). Each is its own step.
+
+Protocol: `user_typing` now carries `text` (see `godot/PROTOCOL.md`). Older face
+builds send a bare ping and get the old "thinking" look.
+
 ## Memory & time (Nov-8 round)
 
 `brain/memory.py` keeps a dated journal in `remix/brain/sandbox/` (her repo):

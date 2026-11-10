@@ -12,12 +12,12 @@
 extends Control
 
 signal text_submitted(text: String)
-signal typing()          # fires (throttled) while you type, for the instant "thinking" reflex
+signal typing(text: String)   # the PARTIAL line, while you type (throttled, trailing edge kept); "" = cleared
 
 const MIC_COLOR := Color("#cfe0ff")
 const BAR_H := 40.0
 const MARGIN := 24.0
-const TYPING_THROTTLE_MS := 1500
+const TYPING_THROTTLE_MS := 150
 
 var _mic_on := false
 var _notice: Label
@@ -28,6 +28,8 @@ var _edit: LineEdit
 var _t := 0.0
 var _theme := Color("#ff5148")
 var _last_typing_ms := -100000
+var _typing_pending := false
+var _typing_timer: Timer
 const URGENT_COLOR := Color("#ff9a1f")   # taskbar-orange, deliberately NOT the face theme
 const URGENT_BORDER := 8.0
 
@@ -92,6 +94,10 @@ func _ready() -> void:
 	_edit.text_submitted.connect(_on_submit)
 	_edit.text_changed.connect(_on_changed)
 	add_child(_edit)
+	_typing_timer = Timer.new()
+	_typing_timer.one_shot = true
+	_typing_timer.timeout.connect(_flush_typing)
+	add_child(_typing_timer)
 	_restyle_input()
 
 
@@ -173,26 +179,45 @@ func open_input() -> void:
 	_edit.grab_focus()
 
 
-func close_input() -> void:
+func close_input(announce := true) -> void:
+	# announce: tell the brain the line was dropped (Esc), so she stops listening.
+	# A submit passes false: the user_text that follows is the answer to that line.
 	if not _edit.visible:
 		return
+	var had_text := _edit.text != ""
 	_edit.release_focus()
 	_edit.visible = false
 	_edit.text = ""
+	_typing_pending = false
+	if announce and had_text:
+		typing.emit("")
 
 
 func _on_submit(text: String) -> void:
 	var t := text.strip_edges()
-	close_input()
+	close_input(false)
 	if t != "":
 		text_submitted.emit(t)
 
 
-func _on_changed(_text: String) -> void:
+func _on_changed(text: String) -> void:
 	var now := Time.get_ticks_msec()
 	if now - _last_typing_ms >= TYPING_THROTTLE_MS:
 		_last_typing_ms = now
-		typing.emit()
+		_typing_pending = false
+		typing.emit(text)
+	else:
+		# inside the throttle window: remember to send the LATEST text when it closes
+		_typing_pending = true
+		if _typing_timer.is_inside_tree() and _typing_timer.is_stopped():
+			_typing_timer.start(maxf(0.01, float(TYPING_THROTTLE_MS - (now - _last_typing_ms)) / 1000.0))
+
+
+func _flush_typing() -> void:
+	if _typing_pending and _edit.visible:
+		_typing_pending = false
+		_last_typing_ms = Time.get_ticks_msec()
+		typing.emit(_edit.text)
 
 
 func _process(delta: float) -> void:

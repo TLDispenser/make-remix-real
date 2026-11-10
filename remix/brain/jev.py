@@ -41,6 +41,19 @@ STANCE_OPTION_TEXT = {
     "playful": "dry mischief; one sly jab is allowed, no gushing",
 }
 
+PEEK_SCENE = (
+    "The user is PARTWAY through a message to Remix (typed or spoken); the line "
+    "may be cut off mid-sentence. Remix is a deadpan, tired, dry laptop "
+    "character who is on the user's side. She is LISTENING, not answering yet. "
+    "Choose the face she makes while she listens to what has been said so far: "
+    "plain, present and attentive unless the words clearly call for more. Do "
+    "not guess at what the unfinished part will say. Insults at her -> "
+    "irritation or deadpan; something sweet -> flustered; a sad or hurt user "
+    "-> plain and soft; a scary system problem -> startled; something boring "
+    "-> tired or deadpan. recent_faces lists what her face just showed: avoid "
+    "repeating it unless the feeling is unchanged."
+)
+
 REACT_SCENE = (
     "The user just sent Remix a message. Remix is a deadpan, tired, dry laptop "
     "character — dry does NOT mean cruel: she is on the user's side, and she "
@@ -89,6 +102,7 @@ class JevBrain:
         self.vocab = Vocabulary()
         self.rng = rng or random.Random()
         self._last_react_at = 0.0
+        self._last_peek_at = 0.0
         self._call_times: list = []          # hourly-cap window (both call kinds)
         self._cache: dict = {}               # sig -> (expiry, value)
         self._recent: deque = deque(maxlen=4)  # last faces shown (variety memory)
@@ -156,6 +170,44 @@ class JevBrain:
         self.note_face(d.face)
         return d
 
+    async def peek(self, partial_text: str, vitals: dict) -> Decision | None:
+        """A reaction to a line that is STILL BEING typed/spoken (listening.py).
+
+        Same shape as react(), but: a listening-face scene, its own spacing
+        (LISTEN_JEV_MIN_GAP_S), and it never touches the react cooldown, so
+        the real reaction at send time is not blocked by it. It stops
+        LISTEN_JEV_RESERVE calls short of the hourly cap. The caller notes the
+        face only if it is actually shown. None = budget/off/failed."""
+        now = time.monotonic()
+        sig = _signature("peek", partial_text, vitals, self.recent_faces())
+        hit = self._cache.get(sig)
+        if hit and hit[0] > now:
+            d = hit[1]._replace(from_cache=True)
+            print(f"remix-brain: jev listening reaction CACHED ({d.face}) — 0 credits")
+            return d
+        if not self._peek_budget_ok(now):
+            return None
+        self._last_peek_at = now
+        self._call_times.append(now)
+
+        body = {
+            "model": config.JEV_MODEL,
+            "state": {
+                "scene": PEEK_SCENE,
+                "user_line": partial_text,
+                "vitals": _vitals_text(vitals),
+                "recent_faces": self.recent_faces(),
+            },
+            "questions": self._react_questions(partial=True),
+        }
+        resp = await self._call(body)
+        if resp is None:
+            return None
+        d = self._react_decision(resp, time.monotonic() - now,
+                                 label="listening reaction")
+        self._cache[sig] = (now + config.JEV_CACHE_TTL_S, d)
+        return d
+
     async def act(self, user_text: str, beats: list) -> ActPlan | None:
         """One face per beat. Only worth a call for 2+ beats."""
         if len(beats) < 2:
@@ -211,9 +263,24 @@ class JevBrain:
         self._call_times = window
         return len(window) < config.JEV_MAX_PER_HOUR
 
+    def _peek_budget_ok(self, now: float) -> bool:
+        if not (config.JEV_ENABLED and config.LISTEN_JEV):
+            return False
+        if now - self._last_peek_at < config.LISTEN_JEV_MIN_GAP_S:
+            return False
+        window = [t for t in self._call_times if now - t < 3600.0]
+        self._call_times = window
+        return len(window) < config.JEV_MAX_PER_HOUR - config.LISTEN_JEV_RESERVE
+
     # ------------------------------------------------------------ questions
 
-    def _react_questions(self) -> dict:
+    def _react_questions(self, partial: bool = False) -> dict:
+        eyes_ask = ("Her EYES while she listens to this unfinished line."
+                    if partial else
+                    "Her EYES the instant she reads this line, before she says anything.")
+        mouth_ask = ("Her MOUTH while she listens to this unfinished line."
+                     if partial else
+                     "Her MOUTH the instant she reads this line, before she says anything.")
         return {
             "stance": {
                 "type": "choice", "criteria": dict(STANCE_OPTION_TEXT),
@@ -230,13 +297,11 @@ class JevBrain:
             },
             "eyes": {
                 "type": "choice", "criteria": self._eyes_criteria(),
-                "instructions": ("Her EYES the instant she reads this line, "
-                                 "before she says anything."),
+                "instructions": eyes_ask,
             },
             "mouth": {
                 "type": "choice", "criteria": self._mouth_criteria(),
-                "instructions": ("Her MOUTH the instant she reads this line, "
-                                 "before she says anything."),
+                "instructions": mouth_ask,
             },
         }
 
@@ -262,7 +327,8 @@ class JevBrain:
 
     # ------------------------------------------------------------- parsing
 
-    def _react_decision(self, resp: dict, latency: float) -> Decision:
+    def _react_decision(self, resp: dict, latency: float,
+                        label: str = "reaction") -> Decision:
         answers = resp.get("answers", {}) or {}
         usage = resp.get("usage", {}) or {}
         stance_name = str(_choice(answers.get("stance"), "flat"))
@@ -273,7 +339,7 @@ class JevBrain:
             self._pick(answers.get("mouth"), self.vocab.mouths, "mouth", []),
         )
         conf = _confidence(answers.get("stance"))
-        print(f"remix-brain: jev reaction in {latency:.2f}s "
+        print(f"remix-brain: jev {label} in {latency:.2f}s "
               f"(tokens {usage.get('input_tokens')}/{usage.get('output_tokens')}): "
               f"stance={stance_name} ({conf:.2f}) face={face} "
               f"[eyes {_confidence(answers.get('eyes')):.2f}, "

@@ -1,4 +1,7 @@
 # main.py — asyncio entrypoint. Protocol v2 (see godot/PROTOCOL.md).
+# Listening (listening.py): while a line is being typed/spoken she already
+# reacts to the PARTIAL text; a reaction that still fits the final line is
+# reused instead of asked for again.
 # Silent life: vitals -> RuleBrain ($0, no Jev).
 # An exchange (typed in the terminal or Godot bar, or spoken via push-to-talk):
 #   input -> Jev reaction face (instant) -> GLM words (grounded) ->
@@ -10,7 +13,7 @@ import socket as _socket
 import threading
 import time
 
-from . import audio, awareness, config, faces, jev, memory, proactive, rules, speech, stt, tts, vitals, ws_server
+from . import audio, awareness, config, faces, jev, listening, memory, proactive, rules, speech, stt, tts, vitals, ws_server
 from .faces import NEUTRAL, Face
 
 _rule: rules.RuleBrain | None = None
@@ -27,6 +30,10 @@ _gate_task: asyncio.Task | None = None   # audio mute/volume refresher
 _aware_task: asyncio.Task | None = None  # awareness poller (Phase 6)
 _proactive_task: asyncio.Task | None = None
 _typing_at = 0.0
+_listener = listening.Listener()     # partial-line reflexes + peek/commit bookkeeping
+_listen_task: asyncio.Task | None = None
+_peek_task: asyncio.Task | None = None       # at most one Jev peek in flight
+_peek_req: "listening.PeekRequest | None" = None
 _face_ready = False              # Godot sent `ready`: she is actually visible
 _last_exchange_at = -1e12        # last time the user said anything
 _urgent: dict | None = None      # 6.4: raised while she's being ignored/muted
@@ -192,23 +199,140 @@ async def _play_silent(face_list: list, beat_list: list,
     _schedule_settle()
 
 
+# --------------------------------------------------- listening (the spike)
+
+def _speaking() -> bool:
+    return bool(_rule and _rule.speaking())
+
+
+async def _send_reflexes(reflexes: list) -> None:
+    for r in reflexes:
+        await ws_server.send(r.msg)
+        if r.msg.get("type") in ("pose", "twitch"):   # log faces, not every glance
+            print(f"remix-brain: listening: {r.why}")
+
+
+def _listen_feed(text: str, source: str) -> None:
+    """A partial line: typed in the bar ("typing") or a Whisper partial while
+    push-to-talk is held ("voice"). Reflexes go out now; pauses and peeks are
+    handled by _listen_loop."""
+    global _listen_task
+    if _loop is None:
+        return
+    text = (text or "")[:400]
+    if not text.strip():                      # cleared / Esc
+        if _listener.cancel():
+            asyncio.create_task(_listen_release("cleared"))
+        return
+    reflexes = _listener.feed(text, source, quiet=_speaking())
+    if _rule:
+        _rule.hold_listening(2.0, self_load=(source == "voice"))
+    _cancel(_settle_task)
+    if reflexes:
+        asyncio.create_task(_send_reflexes(reflexes))
+    if _listen_task is None or _listen_task.done():
+        _listen_task = asyncio.create_task(_listen_loop())
+
+
+async def _listen_loop() -> None:
+    """While a line is in progress: stalls, cue fades, and peek asks."""
+    while _listener.active:
+        await asyncio.sleep(config.LISTEN_TICK_S)
+        busy = _peek_task is not None and not _peek_task.done()
+        t = _listener.tick(quiet=_speaking(), peek_busy=busy)
+        if _rule and _listener.active:
+            _rule.hold_listening(2.0, self_load=(_listener.source == "voice"))
+        await _send_reflexes(t.reflexes)
+        if t.peek and _jev:
+            _start_peek(t.peek)
+        if t.release:
+            await _listen_release("waited too long")
+            return
+
+
+async def _listen_release(why: str) -> None:
+    """She stops listening without a line to answer: back to her baseline."""
+    _listener.release()
+    if _rule:
+        _rule.release_listening()
+        await ws_server.send(_rule.baseline_message())
+    print(f"remix-brain: listening: released ({why})")
+
+
+def _start_peek(req: "listening.PeekRequest") -> None:
+    global _peek_task, _peek_req
+    _peek_req = req
+    _peek_task = asyncio.create_task(_peek(req))
+
+
+async def _peek(req: "listening.PeekRequest"):
+    """Ask Jev how she'd feel about the line so far, and show it if the line
+    hasn't moved on. Returns the Decision either way (an in-flight peek can
+    still be reused by the commit)."""
+    d = await _jev.peek(req.text, _latest_snapshot)
+    if d is None:
+        return None
+    if _listener.accept_peek(req.seq, d):
+        _jev.note_face(d.face)
+        await ws_server.send(d.face.msg(look=_listener.last_look))
+        print(f"remix-brain: listening: jev peek ({len(listening.words(req.text))} "
+              f"words) -> {d.face} stance={d.stance_name}")
+    return d
+
+
 # -------------------------------------------------------------- the exchange
 
-async def _on_user_text(m: dict) -> None:
+async def _on_user_text(m: dict, echo: bool = True) -> None:
     global _seq, _silent_task, _last_exchange_at
     text = str(m.get("text", "")).strip()
     if not text:
         return
+    # Typed at her (Godot bar, terminal REPL): mirror it exactly the way the
+    # mic path already does, so the HUMAN's words show up in every place her
+    # replies do — her HUD ("you: ..."), any connected terminal, brain.log.
+    # The PTT path passes echo=False: it has its own transcript broadcast.
+    if echo:
+        await ws_server.send({"type": "transcript", "text": text,
+                              "final": True})
+        print(f"remix-brain: user typed: \"{text}\"")
     _last_exchange_at = time.monotonic()
     await _set_urgent(False, "the human showed up")   # 6.4: attention arrives
     if text.startswith("/"):
+        if _listener.active:
+            await _listen_release("command")
         await _on_command(text)
         return
     _cancel(_settle_task)
     _cancel(_silent_task)
 
+    # Listening: did her reaction to the partial line already happen? If it
+    # still fits what was actually sent, it STANDS (no react call, no wait).
+    commit = _listener.commit(text)            # also ends the listening state
+    if _rule:
+        _rule.release_listening()
+    decision = commit.reuse
+    if decision is not None:
+        print(f"remix-brain: listening: reused the reaction shown "
+              f"{commit.lead_s:.1f}s before send - react call skipped")
+    elif commit.peeked:
+        print("remix-brain: listening: the line changed - peek discarded")
+    elif (_jev and _peek_task is not None and not _peek_task.done()
+          and _peek_req is not None and listening.similar(text, _peek_req.text)):
+        # a peek is still in flight for (nearly) this line: wait for it
+        # instead of paying for a second call
+        try:
+            decision = await asyncio.wait_for(asyncio.shield(_peek_task), 1.2)
+        except Exception:
+            decision = None
+        if decision is not None:
+            _listener.stats.reused_inflight += 1
+            _jev.note_face(decision.face)
+            print("remix-brain: listening: awaited the in-flight peek - "
+                  "react call skipped")
+
     # Left brain: stance + the instant face, before any words exist.
-    decision = await _jev.react(text, _latest_snapshot) if _jev else None
+    if decision is None and _jev:
+        decision = await _jev.react(text, _latest_snapshot)
     if decision:
         face, stance = decision.face, decision.stance
     else:
@@ -434,6 +558,10 @@ async def _on_command(text: str) -> None:
         line = "// " + " | ".join(x.strip(" ·") for x in lines) + " //"
         await ws_server.send({"type": "notice", "text": line, "seconds": 9.0})
         print(f"remix-brain: awareness: {awareness.describe()}")
+    elif cmd == "/listen":
+        line = "// listening: " + _listener.stats.summary() + " //"
+        await ws_server.send({"type": "notice", "text": line, "seconds": 9.0})
+        print(f"remix-brain: listening: {_listener.stats.summary()}")
     elif cmd == "/quiet" and _pro:
         _pro.enabled = not _pro.enabled
         state = "on" if _pro.enabled else "off"
@@ -465,6 +593,9 @@ async def _ptt_start() -> None:
     result = await _ptt.start()
     if result == "ok":
         _cancel(_settle_task)
+        _listener.reset()
+        if _rule:
+            _rule.hold_listening(2.5, self_load=True)
         await ws_server.send({"type": "listening", "state": "start"})
         await ws_server.send(NEUTRAL.msg(look=[0.0, -0.1]))
     elif result == "no_mic":
@@ -484,8 +615,12 @@ async def _ptt_stop() -> None:
     if heard.text:
         await ws_server.send({"type": "transcript", "text": heard.text,
                               "final": True})
-        await _on_user_text({"type": "user_text", "text": heard.text})
+        await _on_user_text({"type": "user_text", "text": heard.text},
+                            echo=False)
         return
+    _listener.release()                    # nothing usable was said
+    if _rule:
+        _rule.release_listening()
     notices = {
         "silence": "// heard nothing //",
         "unclear": "// say that again? //",
@@ -556,9 +691,15 @@ def _on_context(m: dict) -> None:
           f"({(_context.get('area_fraction') or 0) * 100:.0f}% of area)")
 
 
-def _on_typing(_m: dict) -> None:
-    """Typing in the Godot bar: instant 'thinking' reflex, $0, throttled."""
+def _on_typing(m: dict) -> None:
+    """The Godot bar sends the PARTIAL line with every change (user_typing.text)
+    so she can react while you type. A bare ping (older face build, or
+    REMIX_LISTEN=0) keeps the old $0 'thinking' look, throttled."""
     global _typing_at
+    text = m.get("text")
+    if config.LISTEN and isinstance(text, str):
+        _listen_feed(text, "typing")
+        return
     now = time.monotonic()
     if now - _typing_at < 3.0 or _loop is None:
         return
@@ -579,6 +720,8 @@ async def main() -> None:
     _rule = rules.RuleBrain()
     _jev = jev.JevBrain(seed_faces=memory.recent_faces(),
                         variety_hook=memory.note_face)
+    _listener.peek_enabled = bool(config.LISTEN and config.LISTEN_JEV
+                                  and config.JEV_ENABLED and _jev)
     _pro = proactive.Proactive(
         awaken_s=((memory.awaken() or {}).get("elapsed_s")))
     ws_server.on("ready", _on_ready)
@@ -598,10 +741,17 @@ async def main() -> None:
                                     "// ears offline: whisper model failed to load //"})))
         _ptt = stt.PushToTalk(
             on_status=_ears,
-            on_timeout=lambda: asyncio.create_task(_ptt_stop()))
+            on_timeout=lambda: asyncio.create_task(_ptt_stop()),
+            on_partial=((lambda t: _listen_feed(t, "voice"))
+                        if config.LISTEN else None))
         _start_ptt_server()
         _ptt.warm()  # background thread; the model is loaded once
 
+    print(f"remix-brain: listening {'on' if config.LISTEN else 'off'} "
+          f"(local reflexes; jev peeks "
+          f"{'ON — credits, partial lines leave the machine' if _listener.peek_enabled else 'off'}; "
+          f"voice partials "
+          f"{'on' if config.LISTEN and config.PTT_ENABLED and config.LISTEN_STT_PARTIALS else 'off'})")
     body_task = asyncio.create_task(body_loop(_rule))
     memory_task = asyncio.create_task(memory_loop())   # flush + GitHub mirror
     if config.NOTICE_GATE:

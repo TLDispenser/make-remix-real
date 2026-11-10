@@ -161,6 +161,33 @@ JEV_COOLDOWN_S = float(_env("JEV_COOLDOWN_S", "3.0"))
 JEV_MAX_PER_HOUR = int(_env("JEV_MAX_PER_HOUR", "60"))
 JEV_CACHE_TTL_S = float(_env("JEV_CACHE_TTL_S", "300.0"))
 
+# ---- Listening (2026-11-09): she reacts WHILE you type or talk -------------
+# Local reflexes ($0, nothing leaves the machine): gaze follows the text, eyes
+# and mouth react to strong cues, a few rhythm tells. Fed by partial text from
+# the Godot bar (user_typing carries `text`) and rolling Whisper partials while
+# push-to-talk is held. See brain/listening.py.
+LISTEN = _env("LISTEN", "1") == "1"
+LISTEN_TICK_S = float(_env("LISTEN_TICK_S", "0.25"))
+LISTEN_PAUSE_S = float(_env("LISTEN_PAUSE_S", "0.9"))      # quiet this long = a pause worth a peek
+LISTEN_MIN_WORDS = int(_env("LISTEN_MIN_WORDS", "4"))      # no peek on a line shorter than this
+LISTEN_REUSE_SLACK_WORDS = int(_env("LISTEN_REUSE_SLACK_WORDS", "3"))  # final may add this many words
+# Jev "peek": at a pause, ask Jev how she'd feel about the line SO FAR and
+# show it before you finish. OPT-IN because (1) it spends credits and (2) it
+# sends a line you may still delete to the cloud, which until now only
+# SUBMITTED lines did. A reaction that still fits the final line is REUSED
+# (no react call at all), so a hit costs nothing extra.
+LISTEN_JEV = _env("LISTEN_JEV", "0") == "1"
+LISTEN_JEV_PER_EXCHANGE = int(_env("LISTEN_JEV_PER_EXCHANGE", "2"))
+LISTEN_JEV_MIN_GAP_S = float(_env("LISTEN_JEV_MIN_GAP_S", "2.0"))
+# Peeks stop this many calls BEFORE the hourly cap, so they can never starve
+# the real reaction/acting calls (REMIX_JEV_MAX_PER_HOUR counts both).
+LISTEN_JEV_RESERVE = int(_env("LISTEN_JEV_RESERVE", "20"))
+# Voice: transcribe what has been said so far every interval while the key is
+# held (local Whisper, same model). 0 = no partials; she hears you at key-up.
+LISTEN_STT_PARTIALS = _env("LISTEN_STT_PARTIALS", "1") == "1"
+LISTEN_STT_INTERVAL_S = float(_env("LISTEN_STT_INTERVAL_S", "1.0"))
+LISTEN_STT_MIN_S = float(_env("LISTEN_STT_MIN_S", "1.0"))   # need this much audio first
+
 # Face variety (jev.py): sample from Jev's own probabilities, and discount
 # whatever the face showed recently, instead of always taking the top pick.
 JEV_FACE_TEMPERATURE = float(_env("JEV_FACE_TEMPERATURE", "1.0"))
