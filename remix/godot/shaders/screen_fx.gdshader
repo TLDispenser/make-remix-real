@@ -1,4 +1,4 @@
-// screen_fx.gdshader: Remix's CRT glass. A full-window post effect over the
+// screen_fx.gdshader: Remix's glass, styled after her companion's CRT. A full-window post effect over the
 // whole screen (face, hud, everything). Compatibility-renderer friendly:
 // ~10 texture reads per pixel, no loops over big radii.
 //   glow      soft phosphor bloom (8 taps)

@@ -83,7 +83,17 @@ async def send(msg: dict) -> None:
 
 
 async def serve() -> None:
+    # origins=[None]: ONLY clients that send no Origin header (Godot's
+    # WebSocketPeer never does). Any web page in any browser DOES send one,
+    # so a random site the user visits cannot open a socket to 127.0.0.1:8765
+    # and drive her — and through `user_text` reach the mic pipeline. This is
+    # a DNS-rebinding/cross-site-WebSocket wall, not auth; everything still
+    # binds to localhost.
+    # max_size: 1 MiB per inbound frame is ~100x our largest legal message
+    # (a push-to-talk partial transcript); without it a hostile/buggy peer
+    # could balloon the brain's memory with one frame.
     async with _ws_serve(_handler, config.WS_HOST, config.WS_PORT,
-                     max_size=None, ping_interval=20):
+                     origins=[None], max_size=1_048_576,
+                     ping_interval=20):
         print(f"remix-brain: ws server on ws://{config.WS_HOST}:{config.WS_PORT} (v{PROTOCOL_VERSION})")
         await asyncio.Future()

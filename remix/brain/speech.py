@@ -234,6 +234,12 @@ def build_system_prompt(vitals: dict | None = None, stance: str | None = None,
     return prompt + _memory_block() + temper_line()
 
 _history: collections.deque = collections.deque(maxlen=8)
+# ONE net lock: every right-brain LLM call (a reply or an unprompted line)
+# holds it for its whole pool rotation, so two calls never hit the providers
+# interleaved. asyncio.Lock is FIFO: a question typed while she is answering
+# WAITS its turn and still gets an answer, in the order the questions arrived.
+# Chatter never queues — it steps aside (see _reply_waiters below).
+_reply_waiters = 0   # replies waiting on _lock: chatter yields to them
 _lock = asyncio.Lock()
 
 # ------------------------------------------------- unprompted lines (chatter)
@@ -328,11 +334,16 @@ async def generate_reply(user_text: str, vitals: dict | None = None,
                          stance: str | None = None,
                          context: dict | None = None,
                          aware: dict | None = None) -> str | None:
-    """One conversational exchange. None on failure/busy."""
-    if _lock.locked():
-        return None  # busy: caller decides the UX
-    async with _lock:
-        return await _generate(user_text, vitals, stance, context, aware)
+    """One conversational exchange. None ONLY when the provider pool is down —
+    never when busy: a second question while she is answering queues on the
+    lock and is answered in arrival order (she never drops a question)."""
+    global _reply_waiters
+    _reply_waiters += 1          # unprompted lines see this and stay silent
+    try:
+        async with _lock:
+            return await _generate(user_text, vitals, stance, context, aware)
+    finally:
+        _reply_waiters -= 1
 
 
 async def _generate(user_text: str, vitals: dict | None,
@@ -442,9 +453,14 @@ async def _call_llm(messages: list, temperature: float = 0.7) -> str | None:
                 _failures[p["name"]] = _failures.get(p["name"], 0) + 1
                 print(f"remix-brain: LLM {p['name']} attempt "
                       f"{i + 1}/{_PER_PROVIDER_ATTEMPTS} failed: {e}")
-                await asyncio.sleep(min(overall_delay, 15.0)
-                                    + random.uniform(0, overall_delay))
-                overall_delay = overall_delay * 1.6
+                # Backoff ONLY when another attempt actually follows. The
+                # last attempt of a provider hands straight to the next
+                # provider (or returns None) — sleeping there just stalls a
+                # user who is already waiting on a dead pool.
+                if i + 1 < _PER_PROVIDER_ATTEMPTS:
+                    await asyncio.sleep(min(overall_delay, 15.0)
+                                        + random.uniform(0, overall_delay))
+                    overall_delay = overall_delay * 1.6
         if _failures.get(p["name"], 0) >= _PER_PROVIDER_ATTEMPTS:
             _cool_until[p["name"]] = (time.monotonic()
                                       + config.LLM_PROVIDER_COOLDOWN_S)
@@ -461,9 +477,11 @@ async def generate_proactive_line(plan: dict, vitals: dict | None = None,
     reply — no pre-written pools, and Jev is never called (stance is local).
     Returns None when the pool is down or nothing clean comes back: the caller
     treats that as silence, never as a cue to recite something canned."""
-    if _lock.locked():            # a real exchange owns the brain: step aside
-        return None
+    if _reply_waiters or _lock.locked():
+        return None   # a real exchange is talking, or waiting: step aside
     async with _chatter_lock:
+        if _reply_waiters or _lock.locked():   # re-check: none slipped in
+            return None
         situation = str(plan.get("situation") or "").strip()
         if not situation:
             return None
@@ -491,15 +509,19 @@ async def generate_proactive_line(plan: dict, vitals: dict | None = None,
                 return "Too long. One sentence, under 20 words."
             return None
 
-        cleaned = _clean_line(await _call_llm(messages, temperature=0.85))
-        note = reject(cleaned)
-        for _ in range(1):        # ONE corrective retry, then silence
-            if note is None:
-                return cleaned
-            messages = messages + [
-                {"role": "assistant", "content": cleaned or "(nothing)"},
-                {"role": "system", "content": note}]
-            cleaned = _clean_line(
-                await _call_llm(messages, temperature=0.85))
+        # Hold the net lock for the whole writing phase: no reply's pool
+        # calls interleave with hers.
+        async with _lock:
+            cleaned = _clean_line(await _call_llm(messages, temperature=0.85))
             note = reject(cleaned)
+            if note is not None and not _reply_waiters:
+                # ONE corrective retry, then silence. Skipped when a real
+                # exchange started waiting while she wrote: it gets the
+                # brain immediately instead.
+                messages = messages + [
+                    {"role": "assistant", "content": cleaned or "(nothing)"},
+                    {"role": "system", "content": note}]
+                cleaned = _clean_line(
+                    await _call_llm(messages, temperature=0.85))
+                note = reject(cleaned)
         return cleaned if note is None else None

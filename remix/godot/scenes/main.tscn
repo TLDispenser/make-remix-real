@@ -1,6 +1,6 @@
 [gd_scene load_steps=7 format=3]
 
-; Remix's body is just her screen: dark glass, the face, a tiny HUD, CRT post effect.
+; Remix's body is just her screen: dark glass, the face, a tiny HUD, a post effect styled after her companion's CRT.
 ; Design space is 960x540 (half the 1920x1080 SVG canvas), so Face is scaled 0.5.
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]

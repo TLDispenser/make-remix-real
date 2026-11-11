@@ -1,6 +1,6 @@
 # Remix (Godot half)
 
-The window IS her screen: a red glyph face on dark navy glass with a light CRT look.
+The window IS her screen: a red glyph face on dark navy glass with a light look styled after her companion's CRT.
 Godot draws and plays audio; the Python brain decides everything (see PROTOCOL.md).
 
     godot --path .                      # run (start tools/fake_brain.py first to see it act)
@@ -42,7 +42,7 @@ want a shortcut) in `scripts/face_config.gd`.
 ## Tuning
 All in `scripts/face_config.gd` (limits, widen caps, blink, which moods map to which pose)
 and the exports on `scripts/face.gd` (spring stiffness/damping, blink timing).
-CRT look: uniforms in `shaders/screen_fx.gdshader`.
+CRT-styled look (her glass imitating the set her companion has): uniforms in `shaders/screen_fx.gdshader`.
 
 ## Assumptions I made (change if wrong)
 - The "BottomEyeLid (for twitch) + SmirkMouth" art is BOTH the `smirk` pose and the twitch

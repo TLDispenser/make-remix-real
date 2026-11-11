@@ -4,6 +4,10 @@ remix/.env
 remix/brain/memory.json
 remix/brain/sandbox/
 remix/brain/brain.log
+remix/.run/
+remix/godot/godot.log
+# stray empty file created by a mis-quoted shell redirect; nobody's content
+-
 hypr-config-edit
 __pycache__/
 *.pyc

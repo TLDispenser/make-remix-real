@@ -366,3 +366,43 @@ group.
   NEW_SPEC.md got a reality pass (right brain = $0 pool, TTS = espeak-ng,
   protocol v2 pointer, actual folder layout, mood-vocabulary annotation, sysprompt
   pointer to speech.py). README now points to NEW_SPEC.md.
+
+## Jev real API limits (researched 2026-11-11, from official docs; answers the questionnaire's "You have internet access, no?")
+
+Sources read: `https://docs.typesafe.ai/models.md`, `/api/errors.md`,
+`/api/system-one.md`, `https://api.typesafe.ai/openapi.json` (v0.2.0).
+
+1. **Questions per request: NO documented cap.** `questions` is
+   `minProperties: 1`, no max. The real limit is CONTEXT, and it is
+   two-dimensional: **64k tokens per request** (state + ALL questions
+   combined) and **32k tokens per question** (state + any ONE question).
+   Officially encouraged to pack many questions ("speculative fan-out";
+   the parallel-questions cookbook measured batching 13 questions into one
+   call = **12.2x cheaper, 11.8x faster** than one call each — the state is
+   ingested once and all questions evaluate in parallel).
+2. **Long context is opt-in and we should NOT want it:** header
+   `TypeSafe-Danger-Zone-Long-Context: true` raises both limits to 262k but
+   is officially "slower and less accurate". Our react/act state is tiny
+   (a few hundred tokens); stay on defaults.
+3. **Body:** ≤32 MiB, ≤64 nesting levels, finite numbers, UTF-8 no BOM.
+   Over-body = 413; rule breaks = 400; shape breaks = 422.
+4. **Price:** $42 per Btok input = **$0.042 per Mtok**; output tokens
+   FREE. So a 2k-token react call ≈ $0.000084. Credits are the constraint,
+   not the rate — packing more questions into the SAME call costs almost
+   nothing extra (state tokens are shared).
+5. **Rate limits:** per-ORG, measured in **tokens/sec and requests/sec**;
+   the numbers are in the org's console (`console.typesafe.ai/rate-limits`)
+   and NOT public. Over either = **429**; **529** = provider overloaded;
+   both are retry-with-exponential-backoff and honor `retry-after`.
+   Our existing cooldown/cache/cap handling already matches this shape.
+6. **Models:** `jev-latest` -> `jev-1.14.0` (2026-10-14; adds Box).
+   `jev-preview` currently points at the same build. Context limits above
+   apply to both 1.13 and 1.14.
+7. **Privacy:** Jev is NOT trained on customer requests/responses (ZDR for
+   enterprise; DPA on the legal page).
+
+**Phase 2 implication:** the locked "≤2 Jev requests per exchange" budget
+is comfortably generous — react/act can pack ALL Phase 2 decision questions
+(stance, should_speak, form choice, deflection need, memory relevance...)
+into those same one-or-two calls. The cap to respect is org TPS/RPS, which
+we never approach at chat cadence.

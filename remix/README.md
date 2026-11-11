@@ -11,14 +11,14 @@ verified against live docs, and the user's constraints locked in on 2026-11-05:
 | Phase | State |
 |---|---|
 | 0 Research | ✅ done — see `../RESEARCH_NOTES.md` |
-| 1 The body | ✅ **user-built**: SVG-driven ribbon face, CRT shader, protocol v2 (see `godot/README.md`, `godot/PROTOCOL.md`) |
+| 1 The body | ✅ **user-built**: SVG-driven ribbon face, shader styled after her companion's CRT, protocol v2 (see `godot/README.md`, `godot/PROTOCOL.md`) |
 | 2 Nervous system (real vitals) | ✅ done — psutil feed verified on her host (`REMIX_MOCK=0` is now the default) |
 | 3 Left brain | ✅ RuleBrain ($0 vitals→poses) live • ✅ JevBrain live (typed input only, 1 call/reaction: stance + pose + beat arc; budget policy below; smoke-tested 2026-11-06) |
 | 4 Right brain (LLM words) | ✅ live; now **grounded** (she only knows her vitals/hardware/window/time/this chat; invented tabs/windows/memories/vitals are screened) |
 | 5 Push-to-talk (local STT) | ✅ done — faster-whisper, hold-to-talk, hard 15 s mic cap, see "Voice" below |
 | 6 Awareness | ✅ done — Hyprland app sensing (names only, titles redacted), idle/power/audio senses, unprompted lines from local text pools (DND + rate limits) |
 | 7 Voice out + polish | ✅ voice done: **espeak-ng** (not an AI voice), lip-sync from the audio, per-beat faces timed to it. Tray/settings still open |
-| 8 Criticism round (2026-11-08) | ✅ mostly done — persistent **memory sandbox** (`brain/sandbox/`, optional GitHub mirror), time sense (uptime/awaken/dated journal), temper knob + slight random personality drift, softer sides (dry ≠ cruel), honest stats everywhere, **ambient thoughts**, **urgent marker** (6.4), motion boost + pacing, per-beat espeak prosody. Godot-side single-eye twitch + urgent (OS taskbar attention request + orange frame) now applied (2026-11-08c, see `godot/PROPOSED_face_edits.md`) |
+| 8 Criticism round (2026-11-08) | ✅ mostly done — persistent **memory sandbox** (`~/.local/share/remix/sandbox/`, optional GitHub mirror), time sense (uptime/awaken/dated journal), temper knob + slight random personality drift, softer sides (dry ≠ cruel), honest stats everywhere, **ambient thoughts**, **urgent marker** (6.4), motion boost + pacing, per-beat espeak prosody. Godot-side single-eye twitch + urgent (OS taskbar attention request + orange frame) now applied (2026-11-08c, see `godot/PROPOSED_face_edits.md`) |
 
 Loose-ends pass (2026-11-08): `CORE_*` settings renamed to `REMIX_*` (old names
 still read — see `.env.example`), on-screen text rule enforced (flavor notices
@@ -169,7 +169,11 @@ builds send a bare ping and get the old "thinking" look.
 
 ## Memory & time (Nov-8 round)
 
-`brain/memory.py` keeps a dated journal in `remix/brain/sandbox/` (her repo):
+`brain/memory.py` keeps a dated journal in her sandbox —
+`~/.local/share/remix/sandbox/` by default now, deliberately OUTSIDE the
+project tree so her memory can never ride along in a code commit (the
+legacy in-tree `brain/sandbox/` is migrated on first run, copied not
+moved):
 what was said both ways, her unprompted thoughts, her recent faces, the
 chatter-dedup set and the last shutdown timestamp. That single file is what
 gives her a past — the system prompt now carries a **WHAT YOU REMEMBER**

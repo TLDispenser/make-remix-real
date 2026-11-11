@@ -286,7 +286,32 @@ LLM_MAX_CONCURRENT = 1  # z.ai free Flash models allow ONE concurrent request
 # else she is wired to write later. Optionally mirrored to a GitHub repo so
 # "space" is never a worry and she survives a disk move. The token is read at
 # push time only and never embedded in the stored remote URL.
-SANDBOX_DIR = Path(_env("SANDBOX_DIR") or (BRAIN_DIR / "sandbox"))
+# Default location (2026-11-11): ~/.local/share/remix/sandbox — XDG user data,
+# NOT inside the project tree. The old in-tree default made her journal part
+# of the code repo: every status read picked it up and one wrong `git add`
+# publishes her memory. If the legacy in-tree sandbox exists and the new one
+# is empty, memory.json is COPIED across once (legacy left in place, untouched,
+# as a local backup).
+_SANDBOX_LEGACY = BRAIN_DIR / "sandbox"
+if _env("SANDBOX_DIR"):
+    SANDBOX_DIR = Path(_env("SANDBOX_DIR"))
+else:
+    _data_home = os.environ.get("XDG_DATA_HOME") \
+        or str(Path.home() / ".local" / "share")
+    SANDBOX_DIR = Path(_data_home) / "remix" / "sandbox"
+    _legacy_journal = _SANDBOX_LEGACY / "memory.json"
+    if (_legacy_journal.exists() and not SANDBOX_DIR.exists()
+            and not _SANDBOX_LEGACY.is_symlink()):
+        try:
+            SANDBOX_DIR.mkdir(parents=True, exist_ok=True)
+            (SANDBOX_DIR / "memory.json").write_bytes(
+                _legacy_journal.read_bytes())
+            print("remix-brain: memory journal moved to "
+                  f"{SANDBOX_DIR} (copied from the legacy in-tree sandbox)")
+        except OSError as e:
+            print(f"remix-brain: sandbox migration failed ({e!r}); "
+                  f"staying with the legacy sandbox")
+            SANDBOX_DIR = _SANDBOX_LEGACY
 MEMORY_JSON = SANDBOX_DIR / "memory.json"
 MEMORY_REPO = _env("MEMORY_REPO", "")            # e.g. https://github.com/me/remix-sandbox.git (PRIVATE)
 MEMORY_TOKEN = _env("MEMORY_TOKEN", "")          # fine-grained PAT; contents:read/write on that repo

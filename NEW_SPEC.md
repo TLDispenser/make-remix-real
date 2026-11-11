@@ -114,14 +114,14 @@ idea is gone: her face is driven by the left brain, not by tags in the text.)
 
 **Visual identity (from the reference art)**
 - **Mech's design:** a beige CRT monitor for a head, with a vent on the side. A dark screen with a glowing pixel-style face. A dark jacket, white cross-shaped shoulder patches, yellow cable connectors at the wrists, large blocky hands. A voxel look.
-- **Remix keeps the CRT-head idea**, with her own refinements, and uses **red** as her face color instead of Mech's green.
+- **Remix is a flat display styled after her companion's CRT head**, with her own refinements, and uses **red** as her face color instead of Mech's green.
 - **The face is made of glyphs, not a smooth cartoon.** Eyes and mouth are flat, glowing, pixel-art shapes: vertical bars, slanted wedges, `><` squints, hollow outlines, thin curves, T-shaped bars, dashes, and a scribble/static face. The mouth is a line, a bracket, or a bar.
 - Read `reference/Faces.png` (Mech's face atlas) as the **vocabulary of expressions to adapt**, not as final art. Remix's atlas should be designed for her, using the same visual language.
 
 **Face rendering requirements**
 - **Color is a single theme variable.** Draw the face in a neutral color and tint it with a shader uniform, so changing red to anything else (the user's laptop palette may clash) is one value. Also expose it in settings.
-- **CRT feel via shader:** phosphor glow/bloom, faint scanlines, subtle flicker, slight edge bleed. Keep each effect adjustable and cheap.
-- **Morphing between glyphs:** the shapes differ a lot, so build each eye as a polygon with a fixed number of points and each mouth as a polyline with a fixed number of points. An expression is a set of target point positions plus scale and rotation per feature. Springs move every point toward its target, so any expression eases into any other with no hand-made transitions, and interrupting a transition looks smooth. For shapes that can't morph cleanly (outlines, the scribble face), use a short glitchy crossfade or a static-burst transition, which also suits a CRT.
+- **Companion's-CRT feel via shader:** phosphor glow/bloom, faint scanlines, subtle flicker, slight edge bleed — the way her glass imitates the set her companion has. Keep each effect adjustable and cheap.
+- **Morphing between glyphs:** the shapes differ a lot, so build each eye as a polygon with a fixed number of points and each mouth as a polyline with a fixed number of points. An expression is a set of target point positions plus scale and rotation per feature. Springs move every point toward its target, so any expression eases into any other with no hand-made transitions, and interrupting a transition looks smooth. For shapes that can't morph cleanly (outlines, the scribble face), use a short glitchy crossfade or a static-burst transition, which also suits her CRT-styled glass.
 - Add idle life on top: blinking (eyes collapse to a thin line), breathing glow, small gaze drift, occasional flicker. Keep these additive so they never fight the current expression.
 - Pose the body (head tilt, arms crossed, shrug) as a later polish phase. The face comes first.
 

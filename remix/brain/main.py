@@ -361,7 +361,7 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
     if reply is None:
         line = ("// heart present, words absent: no llm key //"
                 if not config.LLM_API_KEY else
-                "// brain busy (upstream overloaded). nudge me again //")
+                "// can't reach the words right now. nudge me again //")
         await ws_server.send({"type": "notice", "text": line, "seconds": 4.0})
         print("remix-brain: no reply available")
         return
