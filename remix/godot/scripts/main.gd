@@ -524,4 +524,6 @@ func _input(event: InputEvent) -> void:
 		KEY_F10:
 			face.twitch()
 		KEY_B:
-			face.toggle_blush()
+			# The toggle only exists in bashful's eyes, so elsewhere the key
+			# would look dead — always say what happened.
+			hud.show_notice("// blush %s //" % ("on" if face.toggle_blush() else "off"), 2.0)
