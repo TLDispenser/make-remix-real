@@ -60,6 +60,8 @@ STANCE_CHOICES = {
     "muted_long": ["pout", "tsun", "flat"],
     "long_session": ["concerned", "flat"],
     "app_stuck": ["flat", "playful", "pout"],
+    "app_opened": ["playful", "flat", "tsun"],
+    "app_closed": ["flat", "playful", "pout"],
     "ambient": ["flat", "playful", "pout"],
     "poke": ["playful", "tsun", "flat"],
 }
@@ -76,6 +78,8 @@ TRIGGER_COOLDOWN_S = {
     "muted_long": 7200.0,     # 2 h
     "long_session": 7200.0,   # 2 h
     "app_stuck": 10800.0,     # 3 h
+    "app_opened": 900.0,      # 15 min
+    "app_closed": 1800.0,     # 30 min
     "ambient": config.AMBIENT_COOLDOWN_S,
 }
 
@@ -110,7 +114,8 @@ def _quiet_hour(wall_hour: int | None) -> bool:
 
 def _situation(trigger: str, aware: dict, batt: float | None,
                away_mins: int | None = None,
-               stuck_mins: int | None = None) -> str:
+               stuck_mins: int | None = None,
+               app: str | None = None) -> str:
     """What she just noticed, as one plain clause. This is the SEED her words
     grow from — speech.generate_proactive_line() reacts to it. Every number
     here comes straight from a real sense; nothing is invented."""
@@ -172,6 +177,13 @@ def _situation(trigger: str, aware: dict, batt: float | None,
             where += f" (window title: {title})"
         return (f"they have had {where} in "
                 f"focus for about {mins} minutes straight")
+    if trigger == "app_opened":
+        from . import awareness
+        focus = " and it has their focus now" if aware.get("app") == app else ""
+        return f"they just opened {awareness._name_of(app or 'something')}{focus}"
+    if trigger == "app_closed":
+        from . import awareness
+        return f"they just closed {awareness._name_of(app or 'something')}"
     if trigger == "poke":
         return "they poked you and want to hear one line right now"
     return "something on the machine changed"
@@ -201,13 +213,14 @@ class Proactive:
         self.prev_idle = None
         self.greeted = False
         self.episode = {"gentle": False, "deep": False}
+        self.prev_open = None         # set of open app classes (for edges)
 
     # ---------------------------------------------------------------- API
 
     def tick(self, aware: dict, vitals: dict | None = None, now: float | None = None,
              mic_open: bool = False, last_exchange_at: float | None = None,
              busy_until: float = 0.0, wall_hour: int | None = None) -> dict | None:
-        """One engine step. Returns {'trigger','stance','face','look',
+        """One engine step. Returns {'trigger','stance','face','look','aim',
         'situation'} — the urge, never the words."""
         now = time.monotonic() if now is None else now
         aware = aware or {}
@@ -239,6 +252,24 @@ class Proactive:
             self.prev_idle = idle
         if idle is not None and idle < 60.0:   # fresh idle episode
             self.episode = {"gentle": False, "deep": False}
+
+        # open/close edges: which program CLASSES are running now vs last
+        # tick (aware["open_apps"], class names only). Updated ALWAYS, like
+        # the battery/idle edges, so a DND window eats the event too. A batch
+        # change (session restore, a script spawning five windows) is noise,
+        # not news: only a lone change is speak-worthy.
+        opened_app = closed_app = None
+        apps_now = aware.get("open_apps")
+        if apps_now is not None:
+            open_set = set(apps_now)
+            if self.prev_open is not None:
+                opened = open_set - self.prev_open
+                closed = self.prev_open - open_set
+                if 0 < len(opened) <= 2:
+                    opened_app = sorted(opened)[0]
+                if 0 < len(closed) <= 2:
+                    closed_app = sorted(closed)[0]
+            self.prev_open = open_set
 
         # --- suppression gates ---
         if not self.enabled:
@@ -274,6 +305,12 @@ class Proactive:
             plan = "plugged"
         elif away and self._due("welcome_back", now):
             plan = "welcome_back"
+        elif opened_app and idle is not None and idle < 300.0 \
+                and self._due("app_opened", now):
+            plan = "app_opened"
+        elif closed_app and idle is not None and idle < 300.0 \
+                and self._due("app_closed", now):
+            plan = "app_closed"
         elif deep_edge and not self.episode["deep"]:
             plan = "idle_deep"
         elif gentle_edge and not self.episode["gentle"]:
@@ -316,13 +353,15 @@ class Proactive:
                 "face": STANCE_FACE.get(stance, POSES["default"]),
                 "look": CONCERNED_LOOK if stance == "concerned" else None,
                 "urgent": plan in URGENT_ON,
+                "aim": opened_app if plan == "app_opened" else None,
                 "situation": _situation(
                     plan, aware, batt,
                     away_mins=round((_f(prev_idle) or 0) / 60)
                     if plan == "welcome_back" else None,
                     stuck_mins=round((now - aware["app_since"]) / 60)
                     if plan == "app_stuck" and aware.get("app_since") is not None
-                    else None)}
+                    else None,
+                    app=opened_app if plan == "app_opened" else closed_app)}
 
     def force(self, aware: dict | None = None, vitals: dict | None = None,
               now: float | None = None) -> dict | None:

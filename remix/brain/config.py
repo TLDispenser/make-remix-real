@@ -118,6 +118,12 @@ SELF_MATCH = _env("SELF_MATCH", "remix")
 # (Wayland-native builds can read (0,0) forever on some setups).
 WINDOW_POS = _env("WINDOW_POS", "1") == "1"
 
+# App events (2026-11-11): she tracks which program CLASSES are open so she
+# can notice launches and quits ("they just opened kitty"). Class names only,
+# never titles — same public compositor data the active-window poll uses.
+# 0 = the awareness poller skips the open-app sense entirely.
+APP_EVENTS = _env("APP_EVENTS", "1") == "1"
+
 # Unprompted lines (proactive.py). The TRIGGER is local and $0 (never Jev);
 # the WORDS are written fresh by the same $0 provider pool her replies use
 # (speech.generate_proactive_line), grounded + screened + deduped. No

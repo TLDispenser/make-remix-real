@@ -439,6 +439,12 @@ async def _deliver_proactive(line: dict) -> None:
         if lead:
             look = lead
             print("remix-brain: gazing toward the stuck app")
+    elif line.get("aim"):
+        # a window she just watched open: her eyes flick to it first
+        lead = awareness.gaze_toward(line["aim"])
+        if lead:
+            look = lead
+            print(f"remix-brain: gazing toward the new window ({line['aim']})")
     await ws_server.send(face.msg(look=look))
 
     beat_list = speech.beats(text)

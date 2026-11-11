@@ -201,6 +201,37 @@ class ParseTests(unittest.TestCase):
         self.assertIsNone(awareness.read_plugged("/nonexistent-sysfs"))
 
 
+# ------------------------------------------------------- open apps (events)
+
+class OpenAppsTests(unittest.TestCase):
+    def test_open_apps_of_lists_classes_and_excludes_herself(self):
+        clients = [
+            {"app": "kitty", "title": "htop"},
+            {"app": "kitty", "title": "second window"},   # dedup by class
+            {"app": "Remix", "title": "Remix"},           # she is not an event
+            {"app": "", "title": "junk row"},             # no class -> nothing
+        ]
+        self.assertEqual(["kitty"], awareness.open_apps_of(clients))
+        self.assertEqual([], awareness.open_apps_of([]))
+
+    def test_open_apps_lands_in_the_snapshot(self):
+        awareness.reset_for_test()
+        clients = [{"app": "kitty", "title": "t", "x": 0, "y": 0, "w": 10,
+                    "h": 10, "ws": 1, "ws_name": "1", "monitor": 0,
+                    "floating": False, "pinned": False, "focused": True,
+                    "fullscreen": False}]
+        with mock.patch.object(awareness, "_hyprctl", return_value="[]"):
+            # no clients text is handled above; go through the real observe
+            with mock.patch.object(awareness, "config") as cfg:
+                cfg.SURROUNDINGS = False
+                cfg.APP_EVENTS = True
+                with mock.patch.object(awareness, "parse_clients_json",
+                                       return_value=clients):
+                    awareness._observe_around(1000.0)
+        self.assertEqual(["kitty"], awareness.current()["open_apps"])
+        awareness.reset_for_test()
+
+
 # ------------------------------------------------------------ idle tracking
 
 class IdleTrackingTests(unittest.TestCase):
@@ -362,6 +393,48 @@ class ProactiveTests(unittest.TestCase):
         e.tick(dict(AWAY, plugged=False), {}, now=1000.0)
         line = e.tick(dict(AWAY, plugged=True), {}, now=1010.0)
         self.assertEqual("plugged", line["trigger"])
+
+    def test_app_opened_and_closed_edges(self):
+        e = self.eng()
+        e.greeted = True
+        base = dict(AWAY, idle_s=10.0)
+        # first tick primes the open set: what's already open is not news
+        self.assertIsNone(e.tick(dict(base, open_apps=["firefox", "kitty"]),
+                                 {}, now=1000.0))
+        # a NEW class opens -> app_opened, aimed at it, named in the seed
+        plan = e.tick(dict(base, open_apps=["firefox", "kitty", "zathura"]),
+                      {}, now=1010.0)
+        self.assertEqual("app_opened", plan["trigger"])
+        self.assertEqual("zathura", plan["aim"])
+        self.assertIn("zathura", plan["situation"])
+        self.assertIn(plan["stance"], proactive.STANCE_CHOICES["app_opened"])
+        # the per-trigger cooldown swallows another opening right away
+        self.assertIsNone(e.tick(dict(
+            base, open_apps=["firefox", "kitty", "zathura", "thunar"]),
+            {}, now=1020.0))
+        # a batch change (session restore) is noise, not news
+        self.assertIsNone(e.tick(dict(base, open_apps=[f"a{i}" for i in range(5)]),
+                                 {}, now=1030.0))
+        # closing fires its own trigger, with no window to glance at
+        e2 = self.eng()
+        e2.greeted = True
+        self.assertIsNone(e2.tick(dict(base, open_apps=["kitty"]), {}, now=1000.0))
+        plan = e2.tick(dict(base, open_apps=[]), {}, now=1010.0)
+        self.assertEqual("app_closed", plan["trigger"])
+        self.assertIn("kitty", plan["situation"])
+        self.assertIsNone(plan["aim"])
+
+    def test_app_opened_needs_the_user_at_the_keyboard(self):
+        e = self.eng()
+        e.greeted = True
+        base = dict(AWAY, open_apps=["kitty"])
+        e.tick(base, {}, now=1000.0)
+        # she noticed the change while they are away: she stays quiet
+        self.assertIsNone(e.tick(dict(base, open_apps=["kitty", "zathura"],
+                                      idle_s=600.0), {}, now=1010.0))
+        # and the event is eaten, not replayed when they return
+        self.assertIsNone(e.tick(dict(base, open_apps=["kitty", "zathura"],
+                                      idle_s=10.0), {}, now=2000.0))
 
     def test_muted_long_nag(self):
         e = self.eng()

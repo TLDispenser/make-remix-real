@@ -2,6 +2,8 @@
 #
 # Senses (all fail-soft; anything unknown is just absent from the snapshot):
 #   active window  `hyprctl activewindow -j` -> the app CLASS + fullscreen flag
+#   open apps      `hyprctl clients -j` -> which program CLASSES are open
+#                  (launch/close edges for Proactive; classes only, no titles)
 #   user idle      `hyprctl cursorpos` polling; cursor or app change = activity.
 #                  Limit: a keyboard-only stretch with no window change reads as
 #                  idle — accepted, documented, tune via REMIX_AWARENESS_INTERVAL_S.
@@ -48,6 +50,7 @@ _state = {
     "app_since": None,    # monotonic time the current app took focus
     "up_s": 0.0,          # brain session age
     "at": 0.0,            # monotonic time of this snapshot
+    "open_apps": None,    # sorted CLASSES of every open window (no titles)
     "around": None,       # surroundings: {self, windows, elsewhere}
 }
 _last_cursor = None
@@ -523,9 +526,29 @@ def _observe_window(now: float) -> None:
         _state.pop("title", None)
 
 
+def open_apps_of(clients: list) -> list:
+    """Pure: parsed clients -> sorted CLASSES of every open window (herself
+    excluded). The raw material for launch/close edges: which programs are
+    running, no titles, no geometry."""
+    classes = {c["app"] for c in clients
+               if c.get("app") and not is_self(c["app"], c.get("title", ""))}
+    return sorted(classes)
+
+
 def _observe_around(now: float) -> None:
-    """Poll every window + (cached) monitors -> her surroundings."""
+    """Poll every window + (cached) monitors -> her surroundings AND the
+    open-app list the launch/close edges diff against."""
     global _monitors, _monitors_at
+    if not (config.SURROUNDINGS or config.APP_EVENTS):
+        _state["around"] = None
+        _state["open_apps"] = None
+        return
+    raw = _hyprctl(["clients", "-j"])
+    if raw is None:
+        return                         # not Hyprland / hiccup: keep last view
+    clients = parse_clients_json(raw)
+    if config.APP_EVENTS:
+        _state["open_apps"] = open_apps_of(clients)
     if not config.SURROUNDINGS:
         _state["around"] = None
         return
@@ -533,10 +556,7 @@ def _observe_around(now: float) -> None:
         mons = parse_monitors_json(_hyprctl(["monitors", "-j"]) or "")
         if mons:
             _monitors, _monitors_at = mons, now
-    raw = _hyprctl(["clients", "-j"])
-    if raw is None:
-        return                         # not Hyprland / hiccup: keep last view
-    _state["around"] = build_around(parse_clients_json(raw), _monitors,
+    _state["around"] = build_around(clients, _monitors,
                                     redactor=redact,
                                     max_n=config.SURROUNDINGS_MAX)
 
@@ -608,6 +628,8 @@ def describe(aware: dict | None = None) -> str:
     bits.append("quiet" if s.get("muted") else "audible")
     head = " ".join(bits)
     extra = describe_around(s.get("around"))
+    if s.get("open_apps"):
+        extra = extra + [f"open now: {', '.join(s['open_apps'])}"]
     return head + ("".join(f"\n  · {x}" for x in extra) if extra else "")
 
 
@@ -624,7 +646,7 @@ def reset_for_test() -> None:
     _state.update(around=None, app=None, fullscreen=False, self_focused=False,
                   idle_s=None, plugged=None,
                   muted=None, muted_s=None, app_since=None,
-                  up_s=0.0, at=0.0)
+                  up_s=0.0, at=0.0, open_apps=None)
     _state.pop("title", None)
     _last_cursor = None
     _last_app = None
