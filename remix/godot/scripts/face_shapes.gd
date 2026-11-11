@@ -85,7 +85,7 @@ static func all() -> Dictionary:
 			"mouth": PackedVector2Array([Vector2(-139.092, 275.216), Vector2(-70.123, 275.216), Vector2(-2.534, 275.216), Vector2(68.401, 275.216), Vector2(139.092, 275.216), Vector2(139.092, 253.892), Vector2(68.401, 253.892), Vector2(-2.534, 253.892), Vector2(-70.123, 253.892), Vector2(-139.092, 253.892)]),
 			"has_mouth": true,
 			"eye_outline": 0,
-			"lines": [[Vector2(-335.184, 118.338), Vector2(-367.822, 181.554), 6], [Vector2(-295.8, 118.338), Vector2(-328.439, 181.554), 6], [Vector2(-256.417, 118.338), Vector2(-289.055, 181.554), 6], [Vector2(-217.033, 118.338), Vector2(-249.671, 181.554), 6], [Vector2(-177.65, 118.338), Vector2(-210.288, 181.554), 6], [Vector2(171.993, 118.338), Vector2(204.631, 181.554), 6], [Vector2(211.377, 118.338), Vector2(244.015, 181.554), 6], [Vector2(250.76, 118.338), Vector2(283.399, 181.554), 6], [Vector2(290.144, 118.338), Vector2(322.782, 181.554), 6], [Vector2(329.528, 118.338), Vector2(362.166, 181.554), 6]],
+			"lines": [],
 			"props": [],
 			"jitter": 0,
 		},
@@ -130,3 +130,19 @@ static func all() -> Dictionary:
 			"jitter": 0,
 		},
 	}
+
+static func blush() -> Array:
+	# Global cheek hatching (.cls-6 in the SVG): worn in every pose,
+	# faded by the app's blush toggle. Empty if no SVG carries it.
+	return [
+		[Vector2(-335.184, 118.338), Vector2(-367.822, 181.554), 6],
+		[Vector2(-295.8, 118.338), Vector2(-328.439, 181.554), 6],
+		[Vector2(-256.417, 118.338), Vector2(-289.055, 181.554), 6],
+		[Vector2(-217.033, 118.338), Vector2(-249.671, 181.554), 6],
+		[Vector2(-177.65, 118.338), Vector2(-210.288, 181.554), 6],
+		[Vector2(171.993, 118.338), Vector2(204.631, 181.554), 6],
+		[Vector2(211.377, 118.338), Vector2(244.015, 181.554), 6],
+		[Vector2(250.76, 118.338), Vector2(283.399, 181.554), 6],
+		[Vector2(290.144, 118.338), Vector2(322.782, 181.554), 6],
+		[Vector2(329.528, 118.338), Vector2(362.166, 181.554), 6],
+	]

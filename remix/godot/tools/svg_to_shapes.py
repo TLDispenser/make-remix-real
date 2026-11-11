@@ -19,12 +19,14 @@ Per pose the generator extracts:
   left_eye, right_eye, mouth   10 points each, relative to screen center
   eye_fill / eye_stroke        filled eyes vs. outline eyes (Spooked)
   lines                        thin extra strokes, any count (Spooked 4,
-                               Tired 4, Bashful 10 blush, Scribble knot 21)
+                               Tired 4, Scribble knot 21)
+  blush                        the BLUSH UNIT: .cls-6 strokes emitted once
+                               as a top-level overlay worn in EVERY pose
+                               (Bashful's cheek hatching)
   props                        the PROP UNIT: extra polygons that ride with
                                the eyes but are neither eye nor mouth
-                               (.cls-4 = static, .cls-5 = spins; Bashful's
-                               blush could live here, Thunking's loading
-                               spinner does), placed absolutely
+                               (.cls-4 = static, .cls-5 = spins; Thunking's
+                               loading spinner), placed absolutely
   jitter                       per-stroke-endpoint teleport radius (JITTER,
                                Scribble's pulsing knot)
 Coordinates are in the SVG's 1920x1080 design space, shifted so (0,0) is the
@@ -119,6 +121,7 @@ def center_units(p):
     p["left_eye"] = [(round(x - ex, 3), y) for x, y in p["left_eye"]]
     p["right_eye"] = [(round(x - ex, 3), y) for x, y in p["right_eye"]]
     p["lines"] = [((round(a[0] - ex, 3), a[1]), (round(b[0] - ex, 3), b[1]), w) for a, b, w in p["lines"]]
+    p["blush"] = [((round(a[0] - ex, 3), a[1]), (round(b[0] - ex, 3), b[1]), w) for a, b, w in p["blush"]]
     mx = [q[0] for q in p["mouth"]]
     mc = (min(mx) + max(mx)) / 2
     p["mouth"] = [(round(x - mc, 3), y) for x, y in p["mouth"]]
@@ -135,6 +138,7 @@ def shift_y(p, dy):
     p["right_eye"] = [(x, round(y + dy, 3)) for x, y in p["right_eye"]]
     p["mouth"] = [(x, round(y + dy, 3)) for x, y in p["mouth"]]
     p["lines"] = [((a[0], round(a[1] + dy, 3)), (b[0], round(b[1] + dy, 3)), w) for a, b, w in p["lines"]]
+    p["blush"] = [((a[0], round(a[1] + dy, 3)), (b[0], round(b[1] + dy, 3)), w) for a, b, w in p["blush"]]
     p["props"] = [{"pts": [(x, round(y + dy, 3)) for x, y in pr["pts"]], "spin": pr["spin"]} for pr in p["props"]]
 
 
@@ -170,6 +174,10 @@ def parse_pose(name: str) -> dict:
     # Kept out of `polys` so classify (which needs exactly 2 eye polygons and
     # an optional mouth) never sees them.
     STATIC_PROP, SPINNER_PROP = "cls-4", "cls-5"
+    # BLUSH UNIT: .cls-6 = the global cheek hatching. Unlike shape lines it
+    # belongs to the FACE, not to one pose: it is collected here and emitted
+    # once as a top-level overlay the engine wears in every pose.
+    BLUSH_CLASS = "cls-6"
     polys, props = [], []
     outline_of = {}
     for m in re.finditer(r'<polygon points="([^"]+)" class="([^"]+)"', svg):
@@ -181,13 +189,16 @@ def parse_pose(name: str) -> dict:
         sty = styles.get(cls, {})
         outline_of[id(pts)] = float(sty.get("stroke-width", "0")) if sty.get("fill") == "none" else 0.0
         polys.append(pts)
-    lines = []
+    lines, blush = [], []
     for m in re.finditer(
         r'<line x1="([\d.]+)" y1="([\d.]+)" x2="([\d.]+)" y2="([\d.]+)" class="([^"]+)"', svg
     ):
         x1, y1, x2, y2 = map(float, m.groups()[:4])
         w = float(styles.get(m.group(5), {}).get("stroke-width", "3"))
-        lines.append(((x1, y1), (x2, y2), w))
+        if m.group(5) == BLUSH_CLASS:
+            blush.append(((x1, y1), (x2, y2), w))
+        else:
+            lines.append(((x1, y1), (x2, y2), w))
     feats = classify(polys)
     has_mouth = "mouth" in feats
     eye_outline = min(outline_of[id(feats["left_eye"])], outline_of[id(feats["right_eye"])])
@@ -206,6 +217,7 @@ def parse_pose(name: str) -> dict:
         "mouth": [rel(p) for p in to_ribbon(feats["mouth"])] if has_mouth else None,
         "eye_outline": eye_outline,
         "lines": [(rel(a), rel(b), w) for a, b, w in lines],
+        "blush": [(rel(a), rel(b), w) for a, b, w in blush],
         # Props: absolute design coords (never re-centered horizontally), as
         # designed. Any point count — the engine triangulates; the spinner
         # ring is authored hub-symmetric so its bbox center is the true hub.
@@ -250,6 +262,18 @@ def emit(poses: dict) -> str:
         out.append("\t\t},")
     out.append("\t}")
     out.append("")
+    # The BLUSH UNIT: one overlay for the whole face, emitted from whichever
+    # pose authored it (Bashful's .cls-6 hatching). The engine wears it in
+    # EVERY pose; the app's blush toggle (KEY_B) fades it in and out.
+    blush = next((p["blush"] for p in poses.values() if p["blush"]), [])
+    out.append("static func blush() -> Array:")
+    out.append("\t# Global cheek hatching (.cls-6 in the SVG): worn in every pose,")
+    out.append("\t# faded by the app's blush toggle. Empty if no SVG carries it.")
+    out.append("\treturn [")
+    for a, b, w in blush:
+        out.append(f"\t\t[{v(a)}, {v(b)}, {w:g}],")
+    out.append("\t]")
+    out.append("")
     return "\n".join(out)
 
 
@@ -281,7 +305,7 @@ def main():
     print(f"wrote {OUT.relative_to(ROOT)}: {len(poses)} poses")
     for name, p in poses.items():
         print(f"  {name:8s} outline={p['eye_outline']:g} lines={len(p['lines'])} "
-              f"props={len(p['props'])} jitter={p['jitter']:g} mouth_drawn={p['has_mouth']}")
+              f"blush={len(p['blush'])} props={len(p['props'])} jitter={p['jitter']:g} mouth_drawn={p['has_mouth']}")
 
 
 if __name__ == "__main__":

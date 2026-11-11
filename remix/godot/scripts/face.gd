@@ -67,6 +67,7 @@ var _sc := {
 	"mouth": [1.0, 0.0, 1.0],      # mouth opacity (Spooked hides it when silent)
 	"lines": [0.0, 0.0, 0.0],      # extra line strokes opacity
 	"props": [0.0, 0.0, 0.0],      # prop polygons opacity (thunk's spinner)
+	"blush": [1.0, 0.0, 1.0],      # GLOBAL cheek hatching (the blush toggle)
 }
 var _ln_a := PackedVector2Array()
 var _ln_b := PackedVector2Array()
@@ -83,6 +84,19 @@ var _ln_w := PackedFloat32Array()
 var _ln_f := PackedFloat32Array()      # live alpha per stroke (0..1)
 var _ln_ft := PackedFloat32Array()     # where each stroke's alpha is headed
 
+# BLUSH UNIT: the global cheek hatching (FaceShapes.blush(), authored in
+# Bashful's SVG as .cls-6). It belongs to the FACE, not to any pose: it
+# rides the eye unit's drift in every expression and never changes shape,
+# so it needs no retarget — only its channel fades, which is what the
+# app's blush toggle (KEY_B) drives.
+var _bl_a := PackedVector2Array()      # current endpoints
+var _bl_b := PackedVector2Array()
+var _bl_va := PackedVector2Array()     # endpoint velocities
+var _bl_vb := PackedVector2Array()
+var _bl_tgt_a := PackedVector2Array()  # settled endpoints (== authored)
+var _bl_tgt_b := PackedVector2Array()
+var _bl_w := PackedFloat32Array()      # stroke widths
+
 # PROP UNIT: geometry rides with the eye unit, but no springs — the spinner is
 # rigid, so it rotates directly (a spring would wobble it out of round).
 var _pr_base: Array[PackedVector2Array] = []   # authored points, rel design space
@@ -93,7 +107,7 @@ var _jit_r := 0.0                              # stroke teleport radius (0 = set
 var _jit_node := PackedInt32Array()            # endpoint index -> joint node id
 var _jit_o := PackedVector2Array()             # live offset, ONE per joint node
 var _jit_t := PackedFloat32Array()             # seconds until each node rerolls
-var _blush_on := true                          # bashful's cheek hatching toggle
+var _blush_on := true                          # global cheek hatching toggle
 
 var _eye_off := Vector2.ZERO
 var _eye_off_v := Vector2.ZERO
@@ -128,6 +142,16 @@ func _ready() -> void:
 	_cur["mouth"] = PackedVector2Array(m_src["mouth"])
 	_vel["mouth"] = _zeros(POINTS)
 	_tgt["mouth"] = PackedVector2Array(m_src["mouth"])
+	# The blush overlay never morphs: settle its springs on the authored
+	# strokes once and leave them there.
+	for l in FaceShapes.blush():
+		_bl_a.append(l[0])
+		_bl_b.append(l[1])
+		_bl_va.append(Vector2.ZERO)
+		_bl_vb.append(Vector2.ZERO)
+		_bl_tgt_a.append(l[0])
+		_bl_tgt_b.append(l[1])
+		_bl_w.append(float(l[2]))
 	_blink_in = _next_blink_gap()
 	_twitch_in = randf_range(10.0, 25.0)
 
@@ -242,6 +266,7 @@ func snapshot() -> Dictionary:
 		"look": look, "eye_off": _eye_off, "mouth_off": _mouth_off,
 		"level": level, "mouth_alpha": _sc["mouth"][0], "fill": _sc["fill"][0],
 		"outline": _sc["outline"][0], "lines": _sc["lines"][0], "props": _sc["props"][0],
+		"blush": _sc["blush"][0],
 		"blink_scale": _blink_scale(), "mouth_width": _mouth_width(),
 		"mouth_height": _mouth_height(), "mouth_open_scale": _mouth_open_scale(),
 	}
@@ -330,7 +355,7 @@ func _home_y(pts: PackedVector2Array) -> float:
 	return ys[2]
 
 
-## Stroke count varies per shape (blush 10, spooked 4, scribble's knot 21), so
+## Stroke count varies per shape (spooked 4, scribble's knot 21), so
 ## the stroke arrays grow to fit. Returns how many entries were just appended
 ## (brand-new strokes must "draw on" instead of sliding in from off-screen).
 func _ensure_lines(n: int) -> int:
@@ -348,13 +373,11 @@ func _ensure_lines(n: int) -> int:
 	return _ln_a.size() - old
 
 
-## Blush toggle: off hides the cheek hatching (bashful eyes draw their blush
-## through the stroke channel; no other shape is affected). Retargets the
-## stroke channel directly — a full _retarget(false) wouldn't even call
-## _retarget_lines (that's eye-change-gated).
+## Blush toggle: the hatch is a GLOBAL overlay — it fades out of every pose
+## when off and back into every pose when on (KEY_B in the app).
 func set_blush(on: bool) -> void:
 	_blush_on = on
-	_retarget_lines(_shapes[_ecfg()["src"]])
+	_scalar_target("blush", 1.0 if on else 0.0)
 
 
 func toggle_blush() -> bool:
@@ -384,8 +407,7 @@ func _retarget_lines(shape: Dictionary) -> void:
 			_jit_node[2 * i + e] = joints[pt]
 	for i in range(2 * lines.size(), _jit_node.size()):
 		_jit_node[i] = 0   # dead slots lie collapsed; node 0 keeps them put
-	var blush_off_here := (not _blush_on) and bool(_ecfg().get("blush", false))
-	if lines.is_empty() or blush_off_here:
+	if lines.is_empty():
 		# Retract in place while fading out.
 		for i in _ln_a.size():
 			var mid := (_ln_a[i] + _ln_b[i]) * 0.5
@@ -476,6 +498,13 @@ func _process(delta: float) -> void:
 		_ln_a[i] += _ln_va[i] * delta
 		_ln_b[i] += _ln_vb[i] * delta
 		_ln_f[i] = move_toward(_ln_f[i], _ln_ft[i], delta * 4.0)
+	# Blush springs: already settled on the authored strokes; they only exist
+	# so the overlay can be born smooth.
+	for i in _bl_a.size():
+		_bl_va[i] += ((_bl_tgt_a[i] - _bl_a[i]) * stiffness - _bl_va[i] * damping) * delta
+		_bl_vb[i] += ((_bl_tgt_b[i] - _bl_b[i]) * stiffness - _bl_vb[i] * damping) * delta
+		_bl_a[i] += _bl_va[i] * delta
+		_bl_b[i] += _bl_vb[i] * delta
 
 	# Scalar springs.
 	for key in _sc:
@@ -698,6 +727,20 @@ func _draw() -> void:
 				_xf_point(b, eye_off, Vector2(0.0, eye_cy), Vector2(1.0, sy)),
 				_alpha(lc, _ln_f[i]),
 				maxf(_ln_w[i], 1.0), true
+			)
+
+	# ---- blush unit: the GLOBAL cheek hatching. Rides the eye unit's drift
+	# (gaze, tremble) so it stays on her face, but NOT the blink squash —
+	# cheeks aren't eyelids; a blink must not yank them upward. One channel,
+	# faded by the app's blush toggle (KEY_B), worn in every pose.
+	var blush_a: float = _sc["blush"][0]
+	if blush_a > 0.01:
+		var bc := _alpha(col, blush_a)
+		for i in _bl_a.size():
+			draw_line(
+				_bl_a[i] + eye_off,
+				_bl_b[i] + eye_off,
+				bc, maxf(_bl_w[i], 1.0), true
 			)
 
 	# ---- mouth unit: the ENTIRE mouth opens with sound (uniformly, per rung)

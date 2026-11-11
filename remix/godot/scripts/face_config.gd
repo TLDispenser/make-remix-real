@@ -17,11 +17,13 @@
 # geometry that rides with the eyes but is neither eye nor mouth. Thunking
 # carries a loading wheel in the corner (ONE ring band, .cls-5, spinning
 # about its own bbox center). Strokes ("lines", any count) ride with the
-# eyes too: bashful's blush hatching, scribble's knot — whose joints teleport
-# per the shape's "jitter" radius (the knot stays ONE connected scribble;
-# shared endpoints move together). Bashful's eyes carry "blush": true, which
-# lets the app's blush toggle (KEY_B) retract just the hatching. Edit shapes
-# in the SVGs, not here; re-run tools/svg_to_shapes.py.
+# eyes too: tired's under-eye bags, spooked's speed lines, scribble's knot —
+# whose joints teleport per the shape's "jitter" radius (the knot stays ONE
+# connected scribble; shared endpoints move together). Separately, any SVG
+# may tag strokes .cls-6: the GLOBAL blush overlay (bashful's cheek
+# hatching), which the engine wears in EVERY pose and the app's blush
+# toggle (KEY_B) fades in and out. Edit shapes in the SVGs, not here;
+# re-run tools/svg_to_shapes.py.
 #
 # All distances are SVG design-space pixels (the 1920x1080 canvas).
 #
@@ -91,11 +93,8 @@ const EYES := {
 	"tsun": {"src": "tsun", "range": Vector2(30, 20), "blink": true,
 		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0, "twitch": false},
 	# ---- from the reference folder ----
-	# bashful's blush flag: its stroke list IS the cheek hatching, so the
-	# app's blush toggle (KEY_B) retracts exactly those strokes.
 	"bashful": {"src": "bashful", "range": Vector2(60, 40), "blink": true,
-		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0, "twitch": false,
-		"blush": true},
+		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0, "twitch": false},
 	"thunk": {"src": "thunk", "range": Vector2(30, 15), "blink": false,
 		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0, "twitch": false},
 	"scribble": {"src": "scribble", "range": Vector2(25, 15), "blink": false,

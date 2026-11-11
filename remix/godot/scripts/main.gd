@@ -490,6 +490,7 @@ func _rescale(step: float) -> void:
 #   hold F2      push-to-talk (fallback when no global hotkey is bound; the
 #                brain does the recording, this only sends start/stop)
 #   F4/F5 mouth, F6/F7 eyes, F8/F9 pose shortcut, F10 twitch   (debug cycling)
+#   B            blush overlay on/off (global)
 func _input(event: InputEvent) -> void:
 	if not (event is InputEventKey):
 		return

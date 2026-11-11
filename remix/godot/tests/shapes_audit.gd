@@ -3,8 +3,10 @@ extends SceneTree
 #   godot --headless --path . --script res://tests/shapes_audit.gd
 # Every pose: 10 finite points per eye/mouth, a config entry, both eyes mirror
 # each other's point layout (same rung order), and legal prop/jitter data.
-# Strokes ("lines") are variable count: spooked 4, blush 10, scribble's 21-seg
-# knot; props are the extra polygons riding with the eyes (thunk's spinner).
+# Strokes ("lines") are variable count: spooked 4, tired 4, scribble's
+# 21-segment knot; the GLOBAL blush overlay is separate (bashful's 10 hatch
+# strokes, worn in every pose); props are the extra polygons riding with the
+# eyes (thunk's spinner).
 
 func _initialize() -> void:
 	var bad := 0
@@ -43,6 +45,14 @@ func _initialize() -> void:
 		var r: PackedVector2Array = s["right_eye"]
 		if not (l[0].x < 0.0 and r[0].x > 0.0):
 			print("FAIL %s eye rung order is not mirrored" % pose_name); bad += 1
+	for l: Array in FaceShapes.blush():
+		var ba: Vector2 = l[0]
+		var bb: Vector2 = l[1]
+		if not (is_finite(ba.x) and is_finite(ba.y) and is_finite(bb.x) and is_finite(bb.y)) \
+				or float(l[2]) <= 0.0:
+			print("FAIL the global blush overlay has a bad stroke"); bad += 1
+	if FaceShapes.blush().is_empty():
+		print("FAIL no global blush overlay (expected bashful's 10 hatch strokes)"); bad += 1
 	for e: String in FaceConfig.EYES:
 		if not shapes.has(FaceConfig.EYES[e]["src"]):
 			print("FAIL eyes %s -> missing shape %s" % [e, FaceConfig.EYES[e]["src"]]); bad += 1

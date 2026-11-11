@@ -228,39 +228,43 @@ func _initialize() -> void:
 		seam_gap = maxf(seam_gap, face._ln_b[i].distance_to(face._ln_a[i + 1]))
 	check(seam_gap < 1.0, "strokes share their joints on the knot (max seam %.2f px < 1)" % seam_gap)
 
-	# 12) blush toggle: bashful's cheek hatching retracts when blush is off
-	#     and comes back when on (other shapes never lose their strokes).
-	face.set_pose("bashful"); step(120)
-	check(face.snapshot()["lines"] > 0.98, "bashful shows the blush hatching")
+	# 12) blush is GLOBAL: the cheek hatching is its own overlay worn in
+	#     every pose; the toggle fades it everywhere and touches nothing else.
+	face.set_pose("default"); step(120)
+	check(face.snapshot()["blush"] > 0.98, "the blush overlay is worn in default (global)")
+	check(face._bl_a.size() == 10, "the overlay carries 10 hatch strokes (%d)" % face._bl_a.size())
 	face.set_blush(false); step(120)
-	check(face.snapshot()["lines"] < 0.02, "blush off retracts the hatching")
-	face.set_pose("tired"); step(120)
-	check(face.snapshot()["lines"] > 0.98, "tired's under-eye lines ignore the blush toggle")
+	check(face.snapshot()["blush"] < 0.02, "blush off fades the overlay")
 	face.set_pose("bashful"); step(120)
-	check(face.snapshot()["lines"] < 0.02, "blush stays off across poses")
+	check(face.snapshot()["blush"] < 0.02, "blush stays off across poses")
+	check(face.snapshot()["lines"] < 0.02, "bashful's eyes carry no strokes of their own anymore")
+	face.set_pose("tired"); step(120)
+	check(face.snapshot()["blush"] < 0.02, "blush still off in tired")
+	check(face.snapshot()["lines"] > 0.98, "tired's under-eye bags are unaffected by the toggle")
 	face.set_blush(true); step(120)
-	check(face.snapshot()["lines"] > 0.98, "blush on brings the hatching back")
+	check(face.snapshot()["blush"] > 0.98, "blush on brings the hatching back")
+	face.set_pose("default"); step(120)
+	check(face.snapshot()["blush"] > 0.98, "blush on persists across poses")
 
 	# 13) DEAD STROKES DIE: a stroke the new eyes don't use must fade out,
 	#     not sit on screen forever as a dot. The array is a superset sized
 	#     for the biggest shape seen, and the channel alpha is shared by
 	#     everything in it — so each stroke carries its own fade on top.
-	face.set_pose("bashful"); step(120)
+	face.set_face("scribble", "none"); step(120)
 	check(face._ln_f.size() == face._ln_a.size(), "every stroke slot has a fade value")
-	check(face.snapshot()["lines"] > 0.98, "bashful's hatching is live before the swap")
-	face.set_face("tired", ""); step(120)   # 10 hatch strokes -> 4 bag strokes
+	check(face.snapshot()["lines"] > 0.98, "scribble's knot is live before the swap")
+	face.set_face("tired", ""); step(120)   # 21 knot strokes -> 4 bag strokes
 	check(face.snapshot()["lines"] > 0.98, "tired's own strokes keep the channel up")
 	for i in 4:
 		check(face._ln_f[i] > 0.98, "bag stroke %d stays live" % i)
 	for i in range(4, face._ln_a.size()):
-		check(face._ln_f[i] < 0.01, "dead hatch stroke %d faded out (%.3f)" % [i, face._ln_f[i]])
-		check(face._ln_a[i].distance_squared_to(face._ln_b[i]) < 0.25,
-				"dead hatch stroke %d collapsed shut" % i)
-	face.set_face("scribble", "none"); step(120)
-	face.set_face("spooked", "none"); step(120)   # 21 knot strokes -> 4
-	check(face.snapshot()["lines"] > 0.98, "spooked's strokes keep the channel up")
-	for i in range(4, face._ln_a.size()):
 		check(face._ln_f[i] < 0.01, "dead knot stroke %d faded out (%.3f)" % [i, face._ln_f[i]])
+		check(face._ln_a[i].distance_squared_to(face._ln_b[i]) < 0.25,
+				"dead knot stroke %d collapsed shut" % i)
+	face.set_face("scribble", "none"); step(120)
+	face.set_face("spooked", "none"); step(120)   # 21 -> 4 again, other geometry
+	for i in range(4, face._ln_a.size()):
+		check(face._ln_f[i] < 0.01, "dead knot stroke %d faded into spooked (%.3f)" % [i, face._ln_f[i]])
 
 	await process_frame
 	print("ENGINE_%s fails=%d poses=%d mixes=%d" % ["OK" if fails == 0 else "FAILED", fails, names.size(), mixes])
