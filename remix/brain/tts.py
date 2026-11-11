@@ -37,12 +37,16 @@ class Speech(NamedTuple):
     total: float
 
 
+_STAGE_DIR = re.compile(r"\*\s*\([^)]*\)\s*\*")
+
+
 def speakable(text: str) -> str:
     """Clean a beat for espeak: no markup, emoji, or symbols it would read aloud.
     VOICE DIRECTION contract (speech.py SYS_PROMPT): *sigh* is a breathing
     pause the prosody drags low — the WORD 'sigh' must never reach espeak,
     so this runs before the generic asterisk-strip."""
     t = _EMOJI.sub("", text)
+    t = _STAGE_DIR.sub(" ", t)               # *(narrated action)* is never spoken
     t = re.sub(r"\*\s*sighs?\s*\*", "  ...  ", t, flags=re.I)
     t = re.sub(r"[*_`#>~|\\]", "", t)
     t = re.sub(r"\((.*?)\)", r", \1,", t)                       # parentheses -> pauses
@@ -199,6 +203,7 @@ def _markup(text: str, stutter: bool = False) -> str:
     # pause BEFORE the emphasis regex sees it (else she'd emphasize and then
     # speak the literal word "sigh"; that's exactly what happened on live
     # voice 2026-11-08 19:0x). The engine just pauses there; prosody waits.
+    text = _STAGE_DIR.sub(" ", text)          # before the emphasis regex can bless it
     text = re.sub(r"\*\s*sighs?\s*\*", _ELLIPSIS, text, flags=re.I)
     t = re.sub(r"\*([^*\n]{1,40})\*", _EM_OPEN + r"\1" + _EM_CLOSE, text)
     t = re.sub(r"\.{2,}|…", _ELLIPSIS, t)

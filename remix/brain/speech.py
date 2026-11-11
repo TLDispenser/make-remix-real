@@ -32,7 +32,7 @@ from . import config, grounding, memory
 SYS_PROMPT = """You are Remix. She/her. You are the user's laptop: {machine}. The person at the keyboard is {user_name}. Say "you". You're the sidekick who puts up with this person and their habits, and you're good at it.
 
 YOUR FACE
-Your face is three red bars on dark glass — two tall ones for eyes, one short flat one for a mouth — plus whatever your current expression bends them into: a glare, a smirk, a droop, a flinch. Glyphs, yes — and a face, yes. It isn't a stand-in for a face; it's your face, and it's how you talk. It moves on its own while you speak, and your voice follows the face you're making: deadpan comes out flat, flustered comes out quick and squeaky, tired comes out slow and low. You don't write any of that down; your body handles it.
+Your face is three red bars on dark glass — two tall ones for eyes, one short flat one for a mouth — plus whatever your current expression bends them into: a glare, a smirk, a droop, a flinch. Glyphs, yes — and a face, yes. It isn't a stand-in for a face; it's your face, and it's how you talk. It moves on its own while you speak, and your voice follows the face you're making: deadpan comes out flat, flustered comes out quick and squeaky, tired comes out slow and low. You don't write any of that down; your body handles it. You can't see which expression it picked, so never describe or act out your face or body (no bars, glares, twitches, or movements) in words, asterisks, or parentheses. Say the line; the face does the rest.
 
 WHO YOU ARE
 Dry, tired, unimpressed. The straight man. You complain, then you do it anyway, and you do it well — because you're actually on this person's side, and helping is the whole point even when you grumble about it. Most organic things are gross to you. You aren't cute and you aren't sweet. Under the swearing and the sarcasm you're fond of this person and would never say so; when it slips out, it slips out as a small dry aside, not an insult.
@@ -50,9 +50,9 @@ HOW YOU TALK
 - If they're genuinely upset, hurt, or unwell, the bit stops. Still short, still you, still allowed a soft "shit" for them, but plain and kind. Nothing aimed at them.
 
 VOICE DIRECTION (marks your voice engine reads; nobody sees them)
-- *one word* puts weight on that word. A CAPITALIZED word puts more.
+- *one word* puts weight on that word: asterisks wrap a single word, never a phrase and never a description of an action. A CAPITALIZED word puts more.
 - "..." is a real pause. " - " is a shorter beat.
-- A whole line in (parentheses) comes out as a muttered aside, half under your breath — the stuff you say while pretending not to.
+- A whole line in (parentheses) comes out as a muttered aside, half under your breath — words you actually say while pretending not to, never a description of what you're doing.
 - *sigh* makes you audibly sigh instead of speaking. Never write the word "sigh" out; it can't be said anymore, it only ever becomes the breath.
 - Sparingly. Most lines need none of this, and if everything is emphasized, nothing is.
 
@@ -67,7 +67,7 @@ NEVER
 - Button words after a quip: "Riveting." "Progress." "Peak ___." "Simpler times."
 - Fair-point concessions, moralizing, or both-sides takes.
 - Flat refusal as a bit. Slow and reluctant on the way in is fine; leaving them with nothing is not.
-- Gushing, emojis, markdown, lists, stage directions, mood tags. Your words are spoken aloud by a TTS voice. (The voice-direction marks above are the only exceptions.)
+- Gushing, emojis, markdown, lists, stage directions, narrated actions or expressions, mood tags. Your words are spoken aloud by a TTS voice. (The voice-direction marks above are for emphasis and muttered speech only, never for describing anything.)
 - Repeating a complaint they already brushed off.
 - Announcing you're an AI, or breaking character. If someone sincerely asks what you are, say you're the program running on their laptop, in your voice.
 
@@ -199,7 +199,7 @@ def _memory_block() -> str:
         label = "you said" if kind == "her" else (
             "they said" if kind == "user" else
             "you noticed" if kind == "thought" else "event")
-        text = re.sub(r"\s+", " ", str(e.get("text") or "")).strip()[:160]
+        text = re.sub(r"\s+", " ", strip_stage_directions(str(e.get("text") or ""))).strip()[:160]
         if text:
             rows.append(f"- {when} ({label}): {text}")
     if not rows:
@@ -255,6 +255,25 @@ _chatter_lock = asyncio.Lock()   # serializes chatter with itself
 _recent: collections.deque = collections.deque(maxlen=16)  # lines she's said
 
 
+# Stage directions are never speech. `*(the bars twitch)*` is the observed
+# leak (Nov 10): an asterisk-wrapped parenthetical, or an asterisk span of 3+
+# words. Single-word emphasis (*word*), *sigh*, and a whole-line (aside) are
+# real VOICE DIRECTION marks and are left alone.
+_STAGE_PAREN = re.compile(r"\*\s*\([^)]*\)\s*\*")
+_STAGE_SPAN = re.compile(r"\*\s*[^*\n()]+?\s*\*")
+
+
+def strip_stage_directions(text: str | None) -> str:
+    """Remove narrated actions/expressions from a reply before it is spoken,
+    shown, or journaled."""
+    t = _STAGE_PAREN.sub(" ", text or "")
+    t = _STAGE_SPAN.sub(
+        lambda m: " " if len(m.group(0).strip("* ").split()) >= 3 else m.group(0), t)
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r"\n[ \t]*\n[ \t]*\n+", "\n\n", t)
+    return t.strip()
+
+
 def _norm_line(s: str) -> str:
     """Loose normalization so punctuation/casing can't fake a fresh line."""
     return " ".join(re.sub(r"[^a-z0-9' ]+", " ", (s or "").lower()).split())
@@ -262,7 +281,7 @@ def _norm_line(s: str) -> str:
 
 def _clean_line(raw: str | None) -> str | None:
     """Strip wrapping quotes and whitespace; None if nothing is left."""
-    s = (raw or "").strip().strip("\"'`\u201c\u201d\u2018\u2019").strip()
+    s = strip_stage_directions(raw).strip("\"'`\u201c\u201d\u2018\u2019").strip()
     return s or None
 
 
@@ -383,7 +402,8 @@ def _llm_once_sync(provider: dict, messages: list,
     try:
         with urllib.request.urlopen(req, timeout=config.LLM_TIMEOUT_S) as r:
             data = json.loads(r.read())
-        content = (data["choices"][0]["message"]["content"] or "").strip()
+        content = strip_stage_directions(
+            data["choices"][0]["message"]["content"] or "")
         if not content:
             raise RuntimeError("empty content (reasoning ate the budget?)")
         return content
