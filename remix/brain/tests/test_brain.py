@@ -14,7 +14,7 @@ from unittest import mock
 
 os.environ.setdefault("REMIX_TTS_DIR", tempfile.mkdtemp(prefix="remix-test-voice-"))
 
-from brain import config, faces, grounding, jev, main as brain_main, rules, speech, stt, tts  # noqa: E402
+from brain import config, decisions, faces, grounding, jev, main as brain_main, rules, speech, stt, tts  # noqa: E402
 from brain.faces import Face  # noqa: E402
 
 VITALS = {"cpu": 40, "ram": 60, "temp": 53, "battery": 80, "disk": 99}
@@ -34,14 +34,20 @@ def probs(**kw):
 class JevTests(unittest.TestCase):
     def setUp(self):
         self._saved = (config.JEV_ENABLED, config.JEV_API_KEY, config.JEV_MAX_PER_HOUR,
-                       config.JEV_COOLDOWN_S, jev._post)
+                       config.JEV_COOLDOWN_S, jev._post, config.DECISIONS_LOG,
+                       decisions._modes)
         config.JEV_ENABLED, config.JEV_API_KEY = True, "test"
         config.JEV_MAX_PER_HOUR, config.JEV_COOLDOWN_S = 60, 3.0
+        config.DECISIONS_LOG = False          # keep the suite out of the log file
+        decisions._modes.clear()
+        for _k in decisions.KINDS:
+            decisions._modes[_k] = "off"      # this suite predates the seam
         self.calls = []
 
     def tearDown(self):
         (config.JEV_ENABLED, config.JEV_API_KEY, config.JEV_MAX_PER_HOUR,
-         config.JEV_COOLDOWN_S, jev._post) = self._saved
+         config.JEV_COOLDOWN_S, jev._post, config.DECISIONS_LOG,
+         decisions._modes) = self._saved
 
     def fake(self, answers):
         def _post(url, key, body, timeout):
@@ -109,13 +115,19 @@ class JevTests(unittest.TestCase):
         self.fake(lambda b: {"stance": probs(flat=1.0), "eyes": probs(default=1.0), "mouth": probs(default=1.0),
                              "eyes1": probs(default=1.0), "mouth1": probs(default=1.0),
                              "eyes2": probs(tired=1.0), "mouth2": probs(default=1.0)})
-        j = jev.JevBrain(random.Random(0))
-        self.assertIsNotNone(run(j.react("x", VITALS)))
-        self.assertIsNone(run(j.act("x", ["only one."])))
-        self.assertEqual(len(self.calls), 1)
-        plan = run(j.act("x", ["a.", "b."]))                      # immediately after react
-        self.assertIsNotNone(plan)
-        self.assertEqual(len(self.calls), 2)
+        saved = dict(decisions._modes)
+        decisions._modes["judge_unseen"] = "off"   # no judge: one beat = no call
+        try:
+            j = jev.JevBrain(random.Random(0))
+            self.assertIsNotNone(run(j.react("x", VITALS)))
+            self.assertIsNone(run(j.act("x", ["only one."])))
+            self.assertEqual(len(self.calls), 1)
+            plan = run(j.act("x", ["a.", "b."]))                      # immediately after react
+            self.assertIsNotNone(plan)
+            self.assertEqual(len(self.calls), 2)
+        finally:
+            decisions._modes.clear()
+            decisions._modes.update(saved)
 
     def test_hourly_cap_counts_both_call_kinds_and_fails_soft(self):
         self.fake(lambda b: {"stance": probs(flat=1.0), "eyes": probs(default=1.0), "mouth": probs(default=1.0),

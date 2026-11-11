@@ -13,7 +13,7 @@ import socket as _socket
 import threading
 import time
 
-from . import audio, awareness, config, faces, jev, listening, memory, proactive, rules, speech, stt, tts, vitals, ws_server
+from . import audio, awareness, config, decisions, faces, jev, listening, memory, proactive, rules, speech, stt, tts, vitals, ws_server
 from .faces import NEUTRAL, Face
 
 _rule: rules.RuleBrain | None = None
@@ -335,10 +335,17 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
         decision = await _jev.react(text, _latest_snapshot)
     if decision:
         face, stance = decision.face, decision.stance
+        decisions.log("react", "-", jev=decision.stance_name,
+                      confidence=decision.confidence, used="jev",
+                      local="rules.guess_face",
+                      extra=f"face={decision.face}"
+                            + (" (cached)" if decision.from_cache else ""))
     else:
         face, stance = faces.guess_face(text), None   # $0 fallback
         if _jev:
             _jev.note_face(face)
+        decisions.log("react", "-", jev=None, used="local",
+                      local=f"rules.guess_face -> {face}")
     # (5) she looks toward whichever visible window the human just named
     # (any window on her screen, not only the focused one) — or toward the
     # side they ask about ("which one is to your right?").
@@ -370,7 +377,10 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
     # expressive voice on, the voice FOLLOWS the faces she is about to make, so the
     # plan comes first (espeak is quick); with it off they run in parallel as before.
     beat_list = speech.beats(reply)
-    plan_coro = _jev.act(text, beat_list) if _jev else asyncio.sleep(0, None)
+    judge_on = decisions.mode("judge_unseen") != "off"
+    senses = grounding_senses(awareness.current(), _latest_snapshot)
+    plan_coro = (_jev.act(text, beat_list, senses=senses)
+                 if _jev else asyncio.sleep(0, None))
     tag = f"p{_seq + 1}"
     if config.TTS_EXPRESSIVE and tts.available():
         plan = await plan_coro
@@ -385,6 +395,25 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
     if _jev and not plan:
         for f in face_list:
             _jev.note_face(f)
+    if _jev:
+        decisions.log("act", "-", jev="faces",
+                      used="jev" if plan else "local",
+                      local="_local_arc",
+                      extra=f"{[str(f) for f in face_list]}"
+                            + (f" unseen={plan.unseen:.2f}"
+                               if plan is not None
+                               and plan.unseen is not None else ""))
+    # Grounding judge (shadow): log the disagreement space, never act on it.
+    # The local word list still decided everything about this reply.
+    if judge_on and plan is not None and plan.unseen is not None:
+        local_problems = speech.grounding.check(
+            reply, text, "", _latest_snapshot, awareness.current())
+        verdict = ("clean" if not local_problems
+                   else "flagged: " + "; ".join(local_problems[:3]))
+        agree = (plan.unseen >= config.JEV_SPEAK_P) == bool(local_problems)
+        decisions.log("judge_unseen", decisions.mode("judge_unseen"),
+                      jev=f"{plan.unseen:.2f}", used="local", local=verdict,
+                      extra="agree" if agree else "DISAGREE")
 
     _seq += 1
     pid = f"t{_seq}"
@@ -410,6 +439,84 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
 
 # ------------------------------------------------- proactive lines (Phase 6)
 
+async def _decide_proactive(plan: dict) -> dict | None:
+    """The seam (Phase 2, plan 1.2 rule 3): silent life asks the left brain
+    what it would do — stance, whether to speak, in what form — strictly
+    INSIDE the caps the trigger engine already applied (no new schedule).
+    Modes per kind:
+      off    plan unchanged: today's local behavior (no call)
+      shadow Jev answers, the decision LOG reads it, the local pick ships
+      live   Jev ships; any failure/garbled answer falls back to local
+    Returns the (possibly amended) plan, or None when LIVE decides she
+    stays quiet this time."""
+    trigger = plan.get("trigger") or ""
+    active = {k: decisions.mode(k) for k in
+              ("proactive_stance", "should_speak", "form")
+              if decisions.mode(k) != "off"}
+    if not active or _jev is None or not config.JEV_ENABLED:
+        return plan
+    d = await _jev.decide_proactive(
+        trigger, plan.get("situation") or "",
+        list(proactive.STANCE_CHOICES.get(trigger, ["flat"])))
+    if d is None:                       # budget spent / call failed
+        for k, m in active.items():
+            decisions.log(k, m, jev=None, used="local",
+                          local=f"fallback: local behavior [{trigger}]")
+        return plan
+    m = active.get("proactive_stance")
+    if m:
+        local_stance = plan["stance"]
+        # re-validate against the local menu: garbage ships nothing
+        stance_ok = (d["stance"] in proactive.STANCE_CHOICES.get(trigger, []))
+        if m == "live" and stance_ok and d["stance"] != plan["stance"]:
+            plan["stance"] = d["stance"]
+            plan["face"] = proactive.STANCE_FACE.get(
+                d["stance"], plan["face"])
+        decisions.log("proactive_stance", m, jev=d["stance"],
+                      confidence=d["confidence"],
+                      used=("jev" if m == "live" and stance_ok else "local"),
+                      local=local_stance, extra=f"[{trigger}]")
+    m = active.get("should_speak")
+    if m and d["speak_p"] is not None:
+        wants = d["speak_p"] >= config.JEV_SPEAK_P
+        if m == "live" and not wants:
+            decisions.log("should_speak", m, jev=f"{d['speak_p']:.2f}",
+                          confidence=d["speak_confidence"], used="jev",
+                          local="would have spoken",
+                          extra=f"stayed quiet [{trigger}]")
+            return None
+        decisions.log("should_speak", m, jev=f"{d['speak_p']:.2f}",
+                      confidence=d["speak_confidence"],
+                      used=("jev" if m == "live" else "local"),
+                      local="speak", extra=f"[{trigger}]")
+    m = active.get("form")
+    if m and d["form"] in ("speak", "caption", "look", "quiet", "leave_note"):
+        if m == "live":
+            # leave_note needs the outbox (Phase 5); degrade to caption.
+            plan["form"] = ("caption" if d["form"] == "leave_note"
+                            else d["form"])
+        decisions.log("form", m, jev=d["form"],
+                      used=("jev" if m == "live" else "local"),
+                      local="speak", extra=f"[{trigger}]")
+    return plan
+
+
+async def _deliver_proactive_look(plan: dict) -> None:
+    """The `look` form: a face and a glance at what she noticed — no words,
+    no caption. Wordless presence, $0."""
+    face = plan.get("face")
+    if face is None:
+        return
+    look = plan.get("look")
+    if plan.get("trigger") == "app_stuck":
+        lead = awareness.gaze_toward()
+        look = lead or look
+    elif plan.get("aim"):
+        lead = awareness.gaze_toward(plan["aim"])
+        look = lead or look
+    await ws_server.send(face.msg(look=look or [0.0, -0.1]))
+    print(f"remix-brain: wordless reaction ({plan.get('trigger')})")
+
 def _chatter_uses_voice(audible: bool | None) -> bool:
     """REMIX_CHATTER_VOICE — whether an UNPROMPTED line gets espeak.
     never = captions only; always = talk regardless of the room; auto
@@ -420,6 +527,30 @@ def _chatter_uses_voice(audible: bool | None) -> bool:
     if config.CHATTER_VOICE == "always":
         return True
     return not audible
+
+def grounding_senses(aware: dict | None, vitals: dict | None) -> str:
+    """A compact plain-words list of what she can actually sense right now —
+    the state the grounding judge compares her reply against (plan 1.5)."""
+    aware, vitals = aware or {}, vitals or {}
+    bits = []
+    if aware.get("app"):
+        bits.append(f"the focused app is {aware['app']}")
+    around = aware.get("around") or {}
+    names = [w.get("app") for w in (around.get("windows") or [])
+             if w.get("app")]
+    if names:
+        bits.append("windows she can see around her: "
+                    + ", ".join(names[:6]))
+    for k, unit in (("cpu", "% cpu"), ("ram", "% ram"), ("temp", "°C core"),
+                    ("battery", "% battery"), ("disk", "% disk")):
+        v = vitals.get(k)
+        if v is not None:
+            try:
+                bits.append(f"{round(float(v))}{unit}")
+            except (TypeError, ValueError):
+                pass
+    return "; ".join(bits) or "nothing beyond her own vitals"
+
 
 async def _deliver_proactive(line: dict) -> None:
     """Say an unprompted line through the SAME pipeline as a reply: face,
@@ -454,7 +585,8 @@ async def _deliver_proactive(line: dict) -> None:
     spoken = (await tts.synthesize(
         beat_list, pid, faces=[face] * len(beat_list),
         strain=tts.strain_from(_latest_snapshot))
-        if _chatter_uses_voice(audible) else None)
+        if (_chatter_uses_voice(audible) and not line.get("mute_voice"))
+        else None)
     await ws_server.send({"type": "say", "text": text, "final": True,
                           "proactive": True})
     face_list = [face] * len(beat_list)          # $0 acting: one mood, gaze varies
@@ -506,6 +638,21 @@ async def proactive_loop() -> None:
             continue
         if not plan:
             continue
+        # The seam: what would the left brain do with this urge? (modes)
+        decided = await _decide_proactive(plan)
+        if decided is None:              # live mode chose silence
+            continue
+        plan = decided
+        form = plan.get("form") or "speak"
+        if form == "look":               # wordless: face + glance only
+            await _deliver_proactive_look(plan)
+            decisions.log("outcome", "-", jev=None, used="look",
+                          local="speak", extra=f"[{plan.get('trigger')}]")
+            continue
+        if form == "quiet":
+            decisions.log("outcome", "-", jev=None, used="quiet",
+                          local="speak", extra=f"[{plan.get('trigger')}]")
+            continue
         # Words, born in the moment: same pipeline family as a reply.
         started = time.monotonic()
         try:
@@ -529,7 +676,12 @@ async def proactive_loop() -> None:
             print(f"remix-brain: chatter [{plan.get('trigger')}] dropped — "
                   f"the human needs the room")
             continue
-        await _deliver_proactive({**plan, "text": text})
+        # caption form: text on screen, no voice (plan 1.4 form choice)
+        await _deliver_proactive({**plan, "text": text,
+                                  "mute_voice": form == "caption"})
+        decisions.log("outcome", "-", jev=None,
+                      used=("caption" if form == "caption" else "spoke"),
+                      local="speak", extra=f"[{plan.get('trigger')}]")
         if plan.get("urgent"):
             # she said her piece about being ignored; now flag the window
             await _set_urgent(True, plan.get("trigger") or "ignored")
@@ -574,6 +726,32 @@ async def _on_command(text: str) -> None:
         await ws_server.send({"type": "notice", "seconds": 4.0,
                               "text": f"// unprompted chatter: {state} //"})
         print(f"remix-brain: proactive chatter {state}")
+    elif cmd == "/why":
+        # the decision log, in plain words (Phase 2, plan 1.6)
+        entries = decisions.recent(6)
+        print("remix-brain: recent decisions:\n  "
+              + "\n  ".join(entries or ["(none logged yet)"]))
+        show = entries[-3:]
+        line = ("// nothing decided yet //" if not show else
+                "// " + " | ".join(
+                    e.split(" ", 1)[1] for e in show) + " //")
+        await ws_server.send({"type": "notice", "text": line, "seconds": 9.0})
+    elif cmd == "/decisions":
+        # view or flip the off/shadow/live switches at runtime
+        parts = text.split()
+        if len(parts) == 1:
+            line = "// decisions: " + decisions.summary() + " //"
+            await ws_server.send({"type": "notice", "text": line,
+                                  "seconds": 9.0})
+        elif len(parts) == 3 and decisions.set_mode(parts[1], parts[2]):
+            line = (f"// {parts[1]}: {parts[2]} //")
+            await ws_server.send({"type": "notice", "text": line,
+                                  "seconds": 5.0})
+            print(f"remix-brain: decision mode {parts[1]} -> {parts[2]}")
+        else:
+            await ws_server.send({"type": "notice", "seconds": 6.0,
+                                  "text": "// usage: /decisions <kind> "
+                                          "<off|shadow|live> //"})
     else:
         await ws_server.send({"type": "notice", "seconds": 3.0,
                               "text": "// unknown command //"})
@@ -769,6 +947,8 @@ async def main() -> None:
           f"(app names only, titles redacted), proactive "
           f"{'on' if config.PROACTIVE and config.AWARENESS else 'off'} "
           f"(max 1 line / {config.PROACTIVE_MIN_GAP_S / 60:.0f} min)")
+    print(f"remix-brain: decision modes: {decisions.summary()}"
+          f"{' (log off)' if not config.DECISIONS_LOG else ''}")
     try:
         await ws_server.serve()  # runs forever
     except KeyboardInterrupt:

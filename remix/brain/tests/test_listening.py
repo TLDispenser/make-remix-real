@@ -17,7 +17,7 @@ os.environ.setdefault("REMIX_TTS_DIR", tempfile.mkdtemp(prefix="remix-test-voice
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from brain import config, faces, jev, listening, rules, speech, stt  # noqa: E402
+from brain import config, decisions, faces, jev, listening, rules, speech, stt  # noqa: E402
 from brain import main as brain_main  # noqa: E402
 from brain.faces import Face  # noqa: E402
 
@@ -594,13 +594,19 @@ class ListeningFlowTests(unittest.TestCase):
                        config.JEV_ENABLED, config.JEV_API_KEY, config.LISTEN,
                        config.LISTEN_JEV, config.LISTEN_TICK_S, config.LISTEN_PAUSE_S,
                        config.LISTEN_JEV_MIN_GAP_S, config.LISTEN_JEV_RESERVE,
-                       config.TTS_ENABLED, config.SUBTITLES, jev._post)
+                       config.TTS_ENABLED, config.SUBTITLES, jev._post,
+                       config.DECISIONS_LOG, decisions._modes)
         brain_main.ws_server.send = send
         config.JEV_ENABLED, config.JEV_API_KEY = True, "test"
         config.LISTEN, config.LISTEN_JEV = True, True
         config.LISTEN_TICK_S, config.LISTEN_PAUSE_S = 0.02, 0.05
         config.LISTEN_JEV_MIN_GAP_S, config.LISTEN_JEV_RESERVE = 0.0, 0
         config.TTS_ENABLED, config.SUBTITLES = False, "never"
+        # this suite predates the seam: local behavior everywhere, no log
+        config.DECISIONS_LOG = False
+        decisions._modes.clear()
+        for _k in decisions.KINDS:
+            decisions._modes[_k] = "off"
         self.delay = 0.0
 
         def _post(url, key, body, timeout):
@@ -626,7 +632,8 @@ class ListeningFlowTests(unittest.TestCase):
         (brain_main.ws_server.send, speech.generate_reply, config.JEV_ENABLED,
          config.JEV_API_KEY, config.LISTEN, config.LISTEN_JEV, config.LISTEN_TICK_S,
          config.LISTEN_PAUSE_S, config.LISTEN_JEV_MIN_GAP_S, config.LISTEN_JEV_RESERVE,
-         config.TTS_ENABLED, config.SUBTITLES, jev._post) = self._saved
+         config.TTS_ENABLED, config.SUBTITLES, jev._post,
+         config.DECISIONS_LOG, decisions._modes) = self._saved
 
     def _drain(self):
         for t in (brain_main._settle_task, brain_main._silent_task,

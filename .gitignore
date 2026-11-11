@@ -4,6 +4,9 @@ remix/.env
 remix/brain/memory.json
 remix/brain/sandbox/
 remix/brain/brain.log
+remix/brain/brain.log.1
+remix/brain/decisions.log
+remix/brain/decisions.log.*
 remix/.run/
 remix/godot/godot.log
 # stray empty file created by a mis-quoted shell redirect; nobody's content

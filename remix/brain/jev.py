@@ -28,6 +28,7 @@ from collections import deque
 from typing import NamedTuple
 
 from . import config
+from . import decisions
 from .faces import EYES_TEXT, MOUTHS_TEXT, NEUTRAL, Face, Vocabulary
 
 # She/her, dry, secretly fond — stance choices the sysprompt understands.
@@ -39,6 +40,17 @@ STANCE_OPTION_TEXT = {
     "concerned": "the bit stops; plainly kind and gentle, still short",
     "alarmed": "something about the machine feels wrong; worry under the sarcasm",
     "playful": "dry mischief; one sly jab is allowed, no gushing",
+}
+
+# Stance wording for silent-life choices (names not in STANCE_OPTION_TEXT).
+_PROACTIVE_STANCE_TEXT = {
+    "flat": "flat and tired; facts only",
+    "playful": "dry mischief; one sly jab is allowed",
+    "pout": "huffy pout; wants attention, without saying so",
+    "tsun": "prickly on the surface, fond underneath",
+    "annoyed": "irritation on the surface",
+    "concerned": "plainly kind and gentle, still short",
+    "fond": "quiet fondness; a small warm word is allowed",
 }
 
 PEEK_SCENE = (
@@ -90,6 +102,7 @@ class ActPlan(NamedTuple):
     faces: list            # one Face per beat
     latency_s: float
     from_cache: bool
+    unseen: float | None = None   # judge: p(reply claims to see what it can't)
 
 
 class JevBrain:
@@ -104,6 +117,7 @@ class JevBrain:
         self._last_react_at = 0.0
         self._last_peek_at = 0.0
         self._call_times: list = []          # hourly-cap window (both call kinds)
+        self._pro_call_times: list = []      # silent-life decision window
         self._cache: dict = {}               # sig -> (expiry, value)
         self._recent: deque = deque(maxlen=4)  # last faces shown (variety memory)
         self._hook = variety_hook
@@ -208,13 +222,18 @@ class JevBrain:
         self._cache[sig] = (now + config.JEV_CACHE_TTL_S, d)
         return d
 
-    async def act(self, user_text: str, beats: list) -> ActPlan | None:
-        """One face per beat. Only worth a call for 2+ beats."""
-        if len(beats) < 2:
+    async def act(self, user_text: str, beats: list,
+                  senses: str | None = None) -> ActPlan | None:
+        """One face per beat, plus (when the grounding judge is shadow or
+        live) the `unseen` judgment on the finished reply — same request, no
+        extra call. Skipped for one-beat lines UNLESS the judge needs it
+        (then the one-beat faces are simply unused)."""
+        judge = decisions.mode("judge_unseen")
+        if len(beats) < 2 and judge == "off":
             return None
         beats = beats[:4]
         now = time.monotonic()
-        sig = _signature("act", user_text, {}, beats)
+        sig = _signature("act", user_text, {}, [beats, senses, judge])
         hit = self._cache.get(sig)
         if hit and hit[0] > now:
             return hit[1]._replace(from_cache=True)
@@ -222,24 +241,143 @@ class JevBrain:
             return None
         self._call_times.append(now)
 
-        body = {
-            "model": config.JEV_MODEL,
-            "state": {
-                "scene": ACT_SCENE,
-                "user_line": user_text,
-                "beats": {f"beat{i + 1}": b for i, b in enumerate(beats)},
-                "recent_faces": self.recent_faces(),
-            },
-            "questions": self._act_questions(beats),
+        state = {
+            "scene": ACT_SCENE,
+            "user_line": user_text,
+            "beats": {f"beat{i + 1}": b for i, b in enumerate(beats)},
+            "recent_faces": self.recent_faces(),
         }
+        questions = self._act_questions(beats)
+        if judge != "off":
+            # Grounding judge (plan 1.5): does the reply claim to see or know
+            # something the state does not list? `senses` is the compact
+            # what-she-can-actually-see list.
+            state["she_can_sense"] = senses or "nothing beyond her own vitals"
+            questions["unseen"] = {
+                "type": "noul",
+                "instructions": (
+                    "Does the reply claim to see, know or check something "
+                    "about the user's computer, files, screen or room that "
+                    "the she_can_sense list does not include? Numbers about "
+                    "her own vitals do not count as unseen."),
+            }
+        body = {"model": config.JEV_MODEL, "state": state,
+                "questions": questions}
         resp = await self._call(body)
         if resp is None:
             return None
-        plan = self._act_plan(resp, len(beats), time.monotonic() - now)
+        plan = self._act_plan(resp, len(beats), time.monotonic() - now,
+                              judge != "off")
         self._cache[sig] = (now + config.JEV_CACHE_TTL_S, plan)
         for f in plan.faces:
             self.note_face(f)
         return plan
+
+    # ----------------------------------------------------------- transport
+
+    PROACTIVE_SCENE = (
+        "Remix, a deadpan tired dry laptop character, just NOTICED something "
+        "on her own — nobody is talking to her. Decide what she does with "
+        "the urge. Nothing happened unless the state says so; do not invent "
+        "drama. recent_faces lists what her face just showed: avoid "
+        "repeating it unless the feeling is unchanged."
+    )
+
+    FORM_OPTION_TEXT = {
+        "speak": "say one short line out loud (her usual reaction)",
+        "caption": "show the line as on-screen text only, no voice",
+        "look": "no words at all: just a face and a glance",
+        "quiet": "nothing; keep it to herself this time",
+    }
+
+    async def decide_proactive(self, trigger: str, situation: str,
+                               stance_options: list) -> dict | None:
+        """Silent-life decisions in ONE request (the caps were already
+        applied by the trigger engine; this judges INSIDE them):
+          stance        choice among the trigger's allowed menu
+          should_speak  noul: is one line out loud worth it right now?
+          form          choice: speak / caption / look / quiet
+        Returns None on budget/off/failure — the caller then does exactly
+        what it would have done before this feature existed (logged)."""
+        now = time.monotonic()
+        sig = _signature("proactive", trigger, {}, [situation,
+                                                    self.recent_faces()])
+        hit = self._cache.get(sig)
+        if hit and hit[0] > now:
+            return hit[1]
+        if not self._proactive_budget_ok(now):
+            return None
+        self._call_times.append(now)
+        self._pro_call_times.append(now)
+
+        stance_criteria = {
+            s: _PROACTIVE_STANCE_TEXT.get(s, s) for s in stance_options}
+        body = {
+            "model": config.JEV_MODEL,
+            "state": {
+                "scene": self.PROACTIVE_SCENE,
+                "she_just_noticed": situation,
+                "trigger": trigger,
+                "recent_faces": self.recent_faces(),
+            },
+            "questions": {
+                "stance": {
+                    "type": "choice", "criteria": stance_criteria,
+                    "instructions": ("The stance she takes for a line about "
+                                     "this. One of the offered options only."),
+                },
+                "should_speak": {
+                    "type": "noul",
+                    "instructions": (
+                        "Is one short line out loud about this worth saying "
+                        "right now, or would silence be better? Say yes only "
+                        "when the moment genuinely calls for her voice."),
+                },
+                "form": {
+                    "type": "choice", "criteria": dict(self.FORM_OPTION_TEXT),
+                    "instructions": ("How she reacts, if she reacts at all. "
+                                     "speak unless there is a reason to be "
+                                     "quiet or wordless."),
+                },
+            },
+        }
+        resp = await self._call(body)
+        if resp is None:
+            return None
+        answers = resp.get("answers", {}) or {}
+        usage = resp.get("usage", {}) or {}
+        stance = str(_choice(answers.get("stance"), ""))
+        if stance not in stance_criteria:
+            stance = None
+        speak_p = None
+        if isinstance(answers.get("should_speak"), dict):
+            speak_p = _f(answers["should_speak"].get("noul"))
+        form = str(_choice(answers.get("form"), ""))
+        if form not in self.FORM_OPTION_TEXT:
+            form = None
+        d = {"stance": stance, "speak_p": speak_p, "form": form,
+             "confidence": _confidence(answers.get("stance")),
+             "speak_confidence": _confidence(answers.get("should_speak")),
+             "latency_s": time.monotonic() - now}
+        print(f"remix-brain: jev proactive decision in {d['latency_s']:.2f}s "
+              f"(tokens {usage.get('input_tokens')}/{usage.get('output_tokens')}): "
+              f"stance={stance} speak={speak_p} form={form} [{trigger}]")
+        self._cache[sig] = (now + config.JEV_CACHE_TTL_S, d)
+        return d
+
+    def _proactive_budget_ok(self, now: float) -> bool:
+        """Same shared hourly window, plus a dedicated ceiling for
+        silent-life decisions, plus a reserve so replies and peeks keep
+        priority when the budget runs low."""
+        if not config.JEV_ENABLED:
+            return False
+        window = [t for t in self._call_times if now - t < 3600.0]
+        self._call_times = window
+        if len(window) >= config.JEV_MAX_PER_HOUR - config.LISTEN_JEV_RESERVE:
+            return False
+        pro = [t for t in self._pro_call_times if now - t < 3600.0]
+        self._pro_call_times = pro
+        return len(pro) < config.JEV_PROACTIVE_MAX_PER_HOUR
 
     # ----------------------------------------------------------- transport
 
@@ -348,7 +486,8 @@ class JevBrain:
         return Decision(STANCE_OPTION_TEXT[stance_name], stance_name, face,
                         conf, latency, False)
 
-    def _act_plan(self, resp: dict, n: int, latency: float) -> ActPlan:
+    def _act_plan(self, resp: dict, n: int, latency: float,
+                  judge: bool = False) -> ActPlan:
         answers = resp.get("answers", {}) or {}
         usage = resp.get("usage", {}) or {}
         faces: list = []
@@ -359,10 +498,14 @@ class JevBrain:
                 self._pick(answers.get(f"eyes{i}"), self.vocab.eyes, "eyes", prev_e),
                 self._pick(answers.get(f"mouth{i}"), self.vocab.mouths, "mouth", prev_m),
             ))
+        unseen = None
+        if judge and isinstance(answers.get("unseen"), dict):
+            unseen = _f(answers["unseen"].get("noul"))
         print(f"remix-brain: jev acting plan in {latency:.2f}s "
               f"(tokens {usage.get('input_tokens')}/{usage.get('output_tokens')}): "
-              f"{[str(f) for f in faces]}")
-        return ActPlan(faces, latency, False)
+              f"{[str(f) for f in faces]}"
+              + (f" unseen={unseen:.2f}" if unseen is not None else ""))
+        return ActPlan(faces, latency, False, unseen)
 
     def _pick(self, answer, valid: list, unit: str, also_avoid: list) -> str:
         """Sample from Jev's probabilities, penalising what was shown recently."""

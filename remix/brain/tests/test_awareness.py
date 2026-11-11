@@ -634,35 +634,21 @@ class GroundingAwareTests(unittest.TestCase):
 
 # ------------------------------------------------------ RuleBrain DND + gate
 
-class RuleBrainDndTests(unittest.TestCase):
-    def setUp(self):
-        self.saved = {k: getattr(config, k) for k in
-                      ("NOTICE_GATE", "NOTICE_MIN_GAP_S")}
-        config.NOTICE_GATE = 0            # gate always passes: isolate the DND
-        config.NOTICE_MIN_GAP_S = 0.0
+class NoCannedNoticesTests(unittest.TestCase):
+    """Phase 2, audit #4: the pre-written flavour pools are GONE. Her words
+    only ever come from the LLM through the normal path, or not at all."""
 
-    def tearDown(self):
-        for k, v in self.saved.items():
-            setattr(config, k, v)
+    def test_no_notice_pool_left_in_rules(self):
+        self.assertFalse(hasattr(rules, "MOCK_NOTICES"))
+        self.assertFalse(hasattr(rules.RuleBrain, "_notice_pool"))
 
-    def _rule(self):
+    def test_silent_life_emits_poses_and_glances_only(self):
         r = rules.RuleBrain()
-        r.last_notice_at = 0.0
         r.last_look_at = 0.0
         r.last_twitch_at = 0.0
-        return r
-
-    SNAP = {"cpu": 10.0, "ram": 50.0, "temp": None, "battery": 50.0, "disk": 95.0}
-
-    def test_flavor_notice_shows_when_audible_gate_off(self):
-        with mock.patch("brain.rules.random.random", return_value=0.0):
-            msgs = self._rule().update(dict(self.SNAP), now=1000.0)
-        self.assertTrue(any(m.get("type") == "notice" for m in msgs))
-
-    def test_fullscreen_holds_flavor_notices(self):
-        with mock.patch("brain.rules.random.random", return_value=0.0):
-            msgs = self._rule().update(dict(self.SNAP), now=1000.0,
-                                       aware={"fullscreen": True})
+        msgs = r.update({"cpu": 10.0, "ram": 50.0, "temp": None,
+                         "battery": 50.0, "disk": 95.0}, now=100000.0,
+                        aware={"fullscreen": False})
         self.assertFalse(any(m.get("type") == "notice" for m in msgs))
 
 

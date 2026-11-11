@@ -146,8 +146,11 @@ QUIET_HOURS = _env("QUIET_HOURS", "")                     # "1-8" = no chatter 0
 AWAKEN_MIN_S = float(_env("AWAKEN_MIN_S", "120.0"))
 # Ambient thoughts (2b): between real events, a small-chance idle musing so
 # her chatter feels random inside the same caps (MIN_GAP, day cap, quiet hours).
-AMBIENT_RATE = float(_env("AMBIENT_RATE", "0.03"))        # per eligible 20 s tick
-AMBIENT_COOLDOWN_S = float(_env("AMBIENT_COOLDOWN_S", "2400.0"))  # >=40 min
+# Defaults softened 2026-11-11 (the "silent life is too automated" note):
+# rarer thoughts, longer own cooldown; jitter (PROACTIVE_JITTER) keeps the
+# rest from landing on a schedule.
+AMBIENT_RATE = float(_env("AMBIENT_RATE", "0.02"))        # per eligible 20 s tick
+AMBIENT_COOLDOWN_S = float(_env("AMBIENT_COOLDOWN_S", "3000.0"))  # >=50 min
 # Urgent marker (6.4): muted_long / idle_deep fire -> she flags her window as
 # "urgent" until the human shows up or the room un-mutes. Godot may ignore it.
 URGENT_ENABLED = _env("URGENT", "1") == "1"
@@ -166,6 +169,32 @@ JEV_TIMEOUT_S = float(os.environ.get("JEV_TIMEOUT_S", "3.0"))
 JEV_COOLDOWN_S = float(_env("JEV_COOLDOWN_S", "3.0"))
 JEV_MAX_PER_HOUR = int(_env("JEV_MAX_PER_HOUR", "60"))
 JEV_CACHE_TTL_S = float(_env("JEV_CACHE_TTL_S", "300.0"))
+
+# ---- The seam (Phase 2, Upgrade Plan V2 1.6): decision modes ----
+# Every decision that can move from "the program decides" to "Jev decides"
+# has a mode: off (today's local behavior, the rule when no JEV_API_KEY),
+# shadow (Jev answers BESIDE the local logic but only the log uses it — the
+# local pick still ships), live (Jev's answer ships; local is the fallback
+# on any failure). Thresholds and caps below.
+def _mode(name: str, default: str) -> str:
+    v = (_env(name) or default).strip().lower()
+    return v if v in ("off", "shadow", "live") else default
+
+JEV_DECIDE_STANCE = _mode("JEV_DECIDE_STANCE", "shadow")   # proactive stance
+JEV_DECIDE_SPEAK = _mode("JEV_DECIDE_SPEAK", "shadow")     # should-speak noul
+JEV_DECIDE_FORM = _mode("JEV_DECIDE_FORM", "shadow")       # speak/caption/look/quiet
+JEV_JUDGE_GROUNDING = _mode("JEV_JUDGE_GROUNDING", "shadow")  # unseen noul vs word list
+JEV_SPEAK_P = float(_env("JEV_SPEAK_P", "0.6"))   # live should_speak threshold
+# Silent-life Jev calls get their own conservative ceiling on top of the
+# shared hourly cap; shadow modes are skipped when either is spent.
+JEV_PROACTIVE_MAX_PER_HOUR = int(_env("JEV_PROACTIVE_MAX_PER_HOUR", "20"))
+# The decision log (rotating): timestamp, kind, mode, answer, confidence,
+# used-or-fell-back, and what the local logic would have done.
+DECISIONS_LOG = _env("DECISIONS_LOG", "1") == "1"
+DECISIONS_LOG_MAX_BYTES = int(_env("DECISIONS_LOG_MAX_BYTES", "524288"))
+# How much of the old fixed cooldowns/gaps may wobble, so silent life does
+# not land on a schedule (0 = exact timings).
+PROACTIVE_JITTER = float(_env("PROACTIVE_JITTER", "0.25"))
 
 # ---- Listening (2026-11-09): she reacts WHILE you type or talk -------------
 # Local reflexes ($0, nothing leaves the machine): gaze follows the text, eyes

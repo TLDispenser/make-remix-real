@@ -15,20 +15,19 @@
 import random
 import time
 
-from . import audio, config
+from . import config
 
 # An i5-4310M laptop idles warm, so thresholds skew forgiving; confirm on the
 # real host and tune via env (config.py). Pose names match face_config.gd.
 POSE_DEFAULT = "default"
 TWITCH_POSES = {"anger", "pout"}  # face_config.gd allows twitch there
 
-# Flavor text: dry, short, no cutesy AI-voice lines (user rule, 2026-11-08).
-# Only ever SHOWN while the machine is quiet — see the gate in _idle_life.
-MOCK_NOTICES = [
-    "// fan's droning. business as usual //",
-    "// all quiet on the driver front //",
-    "// cpu nominal. nothing to file a complaint about //",
-]
+# (Phase 2, audit #4: MOCK_NOTICES and the _notice_pool flavour lines are
+# GONE. Pre-written lines in her voice contradicted the no-pools rule; her
+# words now only ever come from the LLM through the normal path, or not at
+# all. Battery-low and disk-full still reach her as real triggers/alarms —
+# battery_low is a proactive trigger (spoken fresh, $0 pool), spooked pose
+# and vitals posing are autonomic.)
 
 
 class RuleBrain:
@@ -43,7 +42,6 @@ class RuleBrain:
         self._last_look = None   # (5) last look vector, for jump-size pacing
         now = time.monotonic()
         self.last_look_at = now
-        self.last_notice_at = now   # no notices in the first quiet minutes
         self.last_twitch_at = now
         self.speak_gate_until = 0.0  # pause silent posing while she talks
         self.listen_gate_until = 0.0  # ... and while she listens to you (listening.py)
@@ -190,20 +188,6 @@ class RuleBrain:
                 and now - self.last_twitch_at > random.uniform(18.0, 40.0)):
             out.append({"type": "twitch"})
             self.last_twitch_at = now
-        if (now - self.last_notice_at > config.NOTICE_MIN_GAP_S
-                and random.random() < 0.02):
-            # Attempt counts even when suppressed: at most one try per gap.
-            self.last_notice_at = now
-            # Flavor holds under Do-Not-Disturb (fullscreen = can't be seen
-            # either), and shows only when the machine is quiet anyway
-            # (muted or low volume). Functional lines (transcript, "one sec",
-            # ear problems) are exempt: those never go through here.
-            if (not (aware or {}).get("fullscreen")
-                    and (not config.NOTICE_GATE or audio.quiet())):
-                pool = self._notice_pool(snap)
-                if pool:
-                    out.append({"type": "notice", "text": random.choice(pool),
-                                "seconds": 3.0})
         return out
 
     def _look_pool(self, cpu):
@@ -219,19 +203,6 @@ class RuleBrain:
             return [[0.85, 0.25], [-0.85, 0.25]]
         return [[random.uniform(-0.9, 0.9), random.uniform(-0.7, 0.7)],
                 [random.uniform(-0.5, 0.5), random.uniform(-0.4, 0.4)]]
-
-    def _notice_pool(self, snap):
-        disk = _f(snap.get("disk"))
-        if disk is not None and disk >= config.DISK_FULL:
-            return ["// disk's %d%% full. that's a to-do //"
-                    % round(disk)]
-        battery = _f(snap.get("battery"))
-        if battery is not None and battery <= config.BATT_LOW:
-            return ["// battery at %d%%. fine. totally fine //"
-                    % round(battery)]
-        if self.pose == "spooked":
-            return ["// that was a spike, not a fire. probably //"]
-        return MOCK_NOTICES
 
 
 def _f(v):

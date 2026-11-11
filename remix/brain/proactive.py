@@ -160,8 +160,11 @@ def _situation(trigger: str, aware: dict, batt: float | None,
         return f"the keyboard has been quiet for about {max(1, round(idle / 60))} minutes"
     if trigger == "idle_deep":
         idle = _f(aware.get("idle_s")) or 0.0
-        return (f"it has been about {max(1, round(idle / 60))} minutes of "
-                f"complete silence and they never said they're ok")
+        # Plain facts only (audit #5): the editorializing ("they never said
+        # they're ok") was the program putting words in her mood. She gets
+        # the fact and decides how it feels.
+        return (f"it has been about {max(1, round(idle / 60))} minutes "
+                f"of complete silence at the keyboard")
     if trigger == "muted_long":
         muted = _f(aware.get("muted_s")) or 0.0
         return (f"the sound has been muted or nearly silent for about "
@@ -276,7 +279,7 @@ class Proactive:
             return None
         if now < busy_until:                       # she is mid-speech
             return None
-        if now - self.last_line_at < config.PROACTIVE_MIN_GAP_S:
+        if now - self.last_line_at < self._next_gap():
             return None
         if mic_open:                               # never talk over the mic
             return None
@@ -378,6 +381,15 @@ class Proactive:
 
     # ----------------------------------------------------------- internals
 
+    def _next_gap(self) -> float:
+        """The global gap between unprompted lines, jittered so the cadence
+        breathes instead of ticking like a timer."""
+        base = config.PROACTIVE_MIN_GAP_S
+        j = config.PROACTIVE_JITTER
+        if base >= 60.0 and j > 0.0:
+            return base * self.rng.uniform(1.0 - j, 1.0 + j)
+        return base
+
     def _daily_cap(self, now: float) -> bool:
         """True = a line is still allowed today."""
         key = time.strftime("%Y-%m-%d")
@@ -387,8 +399,14 @@ class Proactive:
         return self.day_count < config.PROACTIVE_MAX_PER_DAY
 
     def _due(self, trigger: str, now: float) -> bool:
-        return now - self._last.get(trigger, -1e12) >= \
-            TRIGGER_COOLDOWN_S.get(trigger, 3600.0)
+        base = TRIGGER_COOLDOWN_S.get(trigger, 3600.0)
+        j = config.PROACTIVE_JITTER
+        if base >= 300.0 and j > 0.0:
+            # Jitter the cooldown itself: her unprompted lines must not land
+            # on a schedule (the "too automated" note). One rng draw per
+            # check — the wobble is real, not just cosmetic.
+            base *= self.rng.uniform(1.0 - j, 1.0 + j)
+        return now - self._last.get(trigger, -1e12) >= base
 
     def _ambient_ok(self, now: float) -> bool:
         """Ambient musings (2b): own cooldown, on top of MIN_GAP/day-cap."""
