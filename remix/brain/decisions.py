@@ -30,6 +30,14 @@ KINDS = {
              config.JEV_DECIDE_FORM),
     "judge_unseen": ("whether her reply claims to see what it cannot",
                      config.JEV_JUDGE_GROUNDING),
+    "user_intent": ("classification of user intent (question/command/venting/etc)",
+                    config.JEV_DECIDE_INTENT),
+    "dodge_judge": ("whether reply dodged a question or command",
+                    config.JEV_JUDGE_DODGE),
+    "commitment": ("whether user made a commitment or reminder request",
+                   config.JEV_DECIDE_COMMITMENT),
+    "memory_rank": ("ranking retrieved memory candidates for relevance",
+                    config.JEV_RANK_MEMORY),
 }
 
 # runtime overrides (e.g. /decisions); boot defaults come from KINDS

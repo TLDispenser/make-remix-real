@@ -184,6 +184,11 @@ JEV_DECIDE_STANCE = _mode("JEV_DECIDE_STANCE", "shadow")   # proactive stance
 JEV_DECIDE_SPEAK = _mode("JEV_DECIDE_SPEAK", "shadow")     # should-speak noul
 JEV_DECIDE_FORM = _mode("JEV_DECIDE_FORM", "shadow")       # speak/caption/look/quiet
 JEV_JUDGE_GROUNDING = _mode("JEV_JUDGE_GROUNDING", "shadow")  # unseen noul vs word list
+JEV_DECIDE_INTENT = _mode("JEV_DECIDE_INTENT", "shadow")   # user intent (question/command/etc.)
+JEV_JUDGE_DODGE = _mode("JEV_JUDGE_DODGE", "shadow")       # dodge judge for question/command
+JEV_DECIDE_COMMITMENT = _mode("JEV_DECIDE_COMMITMENT", "shadow")  # commitment/reminder detection
+JEV_RANK_MEMORY = _mode("JEV_RANK_MEMORY", "off")          # ranking memory candidates with Jev (default off)
+JEV_DODGE_THRESHOLD = float(_env("JEV_DODGE_THRESHOLD", "0.7"))
 JEV_SPEAK_P = float(_env("JEV_SPEAK_P", "0.6"))   # live should_speak threshold
 # Silent-life Jev calls get their own conservative ceiling on top of the
 # shared hourly cap; shadow modes are skipped when either is spent.
@@ -342,10 +347,14 @@ else:
                   f"staying with the legacy sandbox")
             SANDBOX_DIR = _SANDBOX_LEGACY
 MEMORY_JSON = SANDBOX_DIR / "memory.json"
+MEMORY_DB = SANDBOX_DIR / "memory.db"
 MEMORY_REPO = _env("MEMORY_REPO", "")            # e.g. https://github.com/me/remix-sandbox.git (PRIVATE)
 MEMORY_TOKEN = _env("MEMORY_TOKEN", "")          # fine-grained PAT; contents:read/write on that repo
 MEMORY_SYNC_MIN_S = float(_env("MEMORY_SYNC_MIN_S", "1800.0"))   # push this often if dirty
-MEMORY_MAX_ENTRIES = int(_env("MEMORY_MAX_ENTRIES", "400"))      # journal rows kept
+MEMORY_MAX_ENTRIES = int(_env("MEMORY_MAX_ENTRIES", "1000"))     # journal rows kept in memory.json
+MEMORY_SEARCH_LIMIT = int(_env("MEMORY_SEARCH_LIMIT", "5"))      # FTS candidates retrieved
+MEMORY_INJECT_LIMIT = int(_env("MEMORY_INJECT_LIMIT", "6"))      # max retrieved memories in prompt
+HISTORY_MAX_MESSAGES = int(_env("HISTORY_MAX_MESSAGES", "20"))   # conversation context window (10 exchanges)
 # Temper (1a): a slight per-boot personality drift, and REMIX_TEMPER sets the
 # baseline: cranky (default, the character you have now), balanced, soft.
 TEMPER = (_env("TEMPER", "cranky") or "cranky").strip().lower()

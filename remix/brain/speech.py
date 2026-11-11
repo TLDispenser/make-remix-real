@@ -183,22 +183,40 @@ def temper_line() -> str:
     return base
 
 
-def _memory_block() -> str:
+def _memory_block(user_text: str | None = None) -> str:
     """WHAT YOU REMEMBER: dated journal rows. This is how she gains a past —
-    and grounding.check() opens the PAST gate in proportion to this."""
+    and grounding.check() opens the PAST gate in proportion to this.
+
+    Phase 3 (plan 2.1): on top of the recency window, rows RETRIEVED for this
+    specific line (SQLite FTS5 content match + time-phrase match) are merged
+    in. What is injected stays capped; what is kept is not."""
     import re
     from . import memory
     if not memory.has_journal():
         return ""
     # The last few rows (what just happened) plus a few scattered older ones,
     # so "earlier today" stays answerable even after a chatty stretch.
+    picked = memory.lines(limit=8, spread=5)
+    seen = {(e.get("t"), e.get("text")) for e in picked}
+    retrieved = []
+    if user_text:
+        retrieved = memory.retrieve(user_text, limit=config.MEMORY_SEARCH_LIMIT)
+        _last_retrieved.clear()
+        _last_retrieved.extend(retrieved)
+        grounding.set_retrieved(retrieved)
+        for e in retrieved:
+            if (e.get("t"), e.get("text")) not in seen:
+                picked.append(e)
+                seen.add((e.get("t"), e.get("text")))
     rows = []
-    for e in memory.lines(limit=8, spread=5):
+    for e in picked[:8 + config.MEMORY_INJECT_LIMIT]:
         when = str(e.get("at") or "")
         kind = str(e.get("kind") or "")
         label = "you said" if kind == "her" else (
             "they said" if kind == "user" else
-            "you noticed" if kind == "thought" else "event")
+            "you noticed" if kind == "thought" else
+            "you wrote" if kind in ("reflection", "summary") else
+            "they promised" if kind == "commitment" else "event")
         text = re.sub(r"\s+", " ", strip_stage_directions(str(e.get("text") or ""))).strip()[:160]
         if text:
             rows.append(f"- {when} ({label}): {text}")
@@ -206,10 +224,11 @@ def _memory_block() -> str:
         return ""
     return ("\nWHAT YOU REMEMBER (this is real: dated notes from your own "
             "journal; nothing else about the past exists. Shown here: your "
-            "most recent notes, plus a few scattered picks from further "
-            "back — the list has holes, so absence from it only means "
-            "'not shown', not 'never happened'; if they mention something "
-            "from a time you can't see, say you don't have that page)\n"
+            "most recent notes, plus a few that matched what they just "
+            "said, plus a few scattered picks from further back — the list "
+            "has holes, so absence from it only means 'not shown', not "
+            "'never happened'; if they mention something from a time you "
+            "can't see, say you don't have that page)\n"
             + "\n".join(rows) + "\n"
             "You may reference these outright (quote them loosely, keep your "
             "voice). Never INVENT one. When they ask what they said or what "
@@ -219,9 +238,15 @@ def _memory_block() -> str:
             "don't have it.\n")
 
 
+# rows retrieved for the CURRENT user line (grounding's honesty guard reads
+# this through grounding.set_retrieved; empty between exchanges)
+_last_retrieved: list = []
+
+
 def build_system_prompt(vitals: dict | None = None, stance: str | None = None,
                         context: dict | None = None,
-                        aware: dict | None = None) -> str:
+                        aware: dict | None = None,
+                        user_text: str | None = None) -> str:
     user_name = config.USER_NAME or "the human"
     prompt = SYS_PROMPT.format(
         machine=_machine_blurb(),
@@ -231,9 +256,10 @@ def build_system_prompt(vitals: dict | None = None, stance: str | None = None,
         grounding=grounding.facts(_vitals_str(vitals), _machine_blurb(),
                                   context, aware),
     )
-    return prompt + _memory_block() + temper_line()
+    return prompt + _memory_block(user_text) + temper_line()
 
-_history: collections.deque = collections.deque(maxlen=8)
+_history: collections.deque = collections.deque(
+    maxlen=max(8, config.HISTORY_MAX_MESSAGES))
 # ONE net lock: every right-brain LLM call (a reply or an unprompted line)
 # holds it for its whole pool rotation, so two calls never hit the providers
 # interleaved. asyncio.Lock is FIFO: a question typed while she is answering
@@ -351,7 +377,8 @@ async def _generate(user_text: str, vitals: dict | None,
                     aware: dict | None = None) -> str | None:
     messages = (
         [{"role": "system", "content": build_system_prompt(vitals, stance,
-                                                           context, aware)}]
+                                                           context, aware,
+                                                           user_text=user_text)}]
         + list(_history)
         + [{"role": "user", "content": user_text}]
     )
@@ -369,19 +396,33 @@ async def _generate(user_text: str, vitals: dict | None,
 
 async def _grounded(reply: str, messages: list, user_text: str,
                     vitals: dict | None, aware: dict | None = None) -> str:
-    """Screen the reply for things she can't know; one retry, then deflect."""
+    """Screen the reply for things she can't know. One retry with the problem
+    named in plain prose; after that her second try ships as-is (plan 1.5.3:
+    her words, her responsibility — the retry note tells her to own it with
+    humor in her own voice). Never a canned deflection."""
     hist = " ".join(m["content"] for m in _history if m["role"] == "user")
     problems = grounding.check(reply, user_text, hist, vitals, aware)
     if not problems:
         return reply
     print(f"remix-brain: reply failed grounding ({'; '.join(problems)}) — retrying")
+    decisions.log("grounding", "-", jev=None, used="retry",
+                  local="word-list check", extra="; ".join(problems)[:120])
     retry = messages + [{"role": "assistant", "content": reply},
                         {"role": "system", "content": grounding.retry_note(problems)}]
     second = await _call_llm(retry)
     if second and not grounding.check(second, user_text, hist, vitals, aware):
         return second
-    print("remix-brain: retry failed grounding too — deflecting in character")
-    return grounding.deflection()
+    if second is None:
+        # provider pool is down: she says nothing this turn (the caller's
+        # "can't reach the words" path handles it)
+        print("remix-brain: grounding retry had no provider — staying silent")
+        return None
+    print(f"remix-brain: second try still flagged ({'; '.join(problems)}) — "
+          f"delivering it anyway (her words, logged)")
+    decisions.log("grounding", "-", jev=None, used="delivered-second-try",
+                  local="word-list check",
+                  extra="; ".join(problems)[:120])
+    return second
 
 
 def add_assistant(text: str) -> None:

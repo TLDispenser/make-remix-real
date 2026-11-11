@@ -46,16 +46,19 @@ VITAL_WORDS = {
     "disk": ("disk", "storage", "drive", "full"),
 }
 
-DEFLECTIONS = [
-    "can't see that — I get app names, not contents. Tell me what you're "
-    "stuck on and I'll work with what we've got.",
-    "no idea. I don't see screens; word gets to me about which app is "
-    "open, that's it. Spell it out.",
-    "how would I know, the room's dark from where I sit. What are you "
-    "actually trying to do?",
-    "ugh. Blind over here, except for the app-name label and my own "
-    "vitals. Ask me differently.",
-]
+# Phase 2/3 rule: no pre-written lines in her voice — the canned DEFLECTIONS
+# pool is gone. A reply that still fails grounding after one retry is her
+# SECOND TRY, delivered as-is (the retry note tells her to own it with
+# humor in her own words). See speech._grounded.
+
+# Rows retrieved for the CURRENT exchange (speech sets this before check();
+# the honesty guard accepts anything actually retrieved this turn).
+_retrieved_rows: list = []
+
+
+def set_retrieved(rows: list) -> None:
+    global _retrieved_rows
+    _retrieved_rows = list(rows or [])
 
 _ONES = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
          "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
@@ -301,6 +304,9 @@ def facts(vitals_text: str, machine: str, context: dict | None,
 def _memory_ok(phrase: str, reply: str) -> bool:
     """PAST gate widening (proposal 4): a past-tense claim passes ONLY if her
     journal genuinely reaches that far back. Rules:
+      anything actually RETRIEVED this turn -> passes when the reply's words
+                                             match that row (honesty guard,
+                                             plan 2.1.8)
       'yesterday'            -> a journal row dated the previous local day
       'earlier today' etc    -> a row dated today (or the last ~20 h)
       'N days/weeks... ago'  -> journal age >= about half the claimed span
@@ -315,6 +321,12 @@ def _memory_ok(phrase: str, reply: str) -> bool:
     if not rows:
         return False
     words = {w for w in re.findall(r"[a-z0-9']+", reply.lower()) if len(w) > 3}
+    # 1. Honesty guard: anything retrieved THIS TURN that shares the reply's
+    #    content words is real memory, whatever era it is from.
+    for e in _retrieved_rows:
+        text = (e.get("text") or "").lower()
+        if words & set(text.split()):
+            return True
     day_name = time.strftime("%Y-%m-%d")
 
     def local_day(ts: float) -> str:
@@ -434,8 +446,11 @@ def retry_note(problems: list) -> str:
     return ("Your last line broke the rules: " + "; ".join(problems) +
             ". Say it again in your voice using ONLY what is on your 'what you "
             "can see' list. If the user asked about something you can't see, "
-            "say you can't see it. Short.")
+            "say you can't see it. If you catch yourself reaching for "
+            "something you don't actually have, admit it in your own words "
+            "with a little dry humor instead of pretending — getting caught "
+            "twice is worse than being blind. Short.")
 
 
-def deflection(rng: random.Random | None = None) -> str:
-    return (rng or random).choice(DEFLECTIONS)
+# (deflection() is gone — plan 1.5.3: never a canned line. See the note at
+# the DEFLECTIONS removal above.)
