@@ -75,6 +75,13 @@ var _ln_vb := PackedVector2Array()
 var _ln_tgt_a := PackedVector2Array()
 var _ln_tgt_b := PackedVector2Array()
 var _ln_w := PackedFloat32Array()
+# EACH stroke fades on its own: the channel alpha is shared by the whole
+# (superset) array, so a stroke the current shape doesn't use could never
+# disappear through it — it would just collapse to zero length, and a
+# zero-length draw_line still paints a round-cap DOT. Dead strokes get
+# their own alpha instead, so they fade out while they collapse.
+var _ln_f := PackedFloat32Array()      # live alpha per stroke (0..1)
+var _ln_ft := PackedFloat32Array()     # where each stroke's alpha is headed
 
 # PROP UNIT: geometry rides with the eye unit, but no springs — the spinner is
 # rigid, so it rotates directly (a spring would wobble it out of round).
@@ -336,6 +343,8 @@ func _ensure_lines(n: int) -> int:
 		_ln_tgt_a.append(Vector2.ZERO)
 		_ln_tgt_b.append(Vector2.ZERO)
 		_ln_w.append(3.0)
+		_ln_f.append(1.0)
+		_ln_ft.append(1.0)
 	return _ln_a.size() - old
 
 
@@ -377,11 +386,12 @@ func _retarget_lines(shape: Dictionary) -> void:
 		_jit_node[i] = 0   # dead slots lie collapsed; node 0 keeps them put
 	var blush_off_here := (not _blush_on) and bool(_ecfg().get("blush", false))
 	if lines.is_empty() or blush_off_here:
-		# Retract in place, then fade.
+		# Retract in place while fading out.
 		for i in _ln_a.size():
 			var mid := (_ln_a[i] + _ln_b[i]) * 0.5
 			_ln_tgt_a[i] = mid
 			_ln_tgt_b[i] = mid
+			_ln_ft[i] = 0.0
 		_scalar_target("lines", 0.0)
 	else:
 		var from_hidden: bool = _sc["lines"][0] < 0.05
@@ -391,21 +401,28 @@ func _retarget_lines(shape: Dictionary) -> void:
 				_ln_tgt_a[i] = l[0]
 				_ln_tgt_b[i] = l[1]
 				_ln_w[i] = float(l[2])
+				_ln_ft[i] = 1.0
 				if from_hidden or i >= _ln_a.size() - appended:
-					# Draw on from the middle of the line instead of
-					# sliding in (fresh strokes must never trace from
-					# the screen's origin).
+					# Draw on: grow from the middle of the line and fade
+					# in, instead of sliding in (fresh strokes must never
+					# trace from the screen's origin).
 					var mid: Vector2 = ((l[0] as Vector2) + (l[1] as Vector2)) * 0.5
 					_ln_a[i] = mid
 					_ln_b[i] = mid
 					_ln_va[i] = Vector2.ZERO
 					_ln_vb[i] = Vector2.ZERO
+					if from_hidden:
+						_ln_f[i] = 0.0
 			else:
-				# Strokes the new shape doesn't have: shrink into their
-				# own middle until they're dots (and so, invisible).
+				# Strokes the new shape doesn't have: collapse into their
+				# own middle WHILE fading out. Collapsing alone is not
+				# enough — a zero-length stroke would still paint its
+				# round-cap dot, and the shared channel stays at 1.0
+				# because the new shape has strokes of its own.
 				var dead := (_ln_a[i] + _ln_b[i]) * 0.5
 				_ln_tgt_a[i] = dead
 				_ln_tgt_b[i] = dead
+				_ln_ft[i] = 0.0
 		_scalar_target("lines", 1.0)
 	# Teleport radius: per-shape (Scribble's knot stutters; blush stays put).
 	var jit := float(shape.get("jitter", 0.0))
@@ -458,6 +475,7 @@ func _process(delta: float) -> void:
 		_ln_vb[i] += ((_ln_tgt_b[i] - _ln_b[i]) * stiffness - _ln_vb[i] * damping) * delta
 		_ln_a[i] += _ln_va[i] * delta
 		_ln_b[i] += _ln_vb[i] * delta
+		_ln_f[i] = move_toward(_ln_f[i], _ln_ft[i], delta * 4.0)
 
 	# Scalar springs.
 	for key in _sc:
@@ -665,15 +683,21 @@ func _draw() -> void:
 		var lc := _alpha(col, lines_a)
 		var jit_on := _jit_r > 0.0
 		for i in _ln_a.size():
+			var la: float = lc.a * _ln_f[i]
+			if la < 0.01:
+				continue   # dead or still drawing on
 			var a := _ln_a[i]
 			var b := _ln_b[i]
 			if jit_on:
 				a += _jit_o[_jit_node[2 * i]]
 				b += _jit_o[_jit_node[2 * i + 1]]
+			if a.distance_squared_to(b) < 0.01:
+				continue   # collapsed: a zero-length line is a DOT, not nothing
 			draw_line(
 				_xf_point(a, eye_off, Vector2(0.0, eye_cy), Vector2(1.0, sy)),
 				_xf_point(b, eye_off, Vector2(0.0, eye_cy), Vector2(1.0, sy)),
-				lc, maxf(_ln_w[i], 1.0), true
+				_alpha(lc, _ln_f[i]),
+				maxf(_ln_w[i], 1.0), true
 			)
 
 	# ---- mouth unit: the ENTIRE mouth opens with sound (uniformly, per rung)

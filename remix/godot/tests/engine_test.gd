@@ -241,6 +241,27 @@ func _initialize() -> void:
 	face.set_blush(true); step(120)
 	check(face.snapshot()["lines"] > 0.98, "blush on brings the hatching back")
 
+	# 13) DEAD STROKES DIE: a stroke the new eyes don't use must fade out,
+	#     not sit on screen forever as a dot. The array is a superset sized
+	#     for the biggest shape seen, and the channel alpha is shared by
+	#     everything in it — so each stroke carries its own fade on top.
+	face.set_pose("bashful"); step(120)
+	check(face._ln_f.size() == face._ln_a.size(), "every stroke slot has a fade value")
+	check(face.snapshot()["lines"] > 0.98, "bashful's hatching is live before the swap")
+	face.set_face("tired", ""); step(120)   # 10 hatch strokes -> 4 bag strokes
+	check(face.snapshot()["lines"] > 0.98, "tired's own strokes keep the channel up")
+	for i in 4:
+		check(face._ln_f[i] > 0.98, "bag stroke %d stays live" % i)
+	for i in range(4, face._ln_a.size()):
+		check(face._ln_f[i] < 0.01, "dead hatch stroke %d faded out (%.3f)" % [i, face._ln_f[i]])
+		check(face._ln_a[i].distance_squared_to(face._ln_b[i]) < 0.25,
+				"dead hatch stroke %d collapsed shut" % i)
+	face.set_face("scribble", "none"); step(120)
+	face.set_face("spooked", "none"); step(120)   # 21 knot strokes -> 4
+	check(face.snapshot()["lines"] > 0.98, "spooked's strokes keep the channel up")
+	for i in range(4, face._ln_a.size()):
+		check(face._ln_f[i] < 0.01, "dead knot stroke %d faded out (%.3f)" % [i, face._ln_f[i]])
+
 	await process_frame
 	print("ENGINE_%s fails=%d poses=%d mixes=%d" % ["OK" if fails == 0 else "FAILED", fails, names.size(), mixes])
 	quit(1 if fails > 0 else 0)
