@@ -82,7 +82,7 @@ class JevBlushTests(unittest.TestCase):
         self._saved = (config.JEV_ENABLED, config.JEV_API_KEY, config.JEV_MAX_PER_HOUR,
                        config.JEV_COOLDOWN_S, jev._post, config.DECISIONS_LOG,
                        dict(decisions._modes), config.JEV_BLUSH,
-                       config.JEV_BLUSH_THRESHOLD)
+                       config.JEV_BLUSH_THRESHOLD, config.LISTEN_JEV)
         config.JEV_ENABLED, config.JEV_API_KEY = True, "test"
         config.JEV_MAX_PER_HOUR, config.JEV_COOLDOWN_S = 60, 3.0
         config.DECISIONS_LOG = False
@@ -95,7 +95,8 @@ class JevBlushTests(unittest.TestCase):
     def tearDown(self):
         (config.JEV_ENABLED, config.JEV_API_KEY, config.JEV_MAX_PER_HOUR,
          config.JEV_COOLDOWN_S, jev._post, config.DECISIONS_LOG,
-         modes, config.JEV_BLUSH, config.JEV_BLUSH_THRESHOLD) = self._saved
+         modes, config.JEV_BLUSH, config.JEV_BLUSH_THRESHOLD,
+         config.LISTEN_JEV) = self._saved
         decisions._modes.clear()
         decisions._modes.update(modes)
 
@@ -105,9 +106,9 @@ class JevBlushTests(unittest.TestCase):
             return {"answers": answers(body), "usage": {"input_tokens": 1, "output_tokens": 1}}
         jev._post = _post
 
-    def _react(self, blush_answer):
-        base = {"stance": probs(flat=1.0), "eyes": probs(bashful=1.0),
-                "mouth": probs(bashful=1.0)}
+    def _react(self, blush_answer, eyes="tired", mouth="default"):
+        base = {"stance": probs(flat=1.0), "eyes": probs(**{eyes: 1.0}),
+                "mouth": probs(**{mouth: 1.0})}
         if blush_answer is not None:
             base["blush"] = blush_answer
         self.fake(lambda b: base)
@@ -117,7 +118,7 @@ class JevBlushTests(unittest.TestCase):
         d = self._react(noul(0.9))
         self.assertEqual(1, len(self.calls))                 # no extra request
         self.assertEqual("noul", self.calls[0]["questions"]["blush"]["type"])
-        self.assertEqual(Face("bashful", "bashful", 0.9), d.face)
+        self.assertEqual(Face("tired", "default", 0.9), d.face)
 
     def test_below_threshold_is_no_blush(self):
         self.assertEqual(0.0, self._react(noul(0.3)).face.blush)
@@ -133,11 +134,32 @@ class JevBlushTests(unittest.TestCase):
     def test_probability_above_one_is_clamped(self):
         self.assertEqual(1.0, self._react(noul(1.7)).face.blush)
 
+    def test_bashful_is_blushing_on_the_jev_path_too(self):
+        # The pose table defines bashful AS blushing (1.0); the Jev path
+        # honors the pose — bashful eyes/mouth floor the level at 1.0, even
+        # when the noul says no (a pale bashful is not bashful). This is the
+        # gap that showed in the logs: bashful/default, bashful/pout and
+        # bashful/bashful with no +blush.
+        self.assertEqual(1.0, self._react(noul(0.1), "bashful", "pout").face.blush)
+        self.assertEqual(1.0, self._react(noul(0.0), "tired", "bashful").face.blush)
+        self.assertEqual(1.0, self._react(None, "bashful", "bashful").face.blush)
+
     def test_switch_off_asks_nothing_and_blushes_never(self):
         config.JEV_BLUSH = False
         d = self._react(noul(0.99))
         self.assertNotIn("blush", self.calls[0]["questions"])
         self.assertEqual(0.0, d.face.blush)
+
+    def test_peek_bashful_blushes_without_a_blush_question(self):
+        # The listening reaction never asks the blush noul (partial); a
+        # bashful pick must still blush — the pose, not the question.
+        config.LISTEN_JEV = True
+        base = {"stance": probs(flat=1.0), "eyes": probs(bashful=1.0),
+                "mouth": probs(bashful=1.0)}
+        self.fake(lambda b: base)
+        d = run(jev.JevBrain(random.Random(3)).peek("um... hi?", VITALS))
+        self.assertNotIn("blush", self.calls[0]["questions"])
+        self.assertEqual(Face("bashful", "bashful", 1.0), d.face)
 
     def test_act_plan_gets_a_blush_per_beat(self):
         beats = ["fine.", "...you're not so bad.", "shut up."]

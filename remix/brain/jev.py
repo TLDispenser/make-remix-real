@@ -566,6 +566,17 @@ class JevBrain:
             return 0.0
         return min(1.0, p)
 
+    def _blush_for(self, eyes: str, mouth: str, answer) -> float:
+        """The blush level for a picked face. The reference pose table
+        defines bashful AS blushing (Face("bashful","bashful",1.0)) and the
+        $0 paths honor that — so while the Jev blush decision is in play,
+        a bashful unit floors the level at 1.0 on the Jev path too: a pale
+        bashful is not bashful. The noul decides everywhere else, and the
+        switch off keeps the old never-blush contract."""
+        if config.JEV_BLUSH and "bashful" in (eyes, mouth):
+            return 1.0
+        return self._blush_of(answer)
+
     def _react_decision(self, resp: dict, latency: float,
                         label: str = "reaction",
                         partial: bool = False) -> Decision:
@@ -574,11 +585,9 @@ class JevBrain:
         stance_name = str(_choice(answers.get("stance"), "flat"))
         if stance_name not in STANCE_OPTION_TEXT:
             stance_name = "flat"
-        face = Face(
-            self._pick(answers.get("eyes"), self.vocab.eyes, "eyes", []),
-            self._pick(answers.get("mouth"), self.vocab.mouths, "mouth", []),
-            self._blush_of(answers.get("blush")),
-        )
+        e = self._pick(answers.get("eyes"), self.vocab.eyes, "eyes", [])
+        m = self._pick(answers.get("mouth"), self.vocab.mouths, "mouth", [])
+        face = Face(e, m, self._blush_for(e, m, answers.get("blush")))
         conf = _confidence(answers.get("stance"))
         intent = commit_p = commit_when = None
         if not partial:
@@ -619,11 +628,9 @@ class JevBrain:
         for i in range(1, n + 1):
             prev_e = [faces[-1].eyes] if faces else []
             prev_m = [faces[-1].mouth] if faces else []
-            faces.append(Face(
-                self._pick(answers.get(f"eyes{i}"), self.vocab.eyes, "eyes", prev_e),
-                self._pick(answers.get(f"mouth{i}"), self.vocab.mouths, "mouth", prev_m),
-                self._blush_of(answers.get(f"blush{i}")),
-            ))
+            e = self._pick(answers.get(f"eyes{i}"), self.vocab.eyes, "eyes", prev_e)
+            m = self._pick(answers.get(f"mouth{i}"), self.vocab.mouths, "mouth", prev_m)
+            faces.append(Face(e, m, self._blush_for(e, m, answers.get(f"blush{i}"))))
         unseen = dodged = None
         if judge and isinstance(answers.get("unseen"), dict):
             unseen = _f(answers["unseen"].get("noul"))
