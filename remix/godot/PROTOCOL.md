@@ -33,7 +33,7 @@ does not require it).
 | `twitch` | | one bottom-lid twitch now, on ONE eye (random side) |
 | `listening` | `state: "start"/"stop"` | mic-live marker (pale blue, top-right) while push-to-talk is held |
 | `notice` | `text`, optional `seconds` (4) | her one caption/status line (word-wrapped; muted, volume low, no-voice captions, mic problems) |
-| `urgent` | `state: true/false`, optional `reason` | she needs attention (muted/ignored too long; she said a line first). Godot shows an orange pulsing frame on her window AND asks the OS for the real taskbar flash (`DisplayServer.window_request_attention`, re-asked every 45 s while still urgent, skipped while she is focused). The OS clears it when you focus her; ignored by older face builds |
+| `urgent` | `state: true/false`, optional `reason` | she needs attention (muted/ignored too long; she said a line first; she has a reply waiting while out of sight). Godot asks the OS for the real taskbar flash (`DisplayServer.window_request_attention`, re-asked every 45 s while still urgent, skipped while she is focused) — nothing is drawn on her window. The OS clears it when you focus her; ignored by older face builds |
 | `transcript` | `text`, optional `seconds` (4) | what the mic heard, on a dim line at the top (`you: ...`) |
 | `theme` | `color: "#rrggbb"` | face color |
 | `vitals`, `event`, `say` | any | passed through as signals; unused by the face (`say` carries her reply text for terminals/logs) |

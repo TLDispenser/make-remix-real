@@ -25,11 +25,12 @@ Shapes the wiki showed for recent versions (verify, don't trust):
 Find the real title/class if it doesn't match:  `hyprctl clients | grep -iA3 remix`
 
 ## "Urgent" = the taskbar button turning orange
-When she has been muted or ignored too long the brain sends `urgent`; Godot then
-(1) pulses an orange frame around her own window and (2) calls
+When she has been muted or ignored too long (or has a reply waiting while out
+of sight) the brain sends `urgent`; Godot calls
 `DisplayServer.window_request_attention()`, the same request any app makes to flash
-its taskbar entry. On Wayland that is an `xdg-activation-v1` request and **Hyprland
-decides what it means** (verify against the wiki for your version):
+its taskbar entry. Nothing is drawn on her window itself. On Wayland that is an
+`xdg-activation-v1` request and **Hyprland decides what it means** (verify against
+the wiki for your version):
 
 - `misc { focus_on_activate = false }` (the default): she is marked **urgent** and
   nothing moves. What you SEE depends on your bar, e.g. waybar's
@@ -39,7 +40,8 @@ decides what it means** (verify against the wiki for your version):
   want that for other apps but not her, there's no per-app switch I could verify:
   keep it `false`.
 - She is pinned (on every workspace), so a bar that only flags *other* workspaces
-  may show nothing: the orange frame on her window is the always-visible fallback.
+  may show nothing — urgent has no in-window fallback anymore; if your bar misses
+  it, style the `urgent` class so you can see it.
 - Nothing flashes while she is the focused window, and the OS clears the request
   when you focus her (there is no "cancel" call).
 

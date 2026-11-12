@@ -200,13 +200,13 @@ func _process(delta: float) -> void:
 		Engine.max_fps = fps_active if face.is_active() else fps_idle
 
 
-## Urgent = she has been muted/ignored too long. Two cues: the orange frame on her
-## own window (hud), and the REAL taskbar one: ask the OS for attention. On
+## Urgent = she has been muted/ignored too long, or she has a reply waiting
+## while out of sight. The cue is the REAL one: ask the OS for attention. On
 ## Windows/macOS/X11 her taskbar entry flashes/blinks until you focus her; on
 ## Wayland (Hyprland) it goes out as an xdg-activation request and the compositor
 ## decides (focus_on_activate=false -> she is marked urgent, shown by your bar).
-## There is no "cancel attention" call: like any app, the OS clears it when you
-## focus her.
+## Nothing is drawn on her window itself. There is no "cancel attention" call:
+## like any app, the OS clears it when you focus her.
 func _set_urgent(on: bool, reason: String) -> void:
 	hud.set_urgent(on, reason)
 	if on:
