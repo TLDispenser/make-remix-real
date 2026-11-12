@@ -2,34 +2,49 @@
 # godot/scripts/face_config.gd (EYES / MOUTHS / POSES); Godot's `ready` message
 # carries the live lists and the brain narrows to them (set_available()).
 #
-# Eyes and mouth are two independent units, so a Face is a PAIR. Twelve
-# drawings give the shapes; the descriptions below say what each READS as,
-# because that is what Jev picks from.
+# Eyes and mouth are two independent units, so a Face is a PAIR — plus an
+# optional blush level (0..1): the global cheek hatching, its own overlay in
+# Godot, worn in every pose. Twelve drawings give the shapes; the
+# descriptions below say what each READS as, because that is what Jev picks
+# from.
 from typing import NamedTuple
+
+from . import config
 
 
 class Face(NamedTuple):
     eyes: str
     mouth: str
+    blush: float = 0.0
+
+    def _blush(self) -> float:
+        """Clamped to 0..1 and floored by BLUSH_BASELINE, so the wire value
+        is ALWAYS explicit (even 0) and never sticks to the next face."""
+        b = min(1.0, max(0.0, float(self.blush)))
+        return max(float(config.BLUSH_BASELINE), b)
 
     def msg(self, look=None) -> dict:
-        m = {"type": "pose", "eyes": self.eyes, "mouth": self.mouth}
+        m = {"type": "pose", "eyes": self.eyes, "mouth": self.mouth,
+             "blush": self._blush()}
         if look is not None:
             m["look"] = list(look)
         return m
 
     def cue(self, t: float, look=None) -> dict:
-        c = {"t": round(float(t), 3), "eyes": self.eyes, "mouth": self.mouth}
+        c = {"t": round(float(t), 3), "eyes": self.eyes, "mouth": self.mouth,
+             "blush": self._blush()}
         if look is not None:
             c["look"] = list(look)
         return c
 
     def spec(self) -> dict:
         """For a perform `then`."""
-        return {"eyes": self.eyes, "mouth": self.mouth}
+        return {"eyes": self.eyes, "mouth": self.mouth,
+                "blush": self._blush()}
 
     def __str__(self) -> str:
-        return f"{self.eyes}/{self.mouth}"
+        return (f"{self.eyes}/{self.mouth}"
+                + (f"+blush" if self._blush() > 0.01 else ""))
 
 
 # What each EYE shape reads as. (Written for Jev: feelings, not geometry.)
@@ -42,7 +57,7 @@ EYES_TEXT = {
     "tired": "plain eyes with bags under them: exhausted, drained, numb, over it",
     "tsun": "squeezed > < chevron eyes: flustered, embarrassed, cringing, denying she cares",
     # ---- from the reference folder ----
-    "bashful": "default-tall eyes sitting LOW on the face, with little hatched blush strokes on the cheeks: bashful, caught out, pleased and trying very hard to look normal about it",
+    "bashful": "default-tall eyes sitting LOW on the face: bashful, caught out, pleased and trying very hard to look normal about it (the cheek hatching is its own overlay — set the blush level, don't rely on the eyes)",
     "thunk": "eyes as two thin closed lids, asleep, with a little loading wheel spinning in the corner of the face: powered down, thunking out, resting, politely not here",
     "scribble": "THE ENTIRE FACE IS ONE WILD SCRIBBLE whose knot stutters and teleports around itself, pulsing: short-circuited, overloaded, error, kernel panic; words no longer available",
     "strange": "one eye dropped short and low, the other stretched tall with a slanted top: glitching, deranged, something is wrong and she can feel it",
@@ -74,7 +89,7 @@ POSES = {
     "tired": Face("tired", "trauma"),
     "tsun": Face("tsun", "tsun"),
     # ---- reference-folder shortcuts (mirror face_config.gd POSES) ----
-    "bashful": Face("bashful", "bashful"),
+    "bashful": Face("bashful", "bashful", 1.0),
     "thunk": Face("thunk", "none"),
     "scribble": Face("scribble", "none"),
     "strange": Face("strange", "strange"),
@@ -119,7 +134,7 @@ _GUESS = [
     (r"\b(shut ?down|reboot(ing)?|restarting|goodnight|good night)\b", Face("thunk", "none")),
     (r"\b(something'?s wrong|not right|unhinged|freaky)\b", Face("strange", "strange")),
     (r"\b(told you|i knew it|called it|of course|obviously)\b", Face("smug", "smug")),
-    (r"\b(flatterer|charmer|oh you|stop it,? you)\b", Face("bashful", "bashful")),
+    (r"\b(flatterer|charmer|oh you|stop it,? you)\b", Face("bashful", "bashful", 1.0)),
     (r"\b(morning|hey|hi|yo|hello|sup)\b", Face("default", "default")),
     (r"\?\s*$", Face("default", "default")),
 ]

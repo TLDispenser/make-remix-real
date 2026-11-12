@@ -190,6 +190,12 @@ JEV_DECIDE_COMMITMENT = _mode("JEV_DECIDE_COMMITMENT", "shadow")  # commitment/r
 JEV_RANK_MEMORY = _mode("JEV_RANK_MEMORY", "off")          # ranking memory candidates with Jev (default off)
 JEV_DODGE_THRESHOLD = float(_env("JEV_DODGE_THRESHOLD", "0.7"))
 JEV_COMMIT_P = float(_env("JEV_COMMIT_P", "0.6"))   # live commitment threshold
+# Blush: the third part of a face. BLUSH_BASELINE is the floor the wire value
+# can't go under (1.0 = the old always-on hatching). Jev answers a blush noul
+# BESIDE the eyes/mouth it already picks — same request, so $0.
+BLUSH_BASELINE = float(_env("BLUSH_BASELINE", "0.0"))
+JEV_BLUSH = _env("JEV_BLUSH", "1") == "1"
+JEV_BLUSH_THRESHOLD = float(_env("JEV_BLUSH_THRESHOLD", "0.5"))
 JEV_SPEAK_P = float(_env("JEV_SPEAK_P", "0.6"))   # live should_speak threshold
 # Silent-life Jev calls get their own conservative ceiling on top of the
 # shared hourly cap; shadow modes are skipped when either is spent.

@@ -263,10 +263,12 @@ def is_remember_enabled() -> bool:
     return _remember_enabled
 
 
-def record(kind: str, text: str, when: float | None = None) -> None:
+def record(kind: str, text: str, when: float | None = None,
+           about: str | None = None) -> None:
     """One dated journal row. kind: 'user' | 'her' | 'thought' | 'event' |
-    'reflection' | 'summary'.
-    No-op until load() has run (tests never journal; the brain does)."""
+    'reflection' | 'summary'. `about` tags rows that DESCRIBE another time
+    (a day summary written today about '2026-11-08') so boot backfill can
+    tell 'already summarized' from 'not yet' — the row's own date can't."""
     if not _active or not _remember_enabled:
         return
     text = (text or "").strip()
@@ -275,6 +277,8 @@ def record(kind: str, text: str, when: float | None = None) -> None:
     ts = round(_now() if when is None else when)
     at = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
     entry = {"t": ts, "at": at, "kind": kind, "text": text[:400]}
+    if about:
+        entry["about"] = about
     s = store()
     s["lines"] = ([entry] + s["lines"])[:config.MEMORY_MAX_ENTRIES]
     _mark()

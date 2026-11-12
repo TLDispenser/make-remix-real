@@ -95,9 +95,11 @@ async def _memory_backfill() -> None:
         if not rows:
             return
         # --- day summaries: group by local day; each day BEFORE today that
-        # has rows but no summary row gets one paragraph, cap 2 per boot.
-        have = {str(r.get("at") or "")[:10] for r in rows
-                if r.get("kind") == "summary"}
+        # has rows but no summary ABOUT it gets one paragraph, cap 2 per
+        # boot. A summary row carries `about` = the day it describes (its
+        # own `at` is the moment it was WRITTEN, which is useless here).
+        have = {r.get("about") for r in rows
+                if r.get("kind") == "summary" and r.get("about")}
         today = time.strftime("%Y-%m-%d")
         by_day: dict = {}
         for r in rows:
@@ -114,7 +116,7 @@ async def _memory_backfill() -> None:
                 list(reversed(by_day[day])),        # oldest first
                 vitals=_latest_snapshot, aware=awareness.current())
             if text:
-                memory.record("summary", text)
+                memory.record("summary", text, about=day)
                 done += 1
                 print(f"remix-brain: day summary written for {day}")
         # --- missed reflection: rows exist after the newest reflection row

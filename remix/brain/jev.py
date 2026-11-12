@@ -173,7 +173,8 @@ class JevBrain:
     async def react(self, user_text: str, vitals: dict) -> Decision | None:
         """Stance + instant face. None when budget/exhausted/broken."""
         now = time.monotonic()
-        sig = _signature("react", user_text, vitals, self.recent_faces())
+        sig = _signature("react", user_text, vitals,
+                         self.recent_faces() + [bool(config.JEV_BLUSH)])
         hit = self._cache.get(sig)
         if hit and hit[0] > now:
             d = hit[1]._replace(from_cache=True)
@@ -257,7 +258,8 @@ class JevBrain:
         beats = beats[:4]
         now = time.monotonic()
         sig = _signature("act", user_text, {}, [beats, senses, judge,
-                                                dodge_on, intent])
+                                                dodge_on, intent,
+                                                bool(config.JEV_BLUSH)])
         hit = self._cache.get(sig)
         if hit and hit[0] > now:
             return hit[1]._replace(from_cache=True)
@@ -481,6 +483,19 @@ class JevBrain:
             },
         }
         if not partial:
+            # Blush (the third part of a face): a noul riding the SAME
+            # request — no extra call, no extra spend. Off = never asked.
+            if config.JEV_BLUSH:
+                q["blush"] = {
+                    "type": "noul",
+                    "instructions": (
+                        "Is she BLUSHING — the global cheek hatching, "
+                        "0..1? Yes when the line caught her out, flattered "
+                        "her, or flustered her: praise, sweetness, teasing "
+                        "she secretly enjoys, being thanked warmly. No for "
+                        "anger, fear, tiredness, deadpan business as "
+                        "usual. Rare: most lines are no."),
+                }
             # Phase 3 riders (plan 2.4.2 / 2.1.5): same request, no extra call.
             q["user_intent"] = {
                 "type": "choice", "criteria": dict(INTENT_OPTION_TEXT),
@@ -519,6 +534,16 @@ class JevBrain:
                 "type": "choice", "criteria": self._mouth_criteria(),
                 "instructions": f'Her MOUTH while she says beat {i}: "{quoted}"',
             }
+            if config.JEV_BLUSH:
+                q[f"blush{i}"] = {
+                    "type": "noul",
+                    "instructions": (
+                        f'Is she BLUSHING while she says beat {i} — the '
+                        "global cheek hatching, 0..1? Yes when the beat "
+                        "flusters or gives her away: shy warmth, a "
+                        "compliment she can't wave off, caught-out denial. "
+                        "No for grumbling, deadpan, anger. Rare."),
+                }
         return q
 
     def _eyes_criteria(self) -> dict:
@@ -528,6 +553,18 @@ class JevBrain:
         return {n: MOUTHS_TEXT[n] for n in self.vocab.mouths}
 
     # ------------------------------------------------------------- parsing
+
+    def _blush_of(self, answer, default: float = 0.0) -> float:
+        """A blush noul -> a clamped 0..1 level, 0 below the threshold.
+        Garbage, missing, or the switch off = the default (no blush)."""
+        if not config.JEV_BLUSH:
+            return default
+        if not isinstance(answer, dict):
+            return default
+        p = _f(answer.get("noul"))
+        if p is None or p < config.JEV_BLUSH_THRESHOLD:
+            return 0.0
+        return min(1.0, p)
 
     def _react_decision(self, resp: dict, latency: float,
                         label: str = "reaction",
@@ -540,6 +577,7 @@ class JevBrain:
         face = Face(
             self._pick(answers.get("eyes"), self.vocab.eyes, "eyes", []),
             self._pick(answers.get("mouth"), self.vocab.mouths, "mouth", []),
+            self._blush_of(answers.get("blush")),
         )
         conf = _confidence(answers.get("stance"))
         intent = commit_p = commit_when = None
@@ -584,6 +622,7 @@ class JevBrain:
             faces.append(Face(
                 self._pick(answers.get(f"eyes{i}"), self.vocab.eyes, "eyes", prev_e),
                 self._pick(answers.get(f"mouth{i}"), self.vocab.mouths, "mouth", prev_m),
+                self._blush_of(answers.get(f"blush{i}")),
             ))
         unseen = dodged = None
         if judge and isinstance(answers.get("unseen"), dict):

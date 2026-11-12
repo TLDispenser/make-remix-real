@@ -61,8 +61,8 @@ class JevTests(unittest.TestCase):
         d = run(jev.JevBrain(random.Random(1)).react("hey", VITALS))
         self.assertEqual(d.face, Face("tired", "smirk"))          # a mix no single drawing has
         q = self.calls[0]["questions"]
-        # Phase 3 riders ride the same request (intent + commitment check)
-        self.assertEqual(set(q), {"stance", "eyes", "mouth",
+        # Phase 3 riders + the blush noul ride the same request
+        self.assertEqual(set(q), {"stance", "eyes", "mouth", "blush",
                                   "user_intent", "commitment", "commit_when"})
         self.assertEqual(set(q["eyes"]["criteria"]), set(faces.EYES_TEXT))
         self.assertEqual(set(q["mouth"]["criteria"]), set(faces.MOUTHS_TEXT))
@@ -414,7 +414,8 @@ class ExchangeTests(unittest.TestCase):
             self.assertIn(c["eyes"], faces.EYES_TEXT)
             self.assertIn(c["mouth"], faces.MOUTHS_TEXT)
             self.assertNotIn("pose", c)
-        self.assertEqual(set(p["then"]), {"eyes", "mouth"})
+        # every wire form carries the explicit blush level (0 on plain faces)
+        self.assertEqual(set(p["then"]), {"eyes", "mouth", "blush"})
         self.assertNotIn("notice", by, "no captions when she has a voice (and no 'one sec' when fast)")
         self.assertIn("pose", by)                                    # the instant reaction came first
         # typed text echoes FIRST (for the human's own HUD/terminal), then

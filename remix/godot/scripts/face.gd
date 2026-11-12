@@ -375,9 +375,14 @@ func _ensure_lines(n: int) -> int:
 
 ## Blush toggle: the hatch is a GLOBAL overlay — it fades out of every pose
 ## when off and back into every pose when on (KEY_B in the app).
-func set_blush(on: bool) -> void:
-	_blush_on = on
-	_scalar_target("blush", 1.0 if on else 0.0)
+## The blush overlay's level. `on` is a bool (the app's KEY_B toggle) or a
+## 0..1 number from the wire (the brain's per-face blush); anything else
+## fades the hatching out.
+func set_blush(on: Variant) -> void:
+	var level := (1.0 if on else 0.0) if (on is bool) \
+			else clampf(float(on), 0.0, 1.0)
+	_blush_on = level > 0.0
+	_scalar_target("blush", level)
 
 
 func toggle_blush() -> bool:

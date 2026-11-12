@@ -110,6 +110,14 @@ class RetrievalTests(Phase3Base):
         self.assertNotIn("crimson ferret, noted.", memory.said_set())
         self.assertEqual(memory.search_fts("crimson ferret", limit=5), [])
 
+    def test_record_can_tag_the_day_a_summary_describes(self):
+        # a summary row's own date is when it was WRITTEN; `about` carries
+        # the day it DESCRIBES, so boot backfill can tell done from not-yet
+        memory.record("summary", "that day was chaos", about="2026-11-08")
+        row = memory.lines(limit=1)[0]
+        self.assertEqual("2026-11-08", row.get("about"))
+        self.assertEqual(time.strftime("%Y-%m-%d"), str(row.get("at"))[:10])
+
     def test_remember_toggle_pauses_recording(self):
         memory.set_remember(False)
         memory.record("user", "off the record")

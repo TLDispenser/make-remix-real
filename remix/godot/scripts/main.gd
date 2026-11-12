@@ -350,10 +350,14 @@ func _apply_face(d: Dictionary) -> void:
 	var look: Variant = _vec(d.get("look"))
 	var eyes := String(d.get("eyes", ""))
 	var mouth := String(d.get("mouth", ""))
-	if d.has("pose") or (eyes == "" and mouth == ""):
+	if d.has("pose") or (eyes == "" and mouth == "" and not d.has("blush")):
 		face.set_pose(String(d.get("pose", "default")), look)
 	if eyes != "" or mouth != "":
 		face.set_face(eyes, mouth, look)
+	if d.has("blush"):
+		# the brain sends the blush level explicitly with EVERY face (even 0),
+		# so a blush never sticks to the next expression
+		face.set_blush(d["blush"])
 
 
 func _send_text(text: String) -> void:
@@ -417,7 +421,7 @@ func _fire_due_cues(pos: float) -> void:
 
 
 func _apply_cue(c: Dictionary) -> void:
-	if c.has("pose") or c.has("eyes") or c.has("mouth"):
+	if c.has("pose") or c.has("eyes") or c.has("mouth") or c.has("blush"):
 		_apply_face(c)
 	elif c.has("look"):
 		var l: Variant = _vec(c["look"])
