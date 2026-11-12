@@ -9,11 +9,13 @@
 #   -> settle back to her baseline face.
 import asyncio
 import os
+import shutil
 import socket as _socket
+import subprocess
 import threading
 import time
 
-from . import audio, awareness, config, decisions, faces, jev, listening, memory, proactive, rules, speech, stt, tts, vitals, ws_server
+from . import audio, awareness, bits, config, decisions, faces, jev, listening, memory, proactive, rules, speech, stt, tts, vitals, ws_server
 from .faces import NEUTRAL, Face
 
 _rule: rules.RuleBrain | None = None
@@ -38,6 +40,12 @@ _face_ready = False              # Godot sent `ready`: she is actually visible
 _last_exchange_at = -1e12        # last time the user said anything
 _urgent: dict | None = None      # 6.4: raised while she's being ignored/muted
 _ALL_POSES = list(faces.POSES)
+_spoken_now: dict = {}           # the perform in flight: {pid, text} (mute reflex)
+_mute_pending = False            # a cut happened; one dry beat on unmute
+_mute_last_react_at = -1e12      # rate limit for the dry beat
+_escal_rungs: dict = {}          # ladder rung -> monotonic of its last fire
+_audio_task: asyncio.Task | None = None   # audio.py event source (Phase 4)
+_hypr_task: asyncio.Task | None = None    # Hyprland socket2 listener (Phase 4)
 
 SETTLE_S = 5.0                   # after she stops, how long until her face relaxes
 LOOK_POOL = [[-0.35, 0.1], [0.35, -0.1], [0.0, 0.2], [0.2, -0.15]]
@@ -57,7 +65,169 @@ async def _set_urgent(on: bool, reason: str = "") -> None:
     elif not on and _urgent is not None:
         print(f"remix-brain: urgent OFF ({_urgent.get('reason')} resolved)")
         _urgent = None
+        _escal_rungs.clear()
         await ws_server.send({"type": "urgent", "state": False})
+
+
+async def _on_audio_edge(quiet: bool) -> None:
+    """Phase 4 (plan 2.3 #1): the mute flip, seen live (pactl subscribe).
+    Muting her MID-LINE cuts the voice at once — stop + the line as a
+    caption + a flat look — the reflex is local and instant. The DRY BEAT
+    (one word about being muted) is Jev's `mute_react` call and the LLM
+    writes it: at most one per mute episode, rate-limited. No canned
+    '...rude.' — silence ships when nothing clean comes back."""
+    global _mute_pending, _mute_last_react_at
+    if _rule is None:
+        return
+    now = time.monotonic()
+    speaking = bool(_spoken_now) and now < _rule.speak_gate_until
+    if quiet and speaking:
+        line = _spoken_now.get("text") or ""
+        _spoken_now.clear()
+        await ws_server.send({"type": "stop"})   # voice AND face stop; `then` settles
+        if line:
+            await ws_server.send({"type": "notice", "text": line,
+                                  "seconds": min(14.0,
+                                                 max(3.5, len(line) * 0.045))})
+        await ws_server.send(Face("default", "default").msg(look=[0.0, 0.1]))
+        _mute_pending = True
+        decisions.log("mute_react", decisions.mode("mute_react"), jev=None,
+                      used="local",
+                      local="reflex: stop + caption + flat look")
+        print("remix-brain: muted mid-line — voice stopped, line captioned")
+        if decisions.mode("mute_react") == "live":
+            await _dry_beat("they just muted the sound while you were "
+                            "mid-sentence and the voice got cut off")
+    elif not quiet and not speaking and _mute_pending:
+        _mute_pending = False        # one dry beat per mute episode
+        if now - _mute_last_react_at < config.MUTE_REACT_COOLDOWN_S:
+            decisions.log("mute_react", decisions.mode("mute_react"), jev=None,
+                          used="local", local="cooldown",
+                          extra="unmute beat skipped")
+            return
+        if decisions.mode("mute_react") == "live":
+            await _dry_beat("the sound just came back after being muted "
+                            "mid-sentence")
+
+
+async def _dry_beat(situation: str) -> None:
+    """The mute/unmute dry beat: Jev says whether it's worth a line
+    (`mute_react` live), the LLM writes it, delivered captioned while the
+    room is quiet and spoken once they can hear her again. Never canned."""
+    global _mute_last_react_at
+    mode = decisions.mode("mute_react")
+    speak_p = None
+    if _jev is not None and config.JEV_ENABLED:
+        try:
+            d = await _jev.decide_proactive("mute_react", situation,
+                                            ["flat", "pout"])
+            speak_p = (d or {}).get("speak_p")
+        except Exception as e:
+            print(f"remix-brain: mute beat jev failed ({e!r})")
+    wants = (speak_p is not None and speak_p >= config.JEV_SPEAK_P)
+    decisions.log("mute_react", mode,
+                  jev=f"{speak_p:.2f}" if speak_p is not None else None,
+                  used=("jev" if (mode == "live" and wants) else "local"),
+                  local="one dry line", extra=situation[:60])
+    if not (mode == "live" and wants):
+        return
+    try:
+        text = await asyncio.wait_for(
+            speech.generate_proactive_line(
+                {"trigger": "mute_react", "situation": situation,
+                 "stance": "flat"},
+                vitals=_latest_snapshot, aware=awareness.current()),
+            timeout=config.CHATTER_TIMEOUT_S)
+    except Exception as e:
+        print(f"remix-brain: mute beat generation failed ({e!r})")
+        return
+    if not text:
+        return                      # silence beats filler (her own rule)
+    _mute_last_react_at = time.monotonic()
+    # Captioned while the room is quiet, spoken once they can hear her:
+    # _deliver_proactive's own voice rule (chatter auto) already knows that.
+    await _deliver_proactive({"trigger": "mute_react", "text": text,
+                              "face": Face("default", "default")})
+
+
+def _hypr_focus_cmd(match: str) -> list | None:
+    """The rung-3 command: bring her forward with a Hyprland dispatch.
+    `focuswindow` takes the class matcher as a separate argument (the `^`
+    caret is batch syntax and makes the dispatch silently do nothing)."""
+    cls = next((x.strip().lower() for x in (match or "").split(",")
+                if x.strip()), None)
+    return (["hyprctl", "dispatch", "focuswindow", f"class:{cls}"]
+            if cls else None)
+
+
+async def _maybe_escalate(source: str, text: str = "") -> None:
+    """Phase 4 (plan 2.3 #3): the attention ladder, started by decision.
+    Jev's `escalate` kind decides whether what she has to say deserves
+    pulling your attention. Rung 1 = the Godot urgent marker + attention
+    request (the bar glows). Rung 2 = notify-send with urgency set.
+    Rung 3 = a Hyprland dispatch to bring her forward — explicit opt-in
+    (REMIX_ESCALATE_DISPATCH), it can steal focus. The local fallback
+    (shadow/off) is rung 1 only, for the urgent triggers and for anything
+    she says while out of sight. Each rung has its own cooldown, and
+    everything clears the moment you focus her or reply (_set_urgent)."""
+    oos = awareness.out_of_sight()
+    urgent_source = source in ("muted_long", "idle_deep")
+    if not config.OOS_URGENT and not urgent_source:
+        return
+    local_yes = urgent_source or (oos is True and config.OOS_URGENT)
+    mode = decisions.mode("escalate")
+    if not local_yes:
+        return          # she is right there and nothing urgent fired: no ladder
+    situation = (f"she just said something ({source}) while she is out of "
+                 f"sight (not focused, not pinned to your workspace, or "
+                 f"covered)" if oos is True else
+                 f"she was muted or ignored long enough to say so ({source})")
+    jev_p = None
+    if mode != "off" and _jev is not None and config.JEV_ENABLED:
+        try:
+            d = await _jev.decide_proactive("escalate", situation, ["flat"])
+            jev_p = (d or {}).get("speak_p")
+        except Exception as e:
+            print(f"remix-brain: escalate decision failed ({e!r})")
+        decisions.log("escalate", mode,
+                      jev=f"{jev_p:.2f}" if jev_p is not None else None,
+                      used="local",
+                      local="rung 1" if local_yes else "stay put",
+                      extra=f"[{source}] oos={oos}")
+    ship = ((mode == "live" and jev_p is not None
+             and jev_p >= config.JEV_SPEAK_P)
+            or (mode != "live" and local_yes))
+    if not ship:
+        return
+    await _set_urgent(True, source)     # rung 1 (idempotent — may already burn)
+    if mode != "live" or not _urgent:
+        return
+    now = time.monotonic()
+    if (config.ESCALATE_NOTIFY and shutil.which("notify-send")
+            and now - _escal_rungs.get(2, -1e12)
+            >= config.ESCALATE_NOTIFY_COOLDOWN_S):
+        _escal_rungs[2] = now
+        body = (text or "she has something for you").strip()[:140]
+        try:
+            await asyncio.to_thread(
+                subprocess.run,
+                ["notify-send", "-u", "critical", "-a", "Remix", "-t",
+                 str(int(config.NOTIFY_TIMEOUT_S)), "Remix", body],
+                capture_output=True, timeout=5.0)
+            print("remix-brain: escalation rung 2 (notify-send)")
+        except Exception as e:
+            print(f"remix-brain: notify-send failed ({e!r})")
+    cmd = _hypr_focus_cmd(config.SELF_MATCH)
+    if (config.ESCALATE_DISPATCH and cmd and shutil.which("hyprctl")
+            and now - _escal_rungs.get(3, -1e12)
+            >= config.ESCALATE_DISPATCH_COOLDOWN_S):
+        _escal_rungs[3] = now
+        try:
+            await asyncio.to_thread(
+                subprocess.run, cmd, capture_output=True, timeout=5.0)
+            print("remix-brain: escalation rung 3 (hyprctl focuswindow)")
+        except Exception as e:
+            print(f"remix-brain: hyprctl dispatch failed ({e!r})")
 
 
 async def memory_loop() -> None:
@@ -152,6 +322,10 @@ async def body_loop(rule: rules.RuleBrain) -> None:
 
         # ---------------------------------------------------- watch reflexes
         aware = awareness.current()
+        # Phase 4 (plan 2.3 done-when): the bar clears the moment you look
+        # at her — the vitals tick is fast enough to feel instant.
+        if _urgent and aware.get("self_focused"):
+            await _set_urgent(False, "you looked")
         if (aware.get("up_s", 0.0) > 15.0      # skip the boot sighting flurry
                 and time.monotonic() >= rule.speak_gate_until):
             app = aware.get("app")
@@ -528,6 +702,7 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
         _rule.pause_for_speech(spoken.total + 1.0)
         await ws_server.send({"type": "perform", "id": pid, "audio": spoken.path,
                               "cues": cues, "then": face_list[-1].spec()})
+        _spoken_now.update(pid=pid, text=reply)   # the mute reflex watches this
     else:
         _silent_task = asyncio.create_task(_play_silent(face_list, beat_list, looks))
         _rule.pause_for_speech(sum(max(0.8, len(b) * 0.06) for b in beat_list))
@@ -538,6 +713,9 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
     print(f"remix-brain: reply ready ({len(beat_list)} beats, {len(reply)} chars, "
           f"voice={'espeak' if spoken else 'none'}, "
           f"faces={[str(f) for f in face_list]}) -> {pid}")
+    # Phase 4 (plan 2.3 done-when): she answered while out of sight — the
+    # bar glows within a second, and clears the moment you look at her.
+    await _maybe_escalate("reply", reply)
 
 
 # ------------------------------------------------- proactive lines (Phase 6)
@@ -700,6 +878,7 @@ async def _deliver_proactive(line: dict) -> None:
         _rule.pause_for_speech(spoken.total + 1.0)
         await ws_server.send({"type": "perform", "id": pid, "audio": spoken.path,
                               "cues": cues, "then": face.spec()})
+        _spoken_now.update(pid=pid, text=text)   # the mute reflex watches this
     else:
         _silent_task = asyncio.create_task(_play_silent(face_list, beat_list, looks))
         _rule.pause_for_speech(sum(max(0.8, len(b) * 0.06) for b in beat_list))
@@ -730,13 +909,23 @@ async def proactive_loop() -> None:
         await asyncio.sleep(config.PROACTIVE_TICK_S)
         if _pro is None or not _pro.enabled or not _face_ready or _rule is None:
             continue
+        # Phase 4 (plan 2.3 #3): the ladder clears the moment you look at her.
+        if _urgent and awareness.current().get("self_focused"):
+            await _set_urgent(False, "you looked")
+        bit_edges = None
+        if config.BITS:
+            try:
+                bit_edges = await asyncio.to_thread(bits.poll)
+            except Exception as e:       # a broken bit never stops the heart
+                print(f"remix-brain: bits poll failed ({e!r})")
         try:
             plan = _pro.tick(
                 awareness.current(), _latest_snapshot,
                 mic_open=bool(_ptt and _ptt.listening),
                 last_exchange_at=_last_exchange_at,
                 busy_until=_rule.speak_gate_until,
-                commitments=memory.due_commitments())
+                commitments=memory.due_commitments(),
+                bit_edges=bit_edges)
         except Exception as e:               # chatter must never crash the brain
             print(f"remix-brain: proactive tick failed ({e!r})")
             continue
@@ -792,12 +981,18 @@ async def proactive_loop() -> None:
         decisions.log("outcome", "-", jev=None,
                       used=("caption" if form == "caption" else "spoke"),
                       local="speak", extra=f"[{plan.get('trigger')}]")
+        # Phase 4: she said her piece while out of sight — the ladder starts.
+        if awareness.out_of_sight() is True:
+            await _maybe_escalate(str(plan.get("trigger") or "noticed"), text)
         if plan.get("urgent"):
             # she said her piece about being ignored; now flag the window
             await _set_urgent(True, plan.get("trigger") or "ignored")
-        # muted nag resolved itself → clear the flag (case: yell, then un-mute)
-        if _urgent and not (awareness.current().get("muted")
-                            and awareness.current().get("idle_s", 0) > 90):
+        # muted nag resolved itself → clear the flag (case: yell, then un-mute).
+        # Phase 4: this auto-clear is ONLY for the legacy ignore triggers —
+        # an out-of-sight escalation stays lit until you look or reply.
+        if (_urgent and _urgent.get("reason") in ("muted_long", "idle_deep")
+                and not (awareness.current().get("muted")
+                         and awareness.current().get("idle_s", 0) > 90)):
             await _set_urgent(False, "the room changed")
 
 
@@ -906,6 +1101,8 @@ async def _on_command(text: str) -> None:
 def _on_perform_done(m: dict) -> None:
     print(f"remix-brain: perform {m.get('id')} done ok={m.get('ok', True)}"
           + (f" ({m.get('error')})" if m.get("error") else ""))
+    if _spoken_now.get("pid") == m.get("id"):
+        _spoken_now.clear()
     if _rule:
         _rule.pause_for_speech(0.6)
     if m.get("ok", True):
@@ -1045,6 +1242,7 @@ def _on_ptt_msg(m: dict) -> None:
 async def main() -> None:
     started = time.monotonic()
     global _rule, _jev, _ptt, _loop, _gate_task, _pro, _aware_task, _proactive_task
+    global _audio_task, _hypr_task
     _loop = asyncio.get_running_loop()
     memory.load()                      # journal is live from here on
     _rule = rules.RuleBrain()
@@ -1083,18 +1281,25 @@ async def main() -> None:
           f"{'ON — credits, partial lines leave the machine' if _listener.peek_enabled else 'off'}; "
           f"voice partials "
           f"{'on' if config.LISTEN and config.PTT_ENABLED and config.LISTEN_STT_PARTIALS else 'off'})")
+    audio.on_change(_on_audio_edge)   # Phase 4: the mute flip reflex
     body_task = asyncio.create_task(body_loop(_rule))
     memory_task = asyncio.create_task(memory_loop())   # flush + GitHub mirror
     if config.NOTICE_GATE:
         _gate_task = asyncio.create_task(audio.gate_loop())  # wpctl mute/volume
+        if config.AUDIO_EVENTS:
+            _audio_task = asyncio.create_task(audio.event_loop())
     if config.AWARENESS:
         _aware_task = asyncio.create_task(awareness.watch_loop())
+        _hypr_task = asyncio.create_task(awareness.events_loop())
         _proactive_task = asyncio.create_task(proactive_loop())
     _backfill_task = asyncio.create_task(_memory_backfill())
     print(f"remix-brain: awareness {'on' if config.AWARENESS else 'off'} "
           f"(app names only, titles redacted), proactive "
           f"{'on' if config.PROACTIVE and config.AWARENESS else 'off'} "
           f"(max 1 line / {config.PROACTIVE_MIN_GAP_S / 60:.0f} min)")
+    if config.BITS:
+        print(f"remix-brain: bits on "
+              f"({len(config.BIT_COOLDOWN_FLOORS_S)} wall-cooldowns)")
     print(f"remix-brain: decision modes: {decisions.summary()}"
           f"{' (log off)' if not config.DECISIONS_LOG else ''}")
     try:
@@ -1111,7 +1316,9 @@ async def main() -> None:
         body_task.cancel()
         _cancel(memory_task)
         _cancel(_gate_task)
+        _cancel(_audio_task)
         _cancel(_aware_task)
+        _cancel(_hypr_task)
         _cancel(_proactive_task)
         _cancel(_backfill_task)
         if _ptt:

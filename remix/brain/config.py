@@ -138,6 +138,51 @@ IDLE_GENTLE_S = float(_env("IDLE_GENTLE_S", "900.0"))     # 15 min -> "still the
 IDLE_DEEP_S = float(_env("IDLE_DEEP_S", "2700.0"))        # 45 min -> soft check-in
 AWAY_S = float(_env("AWAY_S", "1800.0"))                  # 30 min = "was away"
 MUTED_NAG_S = float(_env("MUTED_NAG_S", "600.0"))         # quiet 10 min -> comment
+
+# ---- Phase 4 (plan 2.3): bits. Policy is a decision (Jev's `form`), not a
+# table — the only config here is walls: switch, floors, the daily cap
+# proactive already has, and "needs the room quiet" which the caption rule
+# already enforces. Each bit fires at most once per crossing (edge-gated).
+BITS = _env("BITS", "1") == "1"              # the local bits at all
+AUDIO_EVENTS = _env("AUDIO_EVENTS", "1") == "1"   # pactl subscribe event source
+# suspend/resume: the brain is frozen during sleep; wall time races monotonic
+# by the sleep length. A gap this big is "she was asleep", not clock noise.
+RESUME_MIN_S = float(_env("RESUME_MIN_S", "120"))
+BIT_COOLDOWN_FLOORS_S = {   # per-bit minimum spacing on top of MIN_GAP
+    "lid_closed": 14400.0,   "lid_opened": 14400.0,
+    "suspend": 7200.0,
+    "screen_locked": 14400.0,
+    "headphones_on": 3600.0, "headphones_off": 3600.0,
+    "hdmi_on": 3600.0,       "hdmi_off": 3600.0,
+    "bt_connected": 7200.0,  "bt_gone": 7200.0,
+    "wifi_up": 7200.0,       "wifi_down": 7200.0,
+    "brightness_changed": 7200.0,
+    "usb_plugged": 7200.0,
+    "screenshot_taken": 7200.0,
+}
+SCREENSHOT_DIRS = tuple(     # where screenshots typically land (grim et al.)
+    p for p in (os.path.expanduser(x) for x in
+                (_env("SCREENSHOT_DIRS", "~/Pictures/Screenshots") or "").split(":")
+                if x.strip()) if p)
+
+# ---- escalation ladder (plan 2.3 #3). Rung 1 = the Godot urgent marker +
+# attention request (the bar). Rung 2 = notify-send with urgency set.
+# Rung 3 = a Hyprland dispatch to bring her forward — explicit opt-in, it
+# can steal focus. Each rung has its own cooldown; everything clears the
+# moment you focus her or reply. Jev's `escalate` decision starts the
+# ladder in live mode; the local fallback (shadow/off) is rung 1 only.
+OOS_URGENT = _env("OOS_URGENT", "1") == "1"   # local rung 1: she said something out of sight
+ESCALATE_NOTIFY = _env("ESCALATE_NOTIFY", "1") == "1"
+ESCALATE_DISPATCH = _env("ESCALATE_DISPATCH", "0") == "1"
+ESCALATE_NOTIFY_COOLDOWN_S = float(_env("ESCALATE_NOTIFY_COOLDOWN_S", "300"))
+ESCALATE_DISPATCH_COOLDOWN_S = float(_env("ESCALATE_DISPATCH_COOLDOWN_S", "600"))
+NOTIFY_TIMEOUT_S = float(_env("NOTIFY_TIMEOUT_S", "8000"))   # notify-send -t, ms
+
+# mute/unmute live reaction (plan 2.3 #1): the reflex (stop + caption + flat
+# look) is local and instant; the DRY BEAT (a word about being muted) is
+# Jev's `mute_react` call in live mode, at most one per mute episode and
+# rate-limited by this floor. There is no canned "...rude."
+MUTE_REACT_COOLDOWN_S = float(_env("MUTE_REACT_COOLDOWN_S", "900"))
 SESSION_LONG_S = float(_env("SESSION_LONG_S", "10800.0")) # 3 h -> stretch nudge
 APP_STUCK_S = float(_env("APP_STUCK_S", "5400.0"))        # 90 min same app
 QUIET_HOURS = _env("QUIET_HOURS", "")                     # "1-8" = no chatter 01:00-08:59
@@ -188,6 +233,8 @@ JEV_DECIDE_INTENT = _mode("JEV_DECIDE_INTENT", "shadow")   # user intent (questi
 JEV_JUDGE_DODGE = _mode("JEV_JUDGE_DODGE", "shadow")       # dodge judge for question/command
 JEV_DECIDE_COMMITMENT = _mode("JEV_DECIDE_COMMITMENT", "shadow")  # commitment/reminder detection
 JEV_RANK_MEMORY = _mode("JEV_RANK_MEMORY", "off")          # ranking memory candidates with Jev (default off)
+JEV_DECIDE_ESCALATE = _mode("JEV_DECIDE_ESCALATE", "shadow")  # start the ladder? (Phase 4)
+JEV_DECIDE_MUTE = _mode("JEV_DECIDE_MUTE", "shadow")          # dry beat on mute/unmute? (Phase 4)
 JEV_DODGE_THRESHOLD = float(_env("JEV_DODGE_THRESHOLD", "0.7"))
 JEV_COMMIT_P = float(_env("JEV_COMMIT_P", "0.6"))   # live commitment threshold
 # Blush: the third part of a face. BLUSH_BASELINE is the floor the wire value

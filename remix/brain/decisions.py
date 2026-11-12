@@ -38,6 +38,10 @@ KINDS = {
                    config.JEV_DECIDE_COMMITMENT),
     "memory_rank": ("ranking retrieved memory candidates for relevance",
                     config.JEV_RANK_MEMORY),
+    "escalate": ("whether what she has to say deserves pulling your attention",
+                 config.JEV_DECIDE_ESCALATE),
+    "mute_react": ("whether a mute/unmute moment earns a dry caption",
+                   config.JEV_DECIDE_MUTE),
 }
 
 # runtime overrides (e.g. /decisions); boot defaults come from KINDS

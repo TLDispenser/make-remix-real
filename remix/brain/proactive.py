@@ -66,6 +66,23 @@ STANCE_CHOICES = {
     "ambient": ["flat", "playful", "pout"],
     "poke": ["playful", "tsun", "flat"],
     "commitment_due": ["concerned", "flat", "playful"],
+    # --- Phase 4 bits (plan 2.3): the laptop's own life. Narrow stances:
+    # a bit states a fact, her mood shades it.
+    "lid_closed": ["flat", "pout", "concerned"],
+    "lid_opened": ["playful", "flat"],
+    "suspend": ["flat", "playful", "tsun"],
+    "screen_locked": ["flat", "pout"],
+    "headphones_on": ["tsun", "playful", "flat"],
+    "headphones_off": ["flat", "playful"],
+    "hdmi_on": ["playful", "flat", "tsun"],
+    "hdmi_off": ["flat", "playful"],
+    "bt_connected": ["playful", "flat", "tsun"],
+    "bt_gone": ["flat", "pout"],
+    "wifi_up": ["playful", "tsun", "flat"],
+    "wifi_down": ["concerned", "flat"],
+    "brightness_changed": ["flat", "playful", "pout"],
+    "usb_plugged": ["playful", "flat"],
+    "screenshot_taken": ["playful", "tsun", "flat"],
 }
 
 # Per-trigger minimum spacing (seconds), on top of the global MIN_GAP.
@@ -85,6 +102,9 @@ TRIGGER_COOLDOWN_S = {
     "ambient": config.AMBIENT_COOLDOWN_S,
     "commitment_due": 1.0,    # edge-gated: each commitment fires once
 }
+# Phase 4 bits: cooldown FLOORS live in config.BIT_COOLDOWN_FLOORS_S (walls
+# are config, the policy is a decision); this table gets them merged in.
+TRIGGER_COOLDOWN_S.update(config.BIT_COOLDOWN_FLOORS_S)
 
 # Triggers whose room-notice doubles as the "urgent" flag (6.4: she's being
 # ignored/muted and got pissed about it; main raises the marker).
@@ -232,12 +252,15 @@ class Proactive:
     def tick(self, aware: dict, vitals: dict | None = None, now: float | None = None,
              mic_open: bool = False, last_exchange_at: float | None = None,
              busy_until: float = 0.0, wall_hour: int | None = None,
-             commitments: list | None = None) -> dict | None:
+             commitments: list | None = None,
+             bit_edges: list | None = None) -> dict | None:
         """One engine step. Returns {'trigger','stance','face','look','aim',
         'situation'} — the urge, never the words. `commitments` carries due
         promises/reminders (wall-clock checked by the caller); when present
         and due, the first one becomes a proactive event like any other
-        (plan 2.1.5/2.1.6: no separate callback engine)."""
+        (plan 2.1.5/2.1.6: no separate callback engine). `bit_edges` carries
+        the Phase-4 laptop bits (bits.poll()): plain facts, edge-gated by
+        the caller, cooldown-floored here."""
         now = time.monotonic() if now is None else now
         aware = aware or {}
         vitals = vitals or {}
@@ -308,6 +331,14 @@ class Proactive:
             return None
 
         # --- candidates, most urgent first ---
+        # Phase-4 bit edges (first due one wins; cooldown floor applies):
+        bit_plan = None
+        bit_fact = ""
+        for b in (bit_edges or []):
+            t = str(b.get("trigger") or "")
+            if t and self._due(t, now):
+                bit_plan, bit_fact = t, str(b.get("fact") or "").strip()
+                break
         plan = None
         due_commitment = None
         if not self.greeted:
@@ -321,6 +352,8 @@ class Proactive:
         elif commitments and self._due("commitment_due", now):
             due_commitment = dict(commitments[0])
             plan = "commitment_due"
+        elif bit_plan is not None:
+            plan = bit_plan            # the laptop just did something
         elif plug_edge:
             plan = "plugged"
         elif away and self._due("welcome_back", now):
@@ -369,21 +402,25 @@ class Proactive:
         if plan in ("idle_gentle", "idle_deep"):
             self.episode[plan[5:]] = True
 
+        situation = (bit_fact if (bit_plan is not None and plan == bit_plan
+                                  and bit_fact)
+                     else _situation(
+                         plan, aware, batt,
+                         away_mins=round((_f(prev_idle) or 0) / 60)
+                         if plan == "welcome_back" else None,
+                         stuck_mins=round((now - aware["app_since"]) / 60)
+                         if plan == "app_stuck" and aware.get("app_since") is not None
+                         else None,
+                         app=opened_app if plan == "app_opened" else closed_app,
+                         commitment=due_commitment))
+
         return {"trigger": plan, "stance": stance,
                 "face": STANCE_FACE.get(stance, POSES["default"]),
                 "look": CONCERNED_LOOK if stance == "concerned" else None,
                 "urgent": plan in URGENT_ON,
                 "aim": opened_app if plan == "app_opened" else None,
                 "commitment": due_commitment,
-                "situation": _situation(
-                    plan, aware, batt,
-                    away_mins=round((_f(prev_idle) or 0) / 60)
-                    if plan == "welcome_back" else None,
-                    stuck_mins=round((now - aware["app_since"]) / 60)
-                    if plan == "app_stuck" and aware.get("app_since") is not None
-                    else None,
-                    app=opened_app if plan == "app_opened" else closed_app,
-                    commitment=due_commitment)}
+                "situation": situation}
 
     def force(self, aware: dict | None = None, vitals: dict | None = None,
               now: float | None = None) -> dict | None:

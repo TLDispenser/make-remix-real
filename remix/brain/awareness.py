@@ -30,6 +30,7 @@
 # "title" ONLY when the title policy let one through (absent otherwise).
 import asyncio
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -261,14 +262,44 @@ def build_around(clients: list, monitors: list, redactor=None,
         if k not in seen:
             seen.add(k)
             uniq.append(a)
+    mon_ws = next((m["ws"] for m in monitors if m["id"] == me["monitor"]), None)
+    covered = max((w["covered"] for w in here), default=0.0)
     return {"self": {"x": me["x"], "y": me["y"], "w": me["w"], "h": me["h"],
-                     "focused": me["focused"], "monitors": len(monitors)},
+                     "focused": me["focused"], "pinned": me["pinned"],
+                     "ws": me["ws"], "mon_ws": mon_ws, "covered": covered,
+                     "monitors": len(monitors)},
             "windows": here[:max(0, max_n)], "elsewhere": uniq[:max(0, max_n)]}
+
+
+def out_of_sight_of(a: dict | None) -> bool | None:
+    """Phase 4 (plan 2.3 #2): is she VISIBLE right now? First-class local
+    state, pure: focused = visible; mostly covered = hidden; unpinned on
+    another workspace = hidden; pinned (all workspaces) or same active
+    workspace = visible. None = can't tell (no self window, no monitors)."""
+    me = (a or {}).get("self")
+    if not me:
+        return None
+    if me.get("focused"):
+        return False
+    if (me.get("covered") or 0.0) >= 0.6:
+        return True
+    if me.get("pinned"):
+        return False
+    mon_ws = me.get("mon_ws")
+    if mon_ws is None or me.get("ws") is None:
+        return None
+    return me["ws"] != mon_ws
 
 
 def around() -> dict:
     """Her latest surroundings ({self, windows, elsewhere}); empty when unknown."""
     return _state.get("around") or {"self": None, "windows": [], "elsewhere": []}
+
+
+def out_of_sight() -> bool | None:
+    """The latest out-of-sight answer (True hidden / False visible /
+    None unknown). Phase 4 first-class state — escalations key off it."""
+    return _state.get("out_of_sight")
 
 
 def find_mentioned(text: str) -> dict | None:
@@ -556,9 +587,11 @@ def _observe_around(now: float) -> None:
         mons = parse_monitors_json(_hyprctl(["monitors", "-j"]) or "")
         if mons:
             _monitors, _monitors_at = mons, now
-    _state["around"] = build_around(clients, _monitors,
-                                    redactor=redact,
-                                    max_n=config.SURROUNDINGS_MAX)
+    view = build_around(clients, _monitors,
+                        redactor=redact,
+                        max_n=config.SURROUNDINGS_MAX)
+    _state["around"] = view
+    _state["out_of_sight"] = out_of_sight_of(view)
 
 
 def _observe_cursor(now: float) -> None:
@@ -605,13 +638,98 @@ def current() -> dict:
 
 async def watch_loop() -> None:
     """Background poller. Keeps the snapshot warm so request-time code never
-    waits on a subprocess."""
+    waits on a subprocess. Phase 4 (plan 2.3 #4): Hyprland's event socket
+    (socket2) wakes it the instant something happens (workspace change,
+    focus, open/close, fullscreen, pin...); the tick remains as a fallback
+    for the senses no socket can tell her about (cursor idle, battery)."""
+    global _dirty
     while True:
         try:
             await refresh()
         except Exception as e:     # a sense must never take the brain down
             print(f"remix-brain: awareness poll failed ({e!r})")
-        await asyncio.sleep(config.AWARENESS_INTERVAL_S)
+        await _sleep_or_wake(config.AWARENESS_INTERVAL_S)
+
+
+async def _sleep_or_wake(timeout: float) -> bool:
+    """Sleep `timeout`, or return early (True) when a socket2 event woke us.
+    Survives the boot race where no event has arrived yet (_dirty None)."""
+    global _dirty
+    try:
+        if _dirty is None:
+            _dirty = asyncio.Event()
+        await asyncio.wait_for(_dirty.wait(), timeout=timeout)
+        _dirty.clear()
+        return True
+    except asyncio.TimeoutError:
+        return False
+    except Exception as e:         # the poller must outlive any wake hiccup
+        print(f"remix-brain: awareness wait hiccup ({e!r})")
+        await asyncio.sleep(1.0)
+        return False
+
+
+# ------------------------------------------------------- socket2 (events)
+
+_socket2_events = {   # event names that change something she can sense
+    "workspace", "workspacev2", "focusedmon", "activemon",
+    "activewindow", "activewindowv2", "openwindow", "closewindow",
+    "movewindow", "movewindowv2", "movemonitor", "fullscreen", "pin",
+    "changefloatingnode", "activespecial", "urgent",
+}
+_dirty: asyncio.Event | None = None
+
+
+def _wake() -> None:
+    global _dirty
+    if _dirty is None:            # created on the running loop's first use
+        _dirty = asyncio.Event()
+    _dirty.set()
+
+
+def event_relevant(line: str) -> bool:
+    """`activewindow>>kitty,cat` -> True (something moved). `unknown` names
+    are ignored (older Hyprland versions name some events differently)."""
+    name = (line or "").split(">>", 1)[0].strip()
+    return name in _socket2_events
+
+
+def _socket2_path() -> str | None:
+    his = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    xrd = os.environ.get("XDG_RUNTIME_DIR")
+    return (f"{xrd}/hypr/{his}/.socket2.sock"
+            if his and xrd else None)
+
+
+async def events_loop() -> None:
+    """Read Hyprland's socket2 until the compositor goes away, waking the
+    watch loop on every relevant event. Ends quietly when not on Hyprland."""
+    path = _socket2_path()
+    if not path:
+        return
+    while True:
+        try:
+            reader, writer = await asyncio.open_unix_connection(path)
+        except OSError:
+            return                 # not running under Hyprland: polling only
+        try:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break          # compositor restarted: try again
+                if event_relevant(line.decode("utf-8", "replace")):
+                    _wake()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"remix-brain: hyprland socket2 hiccup ({e!r})")
+            await asyncio.sleep(2.0)
+        finally:
+            try:
+                writer.close()
+            except Exception:
+                pass
+            await asyncio.sleep(2.0)
 
 
 def describe(aware: dict | None = None) -> str:
@@ -626,6 +744,9 @@ def describe(aware: dict | None = None) -> str:
                 else "active")
     bits.append({True: "AC", False: "battery", None: "power?"}[s.get("plugged")])
     bits.append("quiet" if s.get("muted") else "audible")
+    oos = s.get("out_of_sight")
+    if oos is not None:
+        bits.append("out of sight" if oos else "in sight")
     head = " ".join(bits)
     extra = describe_around(s.get("around"))
     if s.get("open_apps"):
@@ -646,7 +767,8 @@ def reset_for_test() -> None:
     _state.update(around=None, app=None, fullscreen=False, self_focused=False,
                   idle_s=None, plugged=None,
                   muted=None, muted_s=None, app_since=None,
-                  up_s=0.0, at=0.0, open_apps=None)
+                  up_s=0.0, at=0.0, open_apps=None,
+                  out_of_sight=None)
     _state.pop("title", None)
     _last_cursor = None
     _last_app = None
