@@ -15,7 +15,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import config, grounding, memory
+from . import config, decisions, grounding, memory
 
 # The user-authored system prompt, verbatim. Four placeholders get wired at
 # call time: {machine} (hardware blurb), {user_name} (REMIX_USER_NAME),
@@ -425,6 +425,53 @@ async def _grounded(reply: str, messages: list, user_text: str,
     return second
 
 
+DODGE_NOTE = (
+    "Your last reply dodged what they asked — it avoided answering or doing "
+    "the thing. Say it again: grumble first if you want, that's your way, "
+    "but this time actually answer the question or do the thing they asked. "
+    "Short."
+)
+
+
+async def generate_undodged(user_text: str, reply: str,
+                            vitals: dict | None = None,
+                            stance: str | None = None,
+                            context: dict | None = None,
+                            aware: dict | None = None) -> str | None:
+    """One plain-prose retry after the dodge judge (live) flagged her reply
+    (plan 2.4.3). Her second answer, in her voice; the caller ships it either
+    way. None = pool down, keep the first reply. Bookkeeping: the dodged line
+    was never spoken, so it leaves the conversation history, and the journal
+    records the second line as another 'she said' row (the draft stays —
+    an honest trail, not a correction)."""
+    messages = ([{"role": "system", "content":
+                  build_system_prompt(vitals, stance, context, aware,
+                                      user_text=user_text)}]
+                + list(_history)
+                + [{"role": "system", "content": DODGE_NOTE}])
+    second = await _call_llm(messages)
+    if not second:
+        return None
+    second = strip_stage_directions(second).strip()
+    if not second:
+        return None
+    problems = grounding.check(second, user_text, "", vitals, aware)
+    if problems:
+        decisions.log("grounding", "-", jev=None, used="dodge-retry-flagged",
+                      local="word-list check", extra="; ".join(problems)[:120])
+    if (_history and _history[-1].get("role") == "assistant"
+            and _history[-1].get("content") == reply):
+        _history[-1]["content"] = second
+    memory.record("her", second)
+    return second
+
+
+def had_exchanges() -> bool:
+    """Whether THIS session had any real back-and-forth (drives the parting
+    reflection at shutdown)."""
+    return any(m["role"] == "user" for m in _history)
+
+
 def add_assistant(text: str) -> None:
     """Record a line she said without a user prompt (proactive chatter), so
     the next real exchange knows she just said that. Also journals it."""
@@ -566,3 +613,71 @@ async def generate_proactive_line(plan: dict, vitals: dict | None = None,
                     await _call_llm(messages, temperature=0.85))
                 note = reject(cleaned)
         return cleaned if note is None else None
+
+
+# ------------------------------------------------- reflections & summaries
+
+REFLECTION_ADDENDUM = """
+
+REFLECTION
+Not a reply to them: a private note to yourself. One plain question is put to
+you — what did you learn about this person? — and you answer it in your own
+voice, from your journal rows alone. Two or three sentences, no list, no
+stage directions. Nothing you can't point to in the rows above. Reply with
+the note and nothing else.
+"""
+
+SUMMARY_ADDENDUM = """
+
+DAY SUMMARY
+Not a reply to them: one plain paragraph about a past day, in your voice,
+built ONLY from the rows shown. What happened, what they were doing, what
+you noticed. No list, no stage directions, no invention. Reply with the
+paragraph and nothing else.
+"""
+
+
+async def _write_note(addendum: str, question: str, rows: list,
+                      vitals: dict | None = None,
+                      aware: dict | None = None) -> str | None:
+    """Shared plumbing for reflection/day-summary: one LLM call, her voice,
+    grounded in the rows given. None when the pool is down or empty."""
+    if not rows:
+        return None
+    shown = "\n".join(
+        f"- {e.get('at')} ({e.get('kind')}): "
+        + re.sub(r"\s+", " ", str(e.get("text") or ""))[:200]
+        for e in rows)
+    messages = ([{"role": "system",
+                  "content": build_system_prompt(vitals, None, None, aware)
+                  + addendum + "\nJOURNAL ROWS\n" + shown + "\n"}]
+                + [{"role": "user", "content": question}])
+    text = await _call_llm(messages, temperature=0.6)
+    if not text:
+        return None
+    text = strip_stage_directions(text).strip()
+    return text or None
+
+
+async def generate_reflection(vitals: dict | None = None,
+                              aware: dict | None = None) -> str | None:
+    """'What did you learn about this person?' — stored as written, no
+    parsing (plan 2.1.4). Called at graceful shutdown, or at the next boot
+    when shutdown was too abrupt."""
+    rows = list(reversed(memory.lines(limit=24)))   # oldest first
+    return await _write_note(REFLECTION_ADDENDUM,
+                             "What did you learn about this person?",
+                             rows, vitals, aware)
+
+
+async def generate_day_summary(day_rows: list,
+                               vitals: dict | None = None,
+                               aware: dict | None = None) -> str | None:
+    """One plain paragraph about ONE past day (plan 2.1.7). `day_rows` is
+    that day's journal rows, oldest first."""
+    if not day_rows:
+        return None
+    when = str(day_rows[0].get("at") or "")[:10]
+    return await _write_note(
+        SUMMARY_ADDENDUM, f"Summarize {when} in one plain paragraph.",
+        day_rows, vitals, aware)

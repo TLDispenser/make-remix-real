@@ -96,6 +96,24 @@ class Decision(NamedTuple):
     confidence: float      # of the stance answer (representative)
     latency_s: float
     from_cache: bool
+    intent: str | None = None        # question/command/chitchat/venting/other
+    commitment_p: float | None = None  # noul: did they promise/ask to be reminded
+    commitment_when: str | None = None  # later_today/tomorrow/no_time_given
+
+
+INTENT_OPTION_TEXT = {
+    "question": "they are asking a question and want an answer",
+    "command": "they are asking her to do something or how to do something",
+    "chitchat": "small talk, banter, a joke, a reaction",
+    "venting": "they are letting off steam or sharing feelings",
+    "other": "anything else",
+}
+
+COMMITMENT_WHEN_TEXT = {
+    "later_today": "later today",
+    "tomorrow": "tomorrow",
+    "no_time_given": "no time was given",
+}
 
 
 class ActPlan(NamedTuple):
@@ -103,6 +121,7 @@ class ActPlan(NamedTuple):
     latency_s: float
     from_cache: bool
     unseen: float | None = None   # judge: p(reply claims to see what it can't)
+    dodged: float | None = None   # judge: p(reply didn't try to answer/do)
 
 
 class JevBrain:
@@ -218,22 +237,27 @@ class JevBrain:
         if resp is None:
             return None
         d = self._react_decision(resp, time.monotonic() - now,
-                                 label="listening reaction")
+                                 label="listening reaction", partial=True)
         self._cache[sig] = (now + config.JEV_CACHE_TTL_S, d)
         return d
 
     async def act(self, user_text: str, beats: list,
-                  senses: str | None = None) -> ActPlan | None:
-        """One face per beat, plus (when the grounding judge is shadow or
-        live) the `unseen` judgment on the finished reply — same request, no
-        extra call. Skipped for one-beat lines UNLESS the judge needs it
-        (then the one-beat faces are simply unused)."""
+                  senses: str | None = None,
+                  intent: str | None = None) -> ActPlan | None:
+        """One face per beat, plus (when the judges are shadow or live) the
+        `unseen` grounding judgment and the `dodged` judgment on the finished
+        reply — same request, no extra call. The dodge noul only matters for
+        question/command intents (plan 2.4.3). Skipped for one-beat lines
+        UNLESS a judge needs it (then the one-beat faces are simply unused)."""
         judge = decisions.mode("judge_unseen")
-        if len(beats) < 2 and judge == "off":
+        dodge = decisions.mode("dodge_judge")
+        dodge_on = dodge != "off" and intent in ("question", "command")
+        if len(beats) < 2 and judge == "off" and not dodge_on:
             return None
         beats = beats[:4]
         now = time.monotonic()
-        sig = _signature("act", user_text, {}, [beats, senses, judge])
+        sig = _signature("act", user_text, {}, [beats, senses, judge,
+                                                dodge_on, intent])
         hit = self._cache.get(sig)
         if hit and hit[0] > now:
             return hit[1]._replace(from_cache=True)
@@ -261,13 +285,27 @@ class JevBrain:
                     "the she_can_sense list does not include? Numbers about "
                     "her own vitals do not count as unseen."),
             }
+        if dodge_on:
+            # Dodge judge (plan 2.4.3): did the reply try to do or answer
+            # what was asked? Grumbling FIRST then helping is NOT a dodge;
+            # answering something else entirely, or pure deflection, is.
+            questions["dodged"] = {
+                "type": "noul",
+                "instructions": (
+                    "The user's line was a "
+                    f"{intent or 'request'}. Did the reply AVOID doing or "
+                    "answering it — changing the subject, refusing without "
+                    "trying, or answering a different question? A grumble "
+                    "that still answers does not count. Say yes only when "
+                    "she clearly dodged."),
+            }
         body = {"model": config.JEV_MODEL, "state": state,
                 "questions": questions}
         resp = await self._call(body)
         if resp is None:
             return None
         plan = self._act_plan(resp, len(beats), time.monotonic() - now,
-                              judge != "off")
+                              judge != "off", dodge_on)
         self._cache[sig] = (now + config.JEV_CACHE_TTL_S, plan)
         for f in plan.faces:
             self.note_face(f)
@@ -419,7 +457,7 @@ class JevBrain:
         mouth_ask = ("Her MOUTH while she listens to this unfinished line."
                      if partial else
                      "Her MOUTH the instant she reads this line, before she says anything.")
-        return {
+        q = {
             "stance": {
                 "type": "choice", "criteria": dict(STANCE_OPTION_TEXT),
                 "instructions": (
@@ -442,6 +480,32 @@ class JevBrain:
                 "instructions": mouth_ask,
             },
         }
+        if not partial:
+            # Phase 3 riders (plan 2.4.2 / 2.1.5): same request, no extra call.
+            q["user_intent"] = {
+                "type": "choice", "criteria": dict(INTENT_OPTION_TEXT),
+                "instructions": (
+                    "What the user's line IS, at its core. A request for "
+                    "information or help counts as question; a request for "
+                    "her to act or instructions to follow counts as command."),
+            }
+            q["commitment"] = {
+                "type": "noul",
+                "instructions": (
+                    "Did the user say they WILL do something later, or ask "
+                    "to be reminded of something? A plain statement of fact "
+                    "or a wish ('I should really sleep more') is NOT a "
+                    "commitment. Only yes when there is a concrete later "
+                    "action attached."),
+            }
+            q["commit_when"] = {
+                "type": "choice", "criteria": dict(COMMITMENT_WHEN_TEXT),
+                "instructions": (
+                    "When the promised thing is due, as they framed it. "
+                    "Irrelevant unless commitment says yes; answer "
+                    "no_time_given then."),
+            }
+        return q
 
     def _act_questions(self, beats: list) -> dict:
         q = {}
@@ -466,7 +530,8 @@ class JevBrain:
     # ------------------------------------------------------------- parsing
 
     def _react_decision(self, resp: dict, latency: float,
-                        label: str = "reaction") -> Decision:
+                        label: str = "reaction",
+                        partial: bool = False) -> Decision:
         answers = resp.get("answers", {}) or {}
         usage = resp.get("usage", {}) or {}
         stance_name = str(_choice(answers.get("stance"), "flat"))
@@ -477,17 +542,39 @@ class JevBrain:
             self._pick(answers.get("mouth"), self.vocab.mouths, "mouth", []),
         )
         conf = _confidence(answers.get("stance"))
-        print(f"remix-brain: jev {label} in {latency:.2f}s "
-              f"(tokens {usage.get('input_tokens')}/{usage.get('output_tokens')}): "
-              f"stance={stance_name} ({conf:.2f}) face={face} "
-              f"[eyes {_confidence(answers.get('eyes')):.2f}, "
-              f"mouth {_confidence(answers.get('mouth')):.2f}] "
-              f"recent={self.recent_faces()}")
+        intent = commit_p = commit_when = None
+        if not partial:
+            intent = str(_choice(answers.get("user_intent"), ""))
+            if intent not in INTENT_OPTION_TEXT:
+                intent = None
+            if isinstance(answers.get("commitment"), dict):
+                commit_p = _f(answers["commitment"].get("noul"))
+            commit_when = str(_choice(answers.get("commit_when"), ""))
+            if commit_when not in COMMITMENT_WHEN_TEXT:
+                commit_when = None
+            extra = ""
+            if intent:
+                extra += f" intent={intent}"
+            if commit_p is not None:
+                extra += f" commit={commit_p:.2f}/{commit_when or '?'}"
+            print(f"remix-brain: jev {label} in {latency:.2f}s "
+                  f"(tokens {usage.get('input_tokens')}/{usage.get('output_tokens')}): "
+                  f"stance={stance_name} ({conf:.2f}) face={face} "
+                  f"[eyes {_confidence(answers.get('eyes')):.2f}, "
+                  f"mouth {_confidence(answers.get('mouth')):.2f}] "
+                  f"recent={self.recent_faces()}{extra}")
+        else:
+            print(f"remix-brain: jev {label} in {latency:.2f}s "
+                  f"(tokens {usage.get('input_tokens')}/{usage.get('output_tokens')}): "
+                  f"stance={stance_name} ({conf:.2f}) face={face} "
+                  f"[eyes {_confidence(answers.get('eyes')):.2f}, "
+                  f"mouth {_confidence(answers.get('mouth')):.2f}] "
+                  f"recent={self.recent_faces()}")
         return Decision(STANCE_OPTION_TEXT[stance_name], stance_name, face,
-                        conf, latency, False)
+                        conf, latency, False, intent, commit_p, commit_when)
 
     def _act_plan(self, resp: dict, n: int, latency: float,
-                  judge: bool = False) -> ActPlan:
+                  judge: bool = False, dodge: bool = False) -> ActPlan:
         answers = resp.get("answers", {}) or {}
         usage = resp.get("usage", {}) or {}
         faces: list = []
@@ -498,14 +585,20 @@ class JevBrain:
                 self._pick(answers.get(f"eyes{i}"), self.vocab.eyes, "eyes", prev_e),
                 self._pick(answers.get(f"mouth{i}"), self.vocab.mouths, "mouth", prev_m),
             ))
-        unseen = None
+        unseen = dodged = None
         if judge and isinstance(answers.get("unseen"), dict):
             unseen = _f(answers["unseen"].get("noul"))
+        if dodge and isinstance(answers.get("dodged"), dict):
+            dodged = _f(answers["dodged"].get("noul"))
+        tail = ""
+        if unseen is not None:
+            tail += f" unseen={unseen:.2f}"
+        if dodged is not None:
+            tail += f" dodged={dodged:.2f}"
         print(f"remix-brain: jev acting plan in {latency:.2f}s "
               f"(tokens {usage.get('input_tokens')}/{usage.get('output_tokens')}): "
-              f"{[str(f) for f in faces]}"
-              + (f" unseen={unseen:.2f}" if unseen is not None else ""))
-        return ActPlan(faces, latency, False, unseen)
+              f"{[str(f) for f in faces]}{tail}")
+        return ActPlan(faces, latency, False, unseen, dodged)
 
     def _pick(self, answer, valid: list, unit: str, also_avoid: list) -> str:
         """Sample from Jev's probabilities, penalising what was shown recently."""

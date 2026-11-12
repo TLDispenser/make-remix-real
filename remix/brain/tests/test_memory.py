@@ -21,20 +21,24 @@ class MemoryBase(unittest.TestCase):
 
     def setUp(self):
         d = tempfile.mkdtemp()
-        self._saved = (config.SANDBOX_DIR, config.MEMORY_JSON,
+        self._saved = (config.SANDBOX_DIR, config.MEMORY_JSON, config.MEMORY_DB,
                        config.AWAKEN_MIN_S)
         config.SANDBOX_DIR = d
         config.MEMORY_JSON = os.path.join(d, "memory.json")
+        config.MEMORY_DB = os.path.join(d, "memory.db")
         memory._store = None
         memory._active = False
+        memory._db = None      # SQLite handle reopens against the temp dir
         memory.load()   # journal on (against the temp dir)
 
     def tearDown(self):
-        (config.SANDBOX_DIR, config.MEMORY_JSON, config.AWAKEN_MIN_S) = (
+        (config.SANDBOX_DIR, config.MEMORY_JSON, config.MEMORY_DB,
+         config.AWAKEN_MIN_S) = (
             self._saved)
         memory._store = None
         memory._active = False
         memory._dirty = False
+        memory._db = None
 
 
 class JournalTests(MemoryBase):
@@ -122,17 +126,20 @@ class UnbootedJournalIsInert(unittest.TestCase):
     """Without load() (offline test suites, stray imports) nothing writes."""
 
     def setUp(self):
-        self._saved = (config.SANDBOX_DIR, config.MEMORY_JSON)
+        self._saved = (config.SANDBOX_DIR, config.MEMORY_JSON, config.MEMORY_DB)
         d = tempfile.mkdtemp()
         config.SANDBOX_DIR = d
         config.MEMORY_JSON = os.path.join(d, "memory.json")
+        config.MEMORY_DB = os.path.join(d, "memory.db")
         memory._store = None
         memory._active = False
+        memory._db = None
 
     def tearDown(self):
-        (config.SANDBOX_DIR, config.MEMORY_JSON) = self._saved
+        (config.SANDBOX_DIR, config.MEMORY_JSON, config.MEMORY_DB) = self._saved
         memory._store = None
         memory._active = False
+        memory._db = None
 
     def test_record_and_faces_noop_without_load(self):
         memory.record("thought", "should not happen")
@@ -168,14 +175,15 @@ class SandboxSyncTests(MemoryBase):
         with a swapped sandbox it ran git in the real one — inside the
         project work tree, which it then mistook for 'her repo'."""
         d = tempfile.mkdtemp()          # outside any repo
-        saved = (config.SANDBOX_DIR, config.MEMORY_JSON)
+        saved = (config.SANDBOX_DIR, config.MEMORY_JSON, config.MEMORY_DB)
         config.SANDBOX_DIR = d
         config.MEMORY_JSON = os.path.join(d, "memory.json")
+        config.MEMORY_DB = os.path.join(d, "memory.db")
         try:
             rc, _top = memory._git("rev-parse", "--show-toplevel")
             self.assertNotEqual(0, rc)   # a bare temp dir has no repo
         finally:
-            (config.SANDBOX_DIR, config.MEMORY_JSON) = saved
+            (config.SANDBOX_DIR, config.MEMORY_JSON, config.MEMORY_DB) = saved
 
     def test_enclosing_repo_is_not_her_repo(self):
         """The dangerous case, reproduced exactly: a sandbox with no .git of

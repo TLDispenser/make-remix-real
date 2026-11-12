@@ -24,6 +24,7 @@
 #   * MIN_GAP since her last unprompted line, per-trigger cooldowns, edges
 #     fire once per crossing, and a daily cap on top of all that.
 import random
+import re
 import time
 
 from . import config
@@ -64,6 +65,7 @@ STANCE_CHOICES = {
     "app_closed": ["flat", "playful", "pout"],
     "ambient": ["flat", "playful", "pout"],
     "poke": ["playful", "tsun", "flat"],
+    "commitment_due": ["concerned", "flat", "playful"],
 }
 
 # Per-trigger minimum spacing (seconds), on top of the global MIN_GAP.
@@ -81,6 +83,7 @@ TRIGGER_COOLDOWN_S = {
     "app_opened": 900.0,      # 15 min
     "app_closed": 1800.0,     # 30 min
     "ambient": config.AMBIENT_COOLDOWN_S,
+    "commitment_due": 1.0,    # edge-gated: each commitment fires once
 }
 
 # Triggers whose room-notice doubles as the "urgent" flag (6.4: she's being
@@ -115,11 +118,17 @@ def _quiet_hour(wall_hour: int | None) -> bool:
 def _situation(trigger: str, aware: dict, batt: float | None,
                away_mins: int | None = None,
                stuck_mins: int | None = None,
-               app: str | None = None) -> str:
+               app: str | None = None,
+               commitment: dict | None = None) -> str:
     """What she just noticed, as one plain clause. This is the SEED her words
     grow from — speech.generate_proactive_line() reacts to it. Every number
     here comes straight from a real sense; nothing is invented."""
     aware = aware or {}
+    if trigger == "commitment_due":
+        text = re.sub(r"\s+", " ",
+                      str((commitment or {}).get("text") or "")).strip()[:160]
+        return (f"they said earlier: \"{text or 'something promised'}\" — it "
+                f"is due now and they may have lost track of it")
     if trigger == "greeting":
         return ("a new session just started and they just showed up at the "
                 "keyboard")
@@ -222,9 +231,13 @@ class Proactive:
 
     def tick(self, aware: dict, vitals: dict | None = None, now: float | None = None,
              mic_open: bool = False, last_exchange_at: float | None = None,
-             busy_until: float = 0.0, wall_hour: int | None = None) -> dict | None:
+             busy_until: float = 0.0, wall_hour: int | None = None,
+             commitments: list | None = None) -> dict | None:
         """One engine step. Returns {'trigger','stance','face','look','aim',
-        'situation'} — the urge, never the words."""
+        'situation'} — the urge, never the words. `commitments` carries due
+        promises/reminders (wall-clock checked by the caller); when present
+        and due, the first one becomes a proactive event like any other
+        (plan 2.1.5/2.1.6: no separate callback engine)."""
         now = time.monotonic() if now is None else now
         aware = aware or {}
         vitals = vitals or {}
@@ -296,6 +309,7 @@ class Proactive:
 
         # --- candidates, most urgent first ---
         plan = None
+        due_commitment = None
         if not self.greeted:
             if self.awaken_s and self.awaken_s >= config.AWAKEN_MIN_S:
                 plan = "awaken"        # the greeting slot becomes a wake-up
@@ -304,6 +318,9 @@ class Proactive:
             self.greeted = True        # one boot line either way
         elif low_edge:
             plan = "battery_low"
+        elif commitments and self._due("commitment_due", now):
+            due_commitment = dict(commitments[0])
+            plan = "commitment_due"
         elif plug_edge:
             plan = "plugged"
         elif away and self._due("welcome_back", now):
@@ -357,6 +374,7 @@ class Proactive:
                 "look": CONCERNED_LOOK if stance == "concerned" else None,
                 "urgent": plan in URGENT_ON,
                 "aim": opened_app if plan == "app_opened" else None,
+                "commitment": due_commitment,
                 "situation": _situation(
                     plan, aware, batt,
                     away_mins=round((_f(prev_idle) or 0) / 60)
@@ -364,7 +382,8 @@ class Proactive:
                     stuck_mins=round((now - aware["app_since"]) / 60)
                     if plan == "app_stuck" and aware.get("app_since") is not None
                     else None,
-                    app=opened_app if plan == "app_opened" else closed_app)}
+                    app=opened_app if plan == "app_opened" else closed_app,
+                    commitment=due_commitment)}
 
     def force(self, aware: dict | None = None, vitals: dict | None = None,
               now: float | None = None) -> dict | None:

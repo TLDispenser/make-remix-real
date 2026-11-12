@@ -189,6 +189,7 @@ JEV_JUDGE_DODGE = _mode("JEV_JUDGE_DODGE", "shadow")       # dodge judge for que
 JEV_DECIDE_COMMITMENT = _mode("JEV_DECIDE_COMMITMENT", "shadow")  # commitment/reminder detection
 JEV_RANK_MEMORY = _mode("JEV_RANK_MEMORY", "off")          # ranking memory candidates with Jev (default off)
 JEV_DODGE_THRESHOLD = float(_env("JEV_DODGE_THRESHOLD", "0.7"))
+JEV_COMMIT_P = float(_env("JEV_COMMIT_P", "0.6"))   # live commitment threshold
 JEV_SPEAK_P = float(_env("JEV_SPEAK_P", "0.6"))   # live should_speak threshold
 # Silent-life Jev calls get their own conservative ceiling on top of the
 # shared hourly cap; shadow modes are skipped when either is spent.

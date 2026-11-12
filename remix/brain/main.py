@@ -82,6 +82,57 @@ async def memory_loop() -> None:
                 print(f"remix-brain: memory sync failed ({e!r})")
 
 
+async def _memory_backfill() -> None:
+    """Phase 3 boot backfill (plan 2.1.4 / 2.1.7), one-shot: day summaries
+    for past days that lack one (cap 2 per boot), and a reflection when the
+    last session ended too abruptly to write one. $0 pool; any failure just
+    skips the note — the journal never depends on the words existing."""
+    await asyncio.sleep(20.0)          # let boot settle (greeting, senses)
+    if not memory.has_journal():
+        return
+    try:
+        rows = memory.lines(limit=400)
+        if not rows:
+            return
+        # --- day summaries: group by local day; each day BEFORE today that
+        # has rows but no summary row gets one paragraph, cap 2 per boot.
+        have = {str(r.get("at") or "")[:10] for r in rows
+                if r.get("kind") == "summary"}
+        today = time.strftime("%Y-%m-%d")
+        by_day: dict = {}
+        for r in rows:
+            day = str(r.get("at") or "")[:10]
+            if day and day < today:
+                by_day.setdefault(day, []).append(r)
+        done = 0
+        for day in sorted(by_day):
+            if done >= 2:
+                break
+            if day in have:
+                continue
+            text = await speech.generate_day_summary(
+                list(reversed(by_day[day])),        # oldest first
+                vitals=_latest_snapshot, aware=awareness.current())
+            if text:
+                memory.record("summary", text)
+                done += 1
+                print(f"remix-brain: day summary written for {day}")
+        # --- missed reflection: rows exist after the newest reflection row
+        # (the previous shutdown was too abrupt to write one). lines() is
+        # newest-first, so everything ABOVE the newest reflection is newer.
+        last_refl = next((i for i, r in enumerate(rows)
+                          if r.get("kind") == "reflection"), None)
+        newer = rows[:last_refl] if last_refl is not None else rows
+        if newer:
+            text = await speech.generate_reflection(
+                vitals=_latest_snapshot, aware=awareness.current())
+            if text:
+                memory.record("reflection", text)
+                print("remix-brain: missed reflection written at boot")
+    except Exception as e:
+        print(f"remix-brain: memory backfill failed ({e!r})")
+
+
 async def body_loop(rule: rules.RuleBrain) -> None:
     """The nervous system: vitals stream -> RuleBrain -> v2 messages. On top
     of vitals posing, she WATCHES the room ($0 reflexes, no words): a glance
@@ -346,6 +397,30 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
             _jev.note_face(face)
         decisions.log("react", "-", jev=None, used="local",
                       local=f"rules.guess_face -> {face}")
+    # Phase 3 riders (plan 2.4.2 / 2.1.5): the react call already carried
+    # them, so this is bookkeeping only — no extra request, no extra spend.
+    # user_intent: shadow = logged only (it later steers the dodge judge and
+    # cooperation scoring). commitment: shadow = logged only; live turns a
+    # spotted promise into a dated reminder row.
+    intent = decision.intent if decision else None
+    if decision is not None:
+        if intent:
+            decisions.log("user_intent", decisions.mode("user_intent"),
+                          jev=intent, used="jev", local="none",
+                          extra="react rider")
+        cp = decision.commitment_p
+        if cp is not None:
+            cmode = decisions.mode("commitment")
+            note = f"p={cp:.2f} when={decision.commitment_when or '?'}"
+            if cmode == "live" and cp >= config.JEV_COMMIT_P:
+                try:
+                    memory.add_commitment(text, decision.commitment_when
+                                          or "no_time_given")
+                    note += " -> recorded"
+                except Exception as e:
+                    note += f" (record failed: {e!r})"
+            decisions.log("commitment", cmode, jev=f"{cp:.2f}",
+                          used="jev", local="none", extra=note)
     # (5) she looks toward whichever visible window the human just named
     # (any window on her screen, not only the focused one) — or toward the
     # side they ask about ("which one is to your right?").
@@ -378,8 +453,9 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
     # plan comes first (espeak is quick); with it off they run in parallel as before.
     beat_list = speech.beats(reply)
     judge_on = decisions.mode("judge_unseen") != "off"
+    dodge_on = decisions.mode("dodge_judge") != "off"
     senses = grounding_senses(awareness.current(), _latest_snapshot)
-    plan_coro = (_jev.act(text, beat_list, senses=senses)
+    plan_coro = (_jev.act(text, beat_list, senses=senses, intent=intent)
                  if _jev else asyncio.sleep(0, None))
     tag = f"p{_seq + 1}"
     if config.TTS_EXPRESSIVE and tts.available():
@@ -414,6 +490,31 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
         decisions.log("judge_unseen", decisions.mode("judge_unseen"),
                       jev=f"{plan.unseen:.2f}", used="local", local=verdict,
                       extra="agree" if agree else "DISAGREE")
+
+    # Dodge judge (plan 2.4.3): shadow logs the score, live acts on it — ONE
+    # plain-prose retry when she dodged a question/command, and the second
+    # try ships either way (her words, her responsibility). Nothing has been
+    # sent yet, so re-voicing the corrected line is safe.
+    if (dodge_on and plan is not None and plan.dodged is not None
+            and intent in ("question", "command")):
+        dmode = decisions.mode("dodge_judge")
+        if dmode == "live" and plan.dodged >= config.JEV_DODGE_THRESHOLD:
+            print(f"remix-brain: dodge judge flagged the reply "
+                  f"({plan.dodged:.2f}) — one plain retry")
+            decisions.log("dodge_judge", "live", jev=f"{plan.dodged:.2f}",
+                          used="jev", local="none", extra="retry")
+            second = await speech.generate_undodged(
+                text, reply, vitals=_latest_snapshot, stance=stance,
+                context=_context, aware=awareness.current())
+            if second:
+                reply = second
+                beat_list = speech.beats(reply)
+                spoken = await tts.synthesize(beat_list, tag)
+                face_list = list(plan.faces) if plan else _local_arc(face, beat_list)
+        else:
+            decisions.log("dodge_judge", dmode, jev=f"{plan.dodged:.2f}",
+                          used="jev", local="none", extra=f"intent={intent}")
+
 
     _seq += 1
     pid = f"t{_seq}"
@@ -632,12 +733,19 @@ async def proactive_loop() -> None:
                 awareness.current(), _latest_snapshot,
                 mic_open=bool(_ptt and _ptt.listening),
                 last_exchange_at=_last_exchange_at,
-                busy_until=_rule.speak_gate_until)
+                busy_until=_rule.speak_gate_until,
+                commitments=memory.due_commitments())
         except Exception as e:               # chatter must never crash the brain
             print(f"remix-brain: proactive tick failed ({e!r})")
             continue
         if not plan:
             continue
+        if plan.get("trigger") == "commitment_due" and plan.get("commitment"):
+            # fires once: the slot is spent whether or not words materialize
+            try:
+                memory.mark_commitment_done(plan["commitment"].get("id"))
+            except Exception as e:
+                print(f"remix-brain: commitment done-mark failed ({e!r})")
         # The seam: what would the left brain do with this urge? (modes)
         decided = await _decide_proactive(plan)
         if decided is None:              # live mode chose silence
@@ -752,6 +860,42 @@ async def _on_command(text: str) -> None:
             await ws_server.send({"type": "notice", "seconds": 6.0,
                                   "text": "// usage: /decisions <kind> "
                                           "<off|shadow|live> //"})
+    elif cmd == "/memory":
+        # Phase 3: show exactly what she would inject RIGHT NOW for a real
+        # line — the recency window plus whatever this text would retrieve.
+        topic = text[len("/memory"):].strip()
+        rows = memory.lines(limit=8, spread=5)
+        extra = memory.retrieve(topic, limit=config.MEMORY_SEARCH_LIMIT) \
+            if topic else []
+        seen = {(r.get("t"), r.get("text")) for r in rows}
+        picks = [r for r in extra if (r.get("t"), r.get("text")) not in seen]
+        parts = ([f"{r.get('at')} {str(r.get('text'))[:70]}"
+                  for r in rows[:4]] +
+                 [f"+ {r.get('at')} {str(r.get('text'))[:70]}" for r in picks])
+        line = ("// journal empty //" if not parts else
+                "// remembers: " + " | ".join(parts[:5]) + " //")
+        await ws_server.send({"type": "notice", "text": line, "seconds": 12.0})
+        print(f"remix-brain: /memory ({len(rows)} recent, "
+              f"{len(picks)} retrieved for '{topic or '-'}'):\n  "
+              + "\n  ".join(parts) if parts else "remix-brain: /memory: empty")
+    elif cmd == "/forget":
+        topic = text[len("/forget"):].strip()
+        if not topic:
+            await ws_server.send({"type": "notice", "seconds": 5.0,
+                                  "text": "// usage: /forget <topic> //"})
+        else:
+            n = memory.forget(topic)
+            await ws_server.send({"type": "notice", "seconds": 6.0,
+                                  "text": f"// {n} notes about '{topic}' "
+                                          f"gone. it's done //"})
+            print(f"remix-brain: /forget '{topic}': {n} rows removed")
+    elif cmd == "/remember":
+        on = not memory.is_remember_enabled()
+        memory.set_remember(on)
+        state = "on" if on else "paused — this stays between us"
+        await ws_server.send({"type": "notice", "seconds": 5.0,
+                              "text": f"// remembering: {state} //"})
+        print(f"remix-brain: remembering {'on' if on else 'off'}")
     else:
         await ws_server.send({"type": "notice", "seconds": 3.0,
                               "text": "// unknown command //"})
@@ -908,6 +1052,7 @@ async def main() -> None:
                                   and config.JEV_ENABLED and _jev)
     _pro = proactive.Proactive(
         awaken_s=((memory.awaken() or {}).get("elapsed_s")))
+    _backfill_task: asyncio.Task | None = None
     ws_server.on("ready", _on_ready)
     ws_server.on("context", _on_context)
     ws_server.on("perform_done", _on_perform_done)
@@ -943,6 +1088,7 @@ async def main() -> None:
     if config.AWARENESS:
         _aware_task = asyncio.create_task(awareness.watch_loop())
         _proactive_task = asyncio.create_task(proactive_loop())
+    _backfill_task = asyncio.create_task(_memory_backfill())
     print(f"remix-brain: awareness {'on' if config.AWARENESS else 'off'} "
           f"(app names only, titles redacted), proactive "
           f"{'on' if config.PROACTIVE and config.AWARENESS else 'off'} "
@@ -965,8 +1111,22 @@ async def main() -> None:
         _cancel(_gate_task)
         _cancel(_aware_task)
         _cancel(_proactive_task)
+        _cancel(_backfill_task)
         if _ptt:
             await _ptt.cancel()   # never leave the mic open on the way out
+        # Parting note (plan 2.1.4): one reflection over this session, if
+        # there was one. A $0 call; failure just skips the note.
+        if speech.had_exchanges():
+            try:
+                refl = await asyncio.wait_for(
+                    speech.generate_reflection(vitals=_latest_snapshot,
+                                               aware=awareness.current()),
+                    timeout=30.0)
+                if refl:
+                    memory.record("reflection", refl)
+                    print("remix-brain: parting reflection written")
+            except Exception as e:
+                print(f"remix-brain: parting reflection failed ({e!r})")
         memory.shutdown()             # "I was off" anchors to this timestamp
         print(f"remix-brain: stopped after {time.monotonic() - started:.0f}s")
 

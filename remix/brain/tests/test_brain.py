@@ -61,7 +61,9 @@ class JevTests(unittest.TestCase):
         d = run(jev.JevBrain(random.Random(1)).react("hey", VITALS))
         self.assertEqual(d.face, Face("tired", "smirk"))          # a mix no single drawing has
         q = self.calls[0]["questions"]
-        self.assertEqual(set(q), {"stance", "eyes", "mouth"})
+        # Phase 3 riders ride the same request (intent + commitment check)
+        self.assertEqual(set(q), {"stance", "eyes", "mouth",
+                                  "user_intent", "commitment", "commit_when"})
         self.assertEqual(set(q["eyes"]["criteria"]), set(faces.EYES_TEXT))
         self.assertEqual(set(q["mouth"]["criteria"]), set(faces.MOUTHS_TEXT))
         self.assertNotIn("sarcastic", str(self.calls[0]["state"]))  # old scene primed smirk
@@ -180,7 +182,9 @@ class GroundingTests(unittest.TestCase):
         self.assertIn("640x360", p)
         self.assertNotIn("forty fucking tabs", p)
 
-    def test_retry_then_deflect(self):
+    def test_retry_then_deliver_second_try(self):
+        # plan 1.5.3: no canned deflection. One retry; when the second try
+        # is still flagged it ships as-is (her words, her responsibility).
         calls = []
         async def fake_llm(messages):
             calls.append(messages)
@@ -192,7 +196,38 @@ class GroundingTests(unittest.TestCase):
         finally:
             speech._call_llm = orig
         self.assertEqual(len(calls), 1)                            # exactly one retry
-        self.assertIn(out, grounding.DEFLECTIONS)
+        self.assertEqual(out, "you've got three tabs open in chromium")
+
+    def test_clean_reply_needs_no_retry(self):
+        calls = []
+        async def fake_llm(messages):
+            calls.append(messages)
+            return "fine."
+        orig = speech._call_llm
+        speech._call_llm = fake_llm
+        try:
+            out = run(speech._grounded("fine.", [{"role": "user", "content": "hi"}], "hi", VITALS))
+        finally:
+            speech._call_llm = orig
+        self.assertEqual(len(calls), 0)   # clean reply: no extra call
+        self.assertEqual(out, "fine.")
+
+    def test_retry_pool_down_stays_silent(self):
+        async def fake_llm(messages):
+            return None
+        orig = speech._call_llm
+        speech._call_llm = fake_llm
+        try:
+            out = run(speech._grounded("you've got three tabs open in chromium", [{"role": "user", "content": "hi"}], "hi", VITALS))
+        finally:
+            speech._call_llm = orig
+        self.assertIsNone(out)   # provider down -> silence, never a canned line
+
+    def test_no_canned_deflections_remain(self):
+        self.assertFalse(hasattr(grounding, "DEFLECTIONS")
+                         and grounding.DEFLECTIONS,
+                         "canned deflection pool must stay retired")
+        self.assertFalse(hasattr(grounding, "deflection"))
 
     def test_beats_keep_trailing_fragment(self):
         self.assertEqual(speech.beats("ugh. ...fine. whatever"), ["ugh.", "...fine.", "whatever"])

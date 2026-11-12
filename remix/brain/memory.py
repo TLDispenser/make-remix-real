@@ -496,7 +496,9 @@ def forget(topic: str) -> int:
 
 def add_commitment(text: str, when_tag: str, due_time: float | None = None) -> str:
     """Record a commitment/reminder. due_time defaults based on when_tag."""
-    cid = f"c{int(_now() * 1000)}"
+    # time_ns: two commitments made in the same millisecond must not share
+    # an id (SQLite PRIMARY KEY would silently REPLACE the first one).
+    cid = f"c{time.time_ns()}"
     now = _now()
     if due_time is None:
         if when_tag == "later_today":
