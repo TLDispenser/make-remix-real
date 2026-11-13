@@ -11,6 +11,8 @@
 #   {"type":"perform","id":"p1","audio":"/tmp/x.wav",
 #    "cues":[{"t":0.0,"pose":"anger"},{"t":1.8,"pose":"tired","look":[0,0.3]}],
 #    "then":{"pose":"default"}}                            speak with acting
+#   ...same with "enqueue":true -> plays AFTER the running one (streamed
+#   replies speak in parts); a replace-style perform or "stop" clears it
 #   {"type":"look","look":[x,y]}  {"type":"mouth","level":0..1}  {"type":"twitch"}
 #   {"type":"listening","state":"start"|"stop"}  {"type":"notice","text":"..."}
 #   {"type":"transcript","text":"..."}                     what the mic heard
@@ -61,6 +63,11 @@ var _perf_cues: Array = []
 var _perf_next := 0
 var _perf_then: Dictionary = {}
 var _perf_last_pos := 0.0
+# Phase 7 (streamed replies): the brain sends her speech in parts (sentence
+# one speaks while the rest is written). A perform with "enqueue":true waits
+# here instead of cutting the running one off; a replace-style perform or a
+# "stop" clears the queue — cancelled speech stays cancelled.
+var _perf_queue: Array = []
 
 var _ext_level := 0.0
 var _ext_level_left := 0.0
@@ -314,6 +321,7 @@ func _handle(raw: String) -> void:
 		"perform":
 			_start_performance(d)
 		"stop":
+			_perf_queue.clear()       # cancelled speech stays cancelled
 			_finish_performance(false)
 		"mouth":
 			_ext_level = clampf(float(d.get("level", 0.0)), 0.0, 1.0)
@@ -377,7 +385,11 @@ func _log(kind: String) -> void:
 # ----------------------------------------------------------------- performance
 
 func _start_performance(d: Dictionary) -> void:
+	if bool(d.get("enqueue", false)) and _perf_active:
+		_perf_queue.append(d)     # she is mid-sentence: this part plays after
+		return
 	_finish_performance(false)  # a new performance replaces any running one
+	_perf_queue.clear()
 	_perf_id = String(d.get("id", ""))
 	_perf_cues = (d.get("cues", []) as Array).duplicate()
 	_perf_cues.sort_custom(func(a: Variant, b: Variant) -> bool: return float(a.get("t", 0.0)) < float(b.get("t", 0.0)))
@@ -448,6 +460,12 @@ func _finish_performance(ok: bool, error: String = "") -> void:
 	send_json(report)
 	performance_done.emit(id, ok)
 	_perf_then = {}
+	# Phase 7: a queued streamed part plays right away when the current one
+	# ends NATURALLY (ok) — a failure/stop leaves the queue cleared so a
+	# cancelled line never comes back from the dead.
+	if ok and not _perf_queue.is_empty():
+		var next: Dictionary = _perf_queue.pop_front()
+		_start_performance(next)
 
 
 func _audio_level() -> float:

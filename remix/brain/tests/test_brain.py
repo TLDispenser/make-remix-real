@@ -379,7 +379,7 @@ class ExchangeTests(unittest.TestCase):
     def setUp(self):
         self.sent = []
         async def send(m): self.sent.append(m)
-        self._saved = (brain_main.ws_server.send, speech.generate_reply, config.JEV_ENABLED, config.SUBTITLES)
+        self._saved = (brain_main.ws_server.send, speech.generate_reply_stream, config.JEV_ENABLED, config.SUBTITLES)
         brain_main.ws_server.send = send
         config.JEV_ENABLED = False
         config.SUBTITLES = "auto"
@@ -388,11 +388,14 @@ class ExchangeTests(unittest.TestCase):
         brain_main._latest_snapshot = dict(VITALS)
 
     def tearDown(self):
-        brain_main.ws_server.send, speech.generate_reply, config.JEV_ENABLED, config.SUBTITLES = self._saved
+        brain_main.ws_server.send, speech.generate_reply_stream, config.JEV_ENABLED, config.SUBTITLES = self._saved
 
     def go(self, reply, text="hi"):
-        async def fake(*a, **k): return reply
-        speech.generate_reply = fake
+        async def fake(*a, **k):
+            # the real streaming seam returns None only when the pool is down
+            return (None if reply is None else
+                    {"text": reply, "first": None, "streamed": False})
+        speech.generate_reply_stream = fake
         async def flow():
             await brain_main._on_user_text({"type": "user_text", "text": text})
             await asyncio.sleep(0.05)

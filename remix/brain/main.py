@@ -326,9 +326,16 @@ async def body_loop(rule: rules.RuleBrain) -> None:
     prev_app = None
     prev_idle = None
     perk_task = None
+    tint_band = None
     async for snap in vitals.stream():
         _latest_snapshot = snap
         await ws_server.send({"type": "vitals", **snap})
+        # Phase 7 (plan 4.10): the original spec's want — her colour follows
+        # the machine's temperature. Bands with a deadband so she doesn't
+        # flicker at a boundary; REMIX_TEMP_TINT=0 puts her back to fixed.
+        tint_band, tint_color = _temp_tint(snap.get("temp"), tint_band)
+        if tint_color is not None:
+            await ws_server.send({"type": "theme", "color": tint_color})
         for msg in rule.update(snap, aware=awareness.current()):
             await ws_server.send(msg)
 
@@ -355,6 +362,33 @@ async def body_loop(rule: rules.RuleBrain) -> None:
                     print("remix-brain: watched you come back")
                     perk_task = _perk(rule, None, perk_task)
                 prev_idle = idle
+
+
+# Phase 7 (plan 4.10): her colour follows the machine's temperature — the
+# original spec's want. Cool = chilly blue, normal = her default, warm/hot =
+# deeper reds. 1°C hysteresis so a reading hovering on an edge can't flicker.
+_TINT_EDGES = (50.0, 72.0, 85.0)
+
+
+def _temp_tint(temp: float | None, band):
+    """(new_band, color_or_None). None color = nothing to send this tick."""
+    if not config.TEMP_TINT or temp is None:
+        return band, None
+    if temp < _TINT_EDGES[0]:
+        cand, color = 0, "#5ab0ff"      # cold machine: she runs cool blue
+    elif temp < _TINT_EDGES[1]:
+        cand, color = 1, "#ff5148"      # her normal theme colour
+    elif temp < _TINT_EDGES[2]:
+        cand, color = 2, "#ff7a29"      # warm
+    else:
+        cand, color = 3, "#ff3814"      # hot: the fan is begging
+    if band is None:
+        return cand, color
+    if cand == band:
+        return band, None
+    edge = _TINT_EDGES[min(band, cand)]
+    move = (temp >= edge + 1.0) if cand > band else (temp <= edge - 1.0)
+    return (cand, color) if move else (band, None)
 
 
 def _perk(rule: rules.RuleBrain, aim: list | None, prior) -> asyncio.Task:
@@ -619,46 +653,153 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
               f"{named['app'] if named else 'the window you pointed at'} {aimed}")
     await ws_server.send(face.msg(look=aimed or [0.0, -0.15]))
 
-    # Right brain. Only say "one sec" if she is actually slow.
-    task = asyncio.create_task(speech.generate_reply(
+    # Right brain — streamed (plan 3.9): her first clean sentence starts
+    # speaking while the rest is still being written. REMIX_STREAM=0, a pool
+    # that refuses streaming, or a mid-stream failure all fall back to the
+    # one-shot call: same words, same grounding contract, same delivery.
+    # While she waits she THINKS visibly (the thunk face) instead of only
+    # showing a caption.
+    t_started = time.monotonic()
+    t_first = None
+    state = {"spoken_first": None}
+
+    async def _ship_first(sentence: str) -> None:
+        """The on_first hook: sentence one, NOW, faces from the local arc —
+        the act call has no whole reply to judge yet. A failure here must
+        never kill the stream: the reply just delivers in one piece."""
+        try:
+            nonlocal t_first
+            t_first = time.monotonic()
+            beats1 = speech.beats(sentence)
+            faces1 = _local_arc(face, beats1)
+            looks1 = _beat_looks(beats1, lead=aimed)
+            spoken1 = await tts.synthesize(
+                beats1, f"p{_seq + 1}a",
+                faces=(faces1 if config.TTS_EXPRESSIVE else None),
+                strain=tts.strain_from(_latest_snapshot))
+            if spoken1 is None:
+                return                  # no voice available: deliver in one piece
+            state["spoken_first"] = sentence
+            _rule.pause_for_speech(spoken1.total + 1.0)
+            await ws_server.send({"type": "say", "text": sentence,
+                                  "final": False})
+            cues1 = [f.cue(spoken1.starts[i], looks1[i])
+                     for i, f in enumerate(faces1)]
+            await ws_server.send({"type": "perform", "id": f"t{_seq + 1}a",
+                                  "audio": spoken1.path, "cues": cues1,
+                                  "then": faces1[-1].spec()})
+            _spoken_now.update(pid=f"t{_seq + 1}a", text=sentence)
+            # she answered while out of sight: the bar glows now, not after
+            # the whole reply lands
+            await _maybe_escalate("reply", sentence)
+        except Exception as e:
+            print(f"remix-brain: early sentence delivery failed ({e!r})")
+
+    task = asyncio.create_task(speech.generate_reply_stream(
         text, vitals=_latest_snapshot, stance=stance, context=_context,
-        aware=awareness.current()))
+        aware=awareness.current(),
+        on_first=(_ship_first
+                  if config.LLM_STREAM and tts.available() else None)))
     done, _ = await asyncio.wait({task}, timeout=1.5)
     if not done:
-        await ws_server.send({"type": "notice", "text": "// one sec //",
-                              "seconds": 3.0})
-    reply = await task
-    if reply is None:
-        line = ("// heart present, words absent: no llm key //"
-                if not config.LLM_API_KEY else
-                "// can't reach the words right now. nudge me again //")
-        await ws_server.send({"type": "notice", "text": line, "seconds": 4.0})
-        print("remix-brain: no reply available")
+        await ws_server.send(Face("thunk", "none").msg(look=[0.0, -0.3]))
+        if awareness.out_of_sight() is True:
+            await ws_server.send({"type": "notice", "text": "// one sec //",
+                                  "seconds": 3.0})
+    r = await task
+    if r is None:
+        if not state["spoken_first"]:
+            line = ("// heart present, words absent: no llm key //"
+                    if not config.LLM_API_KEY else
+                    "// can't reach the words right now. nudge me again //")
+            await ws_server.send({"type": "notice", "text": line,
+                                  "seconds": 4.0})
+            print("remix-brain: no reply available")
         return
+    reply = r["text"]
+    first_spoken = r["first"] if isinstance(r["first"], str) else None
+    beat_list = speech.beats(reply)
+    spoken = None
+    face_list = []
 
     # Acting plan (Jev, once her words exist), then her voice. With the
     # expressive voice on, the voice FOLLOWS the faces she is about to make, so the
     # plan comes first (espeak is quick); with it off they run in parallel as before.
-    beat_list = speech.beats(reply)
     judge_on = decisions.mode("judge_unseen") != "off"
     dodge_on = decisions.mode("dodge_judge") != "off"
     senses = grounding_senses(awareness.current(), _latest_snapshot)
     plan_coro = (_jev.act(text, beat_list, senses=senses, intent=intent)
                  if _jev else asyncio.sleep(0, None))
-    tag = f"p{_seq + 1}"
-    if config.TTS_EXPRESSIVE and tts.available():
+    plan = None
+    if first_spoken:
+        # sentence one is already out: the act plan faces only what remains
         plan = await plan_coro
-        face_list = list(plan.faces) if plan else _local_arc(face, beat_list)
-        spoken = await tts.synthesize(
-            beat_list, tag, faces=face_list,
-            strain=tts.strain_from(_latest_snapshot))
+        rest_text = (reply[len(first_spoken):].strip()
+                     if reply.startswith(first_spoken) else reply)
+        rest_beats = speech.beats(rest_text) if rest_text else []
+        if rest_beats:
+            if plan is not None:
+                full = list(plan.faces)
+                skip = max(0, len(beat_list) - len(rest_beats))
+                face_list = full[skip:] if skip and len(full) > skip else full
+                face_list = face_list[:len(rest_beats)]
+                face_list += [face_list[-1]] * (len(rest_beats) - len(face_list))
+            else:
+                face_list = _local_arc(face, rest_beats)
+            looks = _beat_looks(rest_beats, lead=aimed)
+            tag = f"p{_seq + 1}b"
+            spoken = await tts.synthesize(
+                rest_beats, tag,
+                faces=(face_list if config.TTS_EXPRESSIVE else None),
+                strain=tts.strain_from(_latest_snapshot))
+            _seq += 1
+            pid = f"t{_seq}b"
+            await ws_server.send({"type": "say", "text": reply, "final": True})
+            if spoken:
+                cues = [f.cue(spoken.starts[i], looks[i])
+                        for i, f in enumerate(face_list)]
+                _rule.pause_for_speech(spoken.total + 1.0)
+                await ws_server.send({"type": "perform", "id": pid,
+                                      "audio": spoken.path, "cues": cues,
+                                      "then": face_list[-1].spec(),
+                                      "enqueue": True})
+                _spoken_now.update(pid=pid, text=rest_text)
+            else:
+                _silent_task = asyncio.create_task(
+                    _play_silent(face_list, rest_beats, looks))
+                _rule.pause_for_speech(sum(max(0.8, len(b) * 0.06)
+                                           for b in rest_beats))
+        if _jev and not plan:
+            for f in face_list:
+                _jev.note_face(f)
     else:
-        plan, spoken = await asyncio.gather(
-            plan_coro, tts.synthesize(beat_list, tag))
-        face_list = list(plan.faces) if plan else _local_arc(face, beat_list)
-    if _jev and not plan:
-        for f in face_list:
-            _jev.note_face(f)
+        if config.TTS_EXPRESSIVE and tts.available():
+            plan = await plan_coro
+            face_list = list(plan.faces) if plan else _local_arc(face, beat_list)
+            spoken = await tts.synthesize(
+                beat_list, f"p{_seq + 1}", faces=face_list,
+                strain=tts.strain_from(_latest_snapshot))
+        else:
+            plan, spoken = await asyncio.gather(
+                plan_coro, tts.synthesize(beat_list, f"p{_seq + 1}"))
+            face_list = list(plan.faces) if plan else _local_arc(face, beat_list)
+        if _jev and not plan:
+            for f in face_list:
+                _jev.note_face(f)
+        _seq += 1
+        pid = f"t{_seq}"
+        looks = _beat_looks(beat_list, lead=aimed)
+        await ws_server.send({"type": "say", "text": reply, "final": True})
+        if spoken:
+            cues = [f.cue(spoken.starts[i], looks[i])
+                    for i, f in enumerate(face_list)]
+            _rule.pause_for_speech(spoken.total + 1.0)
+            await ws_server.send({"type": "perform", "id": pid, "audio": spoken.path,
+                                  "cues": cues, "then": face_list[-1].spec()})
+            _spoken_now.update(pid=pid, text=reply)   # the mute reflex watches this
+        else:
+            _silent_task = asyncio.create_task(_play_silent(face_list, beat_list, looks))
+            _rule.pause_for_speech(sum(max(0.8, len(b) * 0.06) for b in beat_list))
     if _jev:
         decisions.log("act", "-", jev="faces",
                       used="jev" if plan else "local",
@@ -682,52 +823,48 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
     # Dodge judge (plan 2.4.3): shadow logs the score, live acts on it — ONE
     # plain-prose retry when she dodged a question/command, and the second
     # try ships either way (her words, her responsibility). Nothing has been
-    # sent yet, so re-voicing the corrected line is safe.
+    # sent yet, so re-voicing the corrected line is safe. When sentence one
+    # already streamed out, a retry would contradict her own mouth: logged,
+    # not redone.
     if (dodge_on and plan is not None and plan.dodged is not None
             and intent in ("question", "command")):
         dmode = decisions.mode("dodge_judge")
         if dmode == "live" and plan.dodged >= config.JEV_DODGE_THRESHOLD:
-            print(f"remix-brain: dodge judge flagged the reply "
-                  f"({plan.dodged:.2f}) — one plain retry")
-            decisions.log("dodge_judge", "live", jev=f"{plan.dodged:.2f}",
-                          used="jev", local="none", extra="retry")
-            second = await speech.generate_undodged(
-                text, reply, vitals=_latest_snapshot, stance=stance,
-                context=_context, aware=awareness.current())
-            if second:
-                reply = second
-                beat_list = speech.beats(reply)
-                spoken = await tts.synthesize(beat_list, tag)
-                face_list = list(plan.faces) if plan else _local_arc(face, beat_list)
+            if first_spoken:
+                decisions.log("dodge_judge", "live", jev=f"{plan.dodged:.2f}",
+                              used="local", local="none",
+                              extra="too late: sentence one already spoken")
+            else:
+                print(f"remix-brain: dodge judge flagged the reply "
+                      f"({plan.dodged:.2f}) — one plain retry")
+                decisions.log("dodge_judge", "live", jev=f"{plan.dodged:.2f}",
+                              used="jev", local="none", extra="retry")
+                second = await speech.generate_undodged(
+                    text, reply, vitals=_latest_snapshot, stance=stance,
+                    context=_context, aware=awareness.current())
+                if second:
+                    reply = second
+                    beat_list = speech.beats(reply)
+                    spoken = await tts.synthesize(beat_list, f"p{_seq}")
+                    face_list = list(plan.faces) if plan else _local_arc(face, beat_list)
         else:
             decisions.log("dodge_judge", dmode, jev=f"{plan.dodged:.2f}",
                           used="jev", local="none", extra=f"intent={intent}")
-
-
-    _seq += 1
-    pid = f"t{_seq}"
-    looks = _beat_looks(beat_list, lead=aimed)
-    await ws_server.send({"type": "say", "text": reply, "final": True})
-    if spoken:
-        cues = [f.cue(spoken.starts[i], looks[i])
-                for i, f in enumerate(face_list)]
-        _rule.pause_for_speech(spoken.total + 1.0)
-        await ws_server.send({"type": "perform", "id": pid, "audio": spoken.path,
-                              "cues": cues, "then": face_list[-1].spec()})
-        _spoken_now.update(pid=pid, text=reply)   # the mute reflex watches this
-    else:
-        _silent_task = asyncio.create_task(_play_silent(face_list, beat_list, looks))
-        _rule.pause_for_speech(sum(max(0.8, len(b) * 0.06) for b in beat_list))
 
     if config.SUBTITLES == "always" or (config.SUBTITLES == "auto" and not spoken):
         secs = min(14.0, max(3.5, len(reply) * 0.045))
         await ws_server.send({"type": "notice", "text": reply, "seconds": secs})
     print(f"remix-brain: reply ready ({len(beat_list)} beats, {len(reply)} chars, "
           f"voice={'espeak' if spoken else 'none'}, "
-          f"faces={[str(f) for f in face_list]}) -> {pid}")
+          f"faces={[str(f) for f in face_list]})"
+          + (f" [first {t_first - t_started:.1f}s, full "
+             f"{time.monotonic() - t_started:.1f}s]" if t_first else
+             f" [full {time.monotonic() - t_started:.1f}s]"))
     # Phase 4 (plan 2.3 done-when): she answered while out of sight — the
     # bar glows within a second, and clears the moment you look at her.
-    await _maybe_escalate("reply", reply)
+    # A streamed first sentence escalated the moment it was spoken.
+    if not state["spoken_first"]:
+        await _maybe_escalate("reply", reply)
 
 
 # ------------------------------------------------- proactive lines (Phase 6)

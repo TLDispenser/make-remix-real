@@ -60,6 +60,9 @@ MOCK = _env("MOCK", "0") == "1"  # real vitals verified 2026-11-06; set REMIX_MO
 # Phase 6 senses (plan Part 4): body truths are slow — probe at most this
 # often (battery wear, SMART health, kernel-error count; all local, no sudo).
 BODY_REFRESH_S = float(_env("BODY_REFRESH_S", "600.0"))
+# Phase 7 (plan 4.10): her colour follows the core temperature (the original
+# spec's want). 0 = the fixed theme colour.
+TEMP_TINT = _env("TEMP_TINT", "1") == "1"
 
 # Phase 6 shell hook: zsh preexec/precmd report long jobs to her over a unix
 # socket in the runtime dir. OFF by default — a command line is user content
@@ -382,6 +385,9 @@ def _providers() -> list:
 PROVIDERS = _providers()
 LLM_PROVIDER_COOLDOWN_S = float(_env("LLM_PROVIDER_COOLDOWN_S", "600.0"))
 LLM_MAX_CONCURRENT = 1  # z.ai free Flash models allow ONE concurrent request
+# Phase 7 latency (plan 3.9): stream the pool call so her first sentence can
+# speak while the rest is written. 0 = the old one-shot call everywhere.
+LLM_STREAM = _env("LLM_STREAM", "1") == "1"
 
 # ---- Memory (Phase 7 polish): her sandbox + persistent journal ----
 # A folder that is HER repo: sandbox/memory.json (the journal) plus anything

@@ -9,8 +9,10 @@
 import asyncio
 import collections
 import json
+import queue as _queue
 import random
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -575,6 +577,239 @@ async def _call_llm(messages: list, temperature: float = 0.7) -> str | None:
             print(f"remix-brain: {p['name']} cooling down "
                   f"({config.LLM_PROVIDER_COOLDOWN_S:.0f}s)")
     return None
+
+
+# ------------------------------------------------------------- streaming
+# Phase 7 (plan 3.9): the pool call speaks in sentences. `stream: true` over
+# the SAME OpenAI-compatible endpoints; the deltas arrive as SSE lines and
+# the first clean sentence can start speaking while the rest is still being
+# written (the old non-streaming call remains the fallback, per provider).
+
+def _llm_stream_sync(provider: dict, messages: list, temperature: float,
+                     out: _queue.Queue) -> None:
+    """Worker thread: one streaming chat completion -> ('delta', text) /
+    ('error', str) / ('done', '') items on the queue. Reasoning deltas are
+    skipped; only content counts (glm-4.7 writes reasoning_content first)."""
+    url = provider["url"].rstrip("/") + "/chat/completions"
+    body = json.dumps({
+        "model": provider["model"],
+        "temperature": temperature,
+        "max_tokens": 2048,
+        "stream": True,
+        "messages": messages,
+    }).encode()
+    req = urllib.request.Request(url, data=body, headers={
+        "Authorization": "Bearer " + provider["key"],
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+    })
+    got_any = False
+    try:
+        with urllib.request.urlopen(req, timeout=config.LLM_TIMEOUT_S) as r:
+            for raw in r:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    data = json.loads(payload)
+                    delta = (data.get("choices") or [{}])[0].get("delta") or {}
+                    piece = delta.get("content")
+                except (ValueError, IndexError, AttributeError):
+                    continue
+                if piece:
+                    got_any = True
+                    out.put(("delta", str(piece)))
+        if got_any:
+            out.put(("done", ""))
+        else:
+            out.put(("error", "stream closed with no content"))
+    except Exception as e:
+        detail = ""
+        if isinstance(e, urllib.error.HTTPError):
+            try:
+                detail = (e.read().decode(errors="replace") or "")[:120]
+            except Exception:
+                detail = ""
+        out.put(("error", f"HTTP {getattr(e, 'code', '')}: {detail or e!r}"))
+
+
+async def _call_llm_stream(messages: list, temperature: float = 0.7):
+    """Async generator of content chunks, same pool rotation and health
+    rules as _call_llm. A provider that refuses to stream falls back to its
+    normal call (one chunk). A stream that breaks MID-TEXT finalizes with
+    the partial (never re-asks: deltas may already have been spoken)."""
+    global _current
+    usable = _pool_order()
+    if not usable:
+        names = ", ".join(str(p["name"]) for p in config.PROVIDERS)
+        print(f"remix-brain: all providers cooling down ({names}) — "
+              f"sitting out ~{config.LLM_PROVIDER_COOLDOWN_S:.0f}s")
+        return
+    overall_delay = 3.0
+    for p in usable:
+        for i in range(_PER_PROVIDER_ATTEMPTS):
+            q: _queue.Queue = _queue.Queue()
+            th = threading.Thread(target=_llm_stream_sync,
+                                  args=(p, messages, temperature, q),
+                                  daemon=True)
+            th.start()
+            parts: list = []
+            failed = None
+            while True:
+                kind, payload = await asyncio.to_thread(q.get)
+                if kind == "delta":
+                    parts.append(payload)
+                    yield payload
+                elif kind == "done":
+                    failed = None
+                    break
+                else:
+                    failed = str(payload)
+                    break
+            if failed is None and parts:
+                if p["name"] != config.PROVIDERS[_current]["name"]:
+                    print(f"remix-brain: right brain answered via {p['name']} "
+                          "(streamed)")
+                _failures[p["name"]] = 0
+                _cool_until[p["name"]] = 0.0
+                _current = config.PROVIDERS.index(p)
+                return
+            if failed is not None and parts:
+                # Died with words already on the wire: her partial stands
+                # (re-asking would speak a DIFFERENT reply over it).
+                print(f"remix-brain: stream broke mid-reply ({failed}); "
+                      f"keeping the partial ({len(''.join(parts))} chars)")
+                _failures[p["name"]] = _failures.get(p["name"], 0) + 1
+                return
+            # Nothing yielded yet: this attempt is invisible to the caller,
+            # so the normal retry/rotation rules apply.
+            print(f"remix-brain: LLM {p['name']} stream attempt "
+                  f"{i + 1}/{_PER_PROVIDER_ATTEMPTS} failed: {failed}")
+            if i + 1 < _PER_PROVIDER_ATTEMPTS:
+                await asyncio.sleep(min(overall_delay, 15.0)
+                                    + random.uniform(0, overall_delay))
+                overall_delay = overall_delay * 1.6
+                continue
+            # Last resort for THIS provider: its non-streaming call, which
+            # some endpoints accept when stream:true is rejected.
+            try:
+                reply = await asyncio.to_thread(_llm_once_sync, p, messages,
+                                                temperature)
+            except Exception as e:
+                print(f"remix-brain: LLM {p['name']} fallback failed: {e}")
+                reply = None
+            if reply:
+                _failures[p["name"]] = 0
+                _cool_until[p["name"]] = 0.0
+                _current = config.PROVIDERS.index(p)
+                yield reply
+                return
+        if _failures.get(p["name"], 0) >= _PER_PROVIDER_ATTEMPTS:
+            _cool_until[p["name"]] = (time.monotonic()
+                                      + config.LLM_PROVIDER_COOLDOWN_S)
+            print(f"remix-brain: {p['name']} cooling down "
+                  f"({config.LLM_PROVIDER_COOLDOWN_S:.0f}s)")
+    return
+
+
+def _first_sentence(text: str) -> str | None:
+    """The completed first sentence of a growing text, or None while no
+    sentence has ended yet (same boundary rule as beats()). The RAW text is
+    searched — the boundary is the whitespace AFTER the punctuation, which
+    the live stream carries before the next token lands."""
+    text = text or ""
+    m = re.search(r"(?<=[.!?])\s", text)
+    if not m:
+        return None
+    s = text[: m.end()].strip()
+    return s if len(s) >= 3 else None
+
+
+async def generate_reply_stream(user_text: str, vitals: dict | None = None,
+                                stance: str | None = None,
+                                context: dict | None = None,
+                                aware: dict | None = None,
+                                on_first=None) -> dict | None:
+    """The streaming reply (plan 3.9). Same contract as generate_reply —
+    queued on the lock, None only when the pool is down, one grounding
+    retry, history + journal written with the FINAL text — plus ONE early
+    hook: while the stream is still running, the moment a clean first
+    sentence exists it passes the grounding screen alone and on_first
+    (an async callable) fires with it. The caller may start speaking
+    sentence one while the rest is written. Returns
+    {'text', 'first', 'streamed'}: 'first' is the sentence on_first fired
+    with, False when the first sentence FAILED the screen (never
+    early-speak that reply), None when nothing fired yet."""
+    global _reply_waiters
+    _reply_waiters += 1          # unprompted lines see this and stay silent
+    try:
+        async with _lock:
+            return await _generate_stream(user_text, vitals, stance, context,
+                                          aware, on_first)
+    finally:
+        _reply_waiters -= 1
+
+
+async def _generate_stream(user_text: str, vitals: dict | None,
+                           stance: str | None, context: dict | None,
+                           aware: dict | None, on_first) -> dict | None:
+    messages = (
+        [{"role": "system", "content": build_system_prompt(vitals, stance,
+                                                           context, aware,
+                                                           user_text=user_text)}]
+        + list(_history)
+        + [{"role": "user", "content": user_text}]
+    )
+    streamed = False
+    parts: list = []
+    first: str | None | bool = None
+    if config.LLM_STREAM:
+        try:
+            async for chunk in _call_llm_stream(messages, 0.7):
+                streamed = True
+                parts.append(chunk)
+                if on_first is not None and first is None:
+                    s = _first_sentence("".join(parts))
+                    if s is not None:
+                        hist = " ".join(m["content"] for m in _history
+                                        if m["role"] == "user")
+                        if grounding.check(s, user_text, hist, vitals, aware):
+                            first = False      # dirty: this reply never speaks early
+                            on_first = None
+                        else:
+                            first = s
+                            await on_first(s)
+        except Exception as e:
+            if parts:
+                print(f"remix-brain: stream reader failed ({e!r}); "
+                      f"using the partial")
+            else:
+                parts = []
+                streamed = False
+    reply = ("".join(parts).strip() if parts else None)
+    if not streamed:
+        reply = await _call_llm(messages)
+    if reply is not None:
+        reply = strip_stage_directions(reply)
+        reply = await _grounded(reply, messages, user_text, vitals, aware)
+    if reply is not None:
+        if first and not reply.startswith(first):
+            # The grounding retry rewrote the reply AFTER sentence one was
+            # already spoken. Ship the retry whole; the spoken sentence was
+            # clean on its own screen.
+            print("remix-brain: streaming: retry rewrote the reply after "
+                  "sentence one was spoken — shipping the retry whole")
+            first = None
+        _history.append({"role": "user", "content": user_text})
+        _history.append({"role": "assistant", "content": reply})
+        memory.record("user", user_text)   # her dated past: both sides
+        memory.note_said(reply)
+        memory.record("her", reply)
+    return None if reply is None else {"text": reply, "first": first,
+                                       "streamed": streamed}
 
 
 async def generate_proactive_line(plan: dict, vitals: dict | None = None,

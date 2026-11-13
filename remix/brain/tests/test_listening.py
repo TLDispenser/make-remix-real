@@ -590,7 +590,7 @@ class ListeningFlowTests(unittest.TestCase):
     def setUp(self):
         self.sent, self.posts = [], []
         async def send(m): self.sent.append(m)
-        self._saved = (brain_main.ws_server.send, speech.generate_reply,
+        self._saved = (brain_main.ws_server.send, speech.generate_reply_stream,
                        config.JEV_ENABLED, config.JEV_API_KEY, config.LISTEN,
                        config.LISTEN_JEV, config.LISTEN_TICK_S, config.LISTEN_PAUSE_S,
                        config.LISTEN_JEV_MIN_GAP_S, config.LISTEN_JEV_RESERVE,
@@ -618,8 +618,9 @@ class ListeningFlowTests(unittest.TestCase):
                     "usage": {"input_tokens": 1, "output_tokens": 1}}
         jev._post = _post
 
-        async def fake_reply(*a, **k): return "Sure."
-        speech.generate_reply = fake_reply
+        async def fake_reply(*a, **k):
+            return {"text": "Sure.", "first": None, "streamed": False}
+        speech.generate_reply_stream = fake_reply
         brain_main._rule = rules.RuleBrain()
         brain_main._jev = jev.JevBrain(random.Random(0))
         brain_main._latest_snapshot = dict(VITALS)
@@ -629,7 +630,7 @@ class ListeningFlowTests(unittest.TestCase):
         brain_main._typing_at = 0.0
 
     def tearDown(self):
-        (brain_main.ws_server.send, speech.generate_reply, config.JEV_ENABLED,
+        (brain_main.ws_server.send, speech.generate_reply_stream, config.JEV_ENABLED,
          config.JEV_API_KEY, config.LISTEN, config.LISTEN_JEV, config.LISTEN_TICK_S,
          config.LISTEN_PAUSE_S, config.LISTEN_JEV_MIN_GAP_S, config.LISTEN_JEV_RESERVE,
          config.TTS_ENABLED, config.SUBTITLES, jev._post,

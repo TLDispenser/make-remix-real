@@ -1,0 +1,55 @@
+# Remix CI (plan 4.11): the unittest suite + the Godot headless tests.
+# The brain tests are hermetic (no network, no keys). The Godot tests run
+# headless on the official 4.7 binary; protocol_test is skipped for now —
+# it has a DOCUMENTED headless limitation ("context carries her position
+# and screen count" needs a real window) that fails identically on an
+# unmodified tree, so it would hold CI permanently red.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  brain:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: remix
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: unittest suite
+        run: |
+          find brain -name __pycache__ -type d -exec rm -rf {} +
+          python -m unittest discover -s brain/tests -t .
+
+  godot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install Godot 4.7 (headless)
+        run: |
+          curl -L -o godot.zip \
+            https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip godot.zip
+          mv Godot_v4.7.2-stable_linux.x86_64 /usr/local/bin/godot
+          godot --version
+      - name: headless tests (shapes, engine, perform, talk)
+        run: |
+          cd remix/godot
+          set -e
+          godot --headless --path . --import >/dev/null 2>&1 || true
+          godot --headless --path . --script res://tests/shapes_audit.gd 2>&1 | tee /tmp/out.log
+          grep -q "SHAPES_OK" /tmp/out.log || (echo "shapes failed"; exit 1)
+          godot --headless --path . --script res://tests/engine_test.gd 2>&1 | tee /tmp/out.log
+          grep -q "ENGINE_OK fails=0" /tmp/out.log || (echo "engine failed"; exit 1)
+          godot --headless --path . --script res://tests/perform_test.gd 2>&1 | tee /tmp/out.log
+          grep -q "PERFORM_OK" /tmp/out.log || (echo "perform failed"; exit 1)
+          godot --headless --path . --script res://tests/talk_test.gd 2>&1 | tee /tmp/out.log
+          grep -q "TALK_OK" /tmp/out.log || (echo "talk failed"; exit 1)
