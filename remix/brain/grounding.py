@@ -44,6 +44,10 @@ VITAL_WORDS = {
     "temp": ("temp", "temperature", "hot", "heat", "degrees", "core"),
     "battery": ("battery", "charge"),
     "disk": ("disk", "storage", "drive", "full"),
+    # Phase 6 senses: % claims get validated against the new readings too.
+    "swap": ("swap",),
+    "net": ("network", "bandwidth", "traffic", "internet"),
+    "wear": ("wear", "worn"),   # resolved from the body block, not vitals
 }
 
 # Phase 2/3 rule: no pre-written lines in her voice — the canned DEFLECTIONS
@@ -169,9 +173,14 @@ def describe_screen(context: dict | None) -> str:
 
 
 def facts(vitals_text: str, machine: str, context: dict | None,
-          aware: dict | None = None) -> str:
+          aware: dict | None = None, vitals: dict | None = None) -> str:
     now = time.strftime("%A %H:%M")
     extra = ""
+    # Phase 6 senses (plan Part 4): what the machine's own reports now
+    # include beyond the five core vitals. The denial text below must MATCH
+    # this reality, or she'll deny readings she can actually see.
+    has_top = bool(vitals and vitals.get("top"))
+    has_net = bool(vitals and vitals.get("net") is not None)
     sees_title = bool(aware and aware.get("title"))
     around = (aware or {}).get("around") or {}
     has_around = bool(around.get("self") and (around.get("windows")
@@ -246,20 +255,63 @@ def facts(vitals_text: str, machine: str, context: dict | None,
                              "YOU REMEMBER if it's present).")
         if lines:
             extra = "\n" + "\n".join(lines) + "\n"
+    # Phase 6 senses block: say exactly what each new reading is and what it
+    # is NOT — she only ever sees names, rates and counts.
+    if vitals:
+        senses = []
+        top = vitals.get("top") or []
+        if top:
+            senses.append(
+                "- The machine's busiest processes right now, by name and "
+                "how much CPU each is eating: "
+                + ", ".join(f"{t.get('name')} ({round(_fl(t.get('cpu')) or 0)}%)"
+                            for t in top) +
+                ". That's the WHOLE list, not everything running. You see "
+                "their names and appetites, nothing inside them.")
+        if vitals.get("swap") is not None:
+            senses.append("- How much swap the machine is using (a percent "
+                          "of swap space, not of RAM).")
+        if vitals.get("net") is not None:
+            senses.append("- How much data the WHOLE machine sends and "
+                          "receives over the network per second (KB/s). "
+                          "You can't see where it goes.")
+        if vitals.get("diskio") is not None:
+            senses.append("- How fast data is being read from and written "
+                          "to disk (KB/s). You can't see WHICH files.")
+        body = vitals.get("body") or {}
+        if body:
+            b = []
+            if body.get("wear") is not None:
+                b.append(f"the battery is {round(_fl(body['wear']))}% worn"
+                         + (f" after {int(body['cycles'])} charge cycles"
+                            if body.get("cycles") is not None else ""))
+            if body.get("smart"):
+                b.append(f"the drive's SMART health reports {body['smart']}")
+            if body.get("errors") is not None:
+                b.append(f"{int(body['errors'])} kernel errors have been "
+                         "logged since this boot")
+            senses.append("- Body truths, slow-changing: " + "; ".join(b) +
+                          ". Counts and health words only — the errors "
+                          "themselves never reach you.")
+        if senses:
+            extra += "\n" + "\n".join(senses) + "\n"
     if has_around:
         denial = ("what is INSIDE any window (the user's screen contents, "
                   "tabs, " + ("" if any_title else "window TITLES, ") +
-                  "processes, files, history, camera, or anything they do "
-                  "in those apps) or any window not on your list")
+                  ("" if has_top else "processes, ") +
+                  "files, history, camera, or anything they do in those "
+                  "apps) or any window not on your list")
         most = ("which apps are open, where their windows sit around you, "
                 "your vitals, and how long the keyboard has been quiet")
     else:
-        denial = ("the user's screen, other windows, workspaces, processes, "
+        denial = ("the user's screen, other windows, workspaces, "
+                  f"{'' if has_top else 'processes, '}"
                   "files, history, camera, or anything they do in the "
                   "focused app beyond its name and title" if sees_title else
                   "the user's screen, tabs, window TITLES, workspaces, "
-                  "processes, files, history, camera, or anything they do in "
-                  "the focused app")
+                  f"{'' if has_top else 'processes, '}"
+                  "files, history, camera, or anything they do in the "
+                  "focused app")
         most = ("the focused app and its title, your vitals, and how long "
                 "the keyboard has been quiet" if sees_title else
                 "the app's NAME, your vitals, and how long the keyboard has "
@@ -401,6 +453,31 @@ def check(reply: str, user_text: str, history_text: str, vitals: dict | None,
             sensed.add(w)
             if w.endswith("s"):
                 sensed.add(w[:-1])
+    # Phase 6 senses: the vitals feed widens her vocabulary the same way —
+    # only for words the CURRENT readings actually cover.
+    if vitals:
+        top = vitals.get("top") or []
+        if top:
+            sensed.update({"process", "processes"})
+            for t in top:
+                nm = str(t.get("name") or "").lower()
+                if nm:
+                    sensed.add(nm)
+                    for w in re.findall(r"[a-z0-9']+", nm):
+                        sensed.add(w)
+                        sensed.add(w + "s")
+        if vitals.get("net") is not None:
+            sensed.update({"network", "bandwidth", "traffic",
+                           "download", "downloads", "upload", "uploads"})
+        if vitals.get("swap") is not None:
+            sensed.update({"swap"})
+        body = vitals.get("body") or {}
+        if body.get("wear") is not None:
+            sensed.update({"wear", "worn"})
+        if body.get("smart"):
+            sensed.update({"smart", "health"})
+        if body.get("errors") is not None:
+            sensed.update({"kernel"})
     # Her own window is on her list (describe_screen): not a violation.
     scan = re.sub(r"\b(?:my|this|the|a)(?: (?:tiny|small|little|cramped|squished))? "
                   r"window\b", " ", reply, flags=re.I)
@@ -420,6 +497,9 @@ def check(reply: str, user_text: str, history_text: str, vitals: dict | None,
         problems.append(f"claims a memory from outside this chat ('{m.group(0)}')")
 
     vit = {k: _fl((vitals or {}).get(k)) for k in VITAL_WORDS}
+    # 'wear' lives in the body block (slow probe), not at the top level.
+    vit["wear"] = _fl(((vitals or {}).get("body") or {}).get("wear"))
+    top = (vitals or {}).get("top") or []
     for mm in NUM_CLAIM.finditer(reply):
         n = _num(mm.group("n"))
         if n is None:
@@ -434,6 +514,14 @@ def check(reply: str, user_text: str, history_text: str, vitals: dict | None,
         else:
             cands = [k for k in named if k != "temp"] or ["cpu", "ram", "battery", "disk"]
         real = [vit[k] for k in cands if vit.get(k) is not None]
+        # A busy process's own CPU share beats the machine total: when the
+        # context names one of the sensed top processes, its reading counts.
+        for t in top:
+            nm = str(t.get("name") or "").lower()
+            if nm and nm in ctx:
+                c = _fl(t.get("cpu"))
+                if c is not None:
+                    real.append(c)
         if not real:
             problems.append(f"quotes {mm.group(0)} but you have no such reading")
         elif not any(abs(n - r) <= 4.0 for r in real):

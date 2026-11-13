@@ -57,6 +57,20 @@ USER_NAME = _env("USER_NAME", "")
 # ---- Body / vitals ----
 VITALS_INTERVAL_S = float(_env("VITALS_INTERVAL_S", "1.0"))
 MOCK = _env("MOCK", "0") == "1"  # real vitals verified 2026-11-06; set REMIX_MOCK=1 for demo feeds
+# Phase 6 senses (plan Part 4): body truths are slow — probe at most this
+# often (battery wear, SMART health, kernel-error count; all local, no sudo).
+BODY_REFRESH_S = float(_env("BODY_REFRESH_S", "600.0"))
+
+# Phase 6 shell hook: zsh preexec/precmd report long jobs to her over a unix
+# socket in the runtime dir. OFF by default — a command line is user content
+# and her reaction about it goes to the cloud LLM, so this is opt-in.
+SHELL_HOOK = _env("SHELL_HOOK", "0") == "1"
+SHELL_SOCK = _env("SHELL_SOCK", os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}",
+    "remix", "shell.sock"))
+SHELL_MIN_S = float(_env("SHELL_MIN_S", "5.0"))       # shorter jobs aren't news
+SHELL_MAX_CMD = int(_env("SHELL_MAX_CMD", "120"))     # chars of a command she ever sees
+SHELL_COOLDOWN_S = float(_env("SHELL_COOLDOWN_S", "180.0"))  # min between reactions
 
 # ---- RuleBrain thresholds (safe defaults; tune per host via env) ----
 TEMP_ALARM_C = float(_env("TEMP_ALARM_C", "85"))

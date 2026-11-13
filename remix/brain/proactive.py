@@ -83,6 +83,9 @@ STANCE_CHOICES = {
     "brightness_changed": ["flat", "playful", "pout"],
     "usb_plugged": ["playful", "flat"],
     "screenshot_taken": ["playful", "tsun", "flat"],
+    # Phase 6 shell hook: a long shell job just finished or failed.
+    # Narrow stances: she noticed, the fact shades the tone.
+    "shell_job": ["playful", "flat", "concerned"],
 }
 
 # Per-trigger minimum spacing (seconds), on top of the global MIN_GAP.
@@ -101,6 +104,9 @@ TRIGGER_COOLDOWN_S = {
     "app_closed": 1800.0,     # 30 min
     "ambient": config.AMBIENT_COOLDOWN_S,
     "commitment_due": 1.0,    # edge-gated: each commitment fires once
+    # Phase 6: shell jobs are edge-gated (each job fires once) but a build
+    # loop that fails repeatedly shouldn't nag more than this floor.
+    "shell_job": config.SHELL_COOLDOWN_S,
 }
 # Phase 4 bits: cooldown FLOORS live in config.BIT_COOLDOWN_FLOORS_S (walls
 # are config, the policy is a decision); this table gets them merged in.
@@ -253,7 +259,8 @@ class Proactive:
              mic_open: bool = False, last_exchange_at: float | None = None,
              busy_until: float = 0.0, wall_hour: int | None = None,
              commitments: list | None = None,
-             bit_edges: list | None = None) -> dict | None:
+             bit_edges: list | None = None,
+             shell_edges: list | None = None) -> dict | None:
         """One engine step. Returns {'trigger','stance','face','look','aim',
         'situation'} — the urge, never the words. `commitments` carries due
         promises/reminders (wall-clock checked by the caller); when present
@@ -339,6 +346,15 @@ class Proactive:
             if t and self._due(t, now):
                 bit_plan, bit_fact = t, str(b.get("fact") or "").strip()
                 break
+        # Phase-6 shell edges: a long job just finished or FAILED in their
+        # zsh. Same edge shape; the plain fact becomes the situation.
+        shell_plan = None
+        shell_fact = ""
+        for b in (shell_edges or []):
+            t = str(b.get("trigger") or "")
+            if t and self._due(t, now):
+                shell_plan, shell_fact = t, str(b.get("fact") or "").strip()
+                break
         plan = None
         due_commitment = None
         if not self.greeted:
@@ -354,6 +370,8 @@ class Proactive:
             plan = "commitment_due"
         elif bit_plan is not None:
             plan = bit_plan            # the laptop just did something
+        elif shell_plan is not None:
+            plan = shell_plan          # a shell job just finished or failed
         elif plug_edge:
             plan = "plugged"
         elif away and self._due("welcome_back", now):
@@ -402,17 +420,20 @@ class Proactive:
         if plan in ("idle_gentle", "idle_deep"):
             self.episode[plan[5:]] = True
 
-        situation = (bit_fact if (bit_plan is not None and plan == bit_plan
-                                  and bit_fact)
-                     else _situation(
-                         plan, aware, batt,
-                         away_mins=round((_f(prev_idle) or 0) / 60)
-                         if plan == "welcome_back" else None,
-                         stuck_mins=round((now - aware["app_since"]) / 60)
-                         if plan == "app_stuck" and aware.get("app_since") is not None
-                         else None,
-                         app=opened_app if plan == "app_opened" else closed_app,
-                         commitment=due_commitment))
+        if plan == bit_plan and bit_plan is not None and bit_fact:
+            situation = bit_fact
+        elif plan == shell_plan and shell_plan is not None and shell_fact:
+            situation = shell_fact
+        else:
+            situation = _situation(
+                plan, aware, batt,
+                away_mins=round((_f(prev_idle) or 0) / 60)
+                if plan == "welcome_back" else None,
+                stuck_mins=round((now - aware["app_since"]) / 60)
+                if plan == "app_stuck" and aware.get("app_since") is not None
+                else None,
+                app=opened_app if plan == "app_opened" else closed_app,
+                commitment=due_commitment)
 
         return {"trigger": plan, "stance": stance,
                 "face": STANCE_FACE.get(stance, POSES["default"]),

@@ -935,7 +935,8 @@ async def proactive_loop() -> None:
                 last_exchange_at=_last_exchange_at,
                 busy_until=_rule.speak_gate_until,
                 commitments=memory.due_commitments(),
-                bit_edges=bit_edges)
+                bit_edges=bit_edges,
+                shell_edges=_drain_shell_edges())
         except Exception as e:               # chatter must never crash the brain
             print(f"remix-brain: proactive tick failed ({e!r})")
             continue
@@ -1038,6 +1039,80 @@ async def proactive_loop() -> None:
                 and not (awareness.current().get("muted")
                          and awareness.current().get("idle_s", 0) > 90)):
             await _set_urgent(False, "the room changed")
+
+
+# ---------------------------------------------------- shell hook (Phase 6)
+# zsh preexec/precmd report long jobs over a unix socket; each becomes a
+# plain-fact edge the next proactive tick may turn into a line. The socket
+# is opt-in (REMIX_SHELL_HOOK=1): a command line is user content and her
+# reaction about it goes to the cloud LLM.
+_shell_edges: list = []          # completed shell jobs awaiting a tick
+_shell_lock = threading.Lock()
+
+
+def _drain_shell_edges() -> list:
+    with _shell_lock:
+        out, _shell_edges[:] = _shell_edges[:], []
+        return out
+
+
+def _shell_edge(line: str) -> dict | None:
+    """Parse one hook line (`cmd\\trc\\tduration`) into a plain-fact edge.
+    Pure so tests can hit it directly. Short commands are life, not news;
+    the command text is redacted and capped BEFORE it can reach the cloud
+    LLM (emails/URLs/paths/tokens die here)."""
+    cmd, _, rest = (line or "").partition("\t")
+    rc_s, _, dur_s = rest.partition("\t")
+    try:
+        rc = int((rc_s or "0").strip())
+        dur = float((dur_s or "0").strip())
+    except ValueError:
+        return None
+    if dur < config.SHELL_MIN_S:
+        return None
+    cmd = awareness.redact_text(cmd)[:config.SHELL_MAX_CMD].strip()
+    if not cmd:
+        cmd = "a command whose name died in the scrub"
+    return {"trigger": "shell_job",
+            "fact": (f"they just ran `{cmd}` in the shell; it ran "
+                     f"{max(1, round(dur))}s and "
+                     + ("FAILED" if rc != 0 else "finished fine"))}
+
+
+async def _handle_shell_conn(reader: asyncio.StreamReader,
+                             writer: asyncio.StreamWriter) -> None:
+    try:
+        raw = await asyncio.wait_for(reader.readline(), timeout=5.0)
+        edge = _shell_edge(raw.decode("utf-8", "replace").strip())
+    except Exception:
+        edge = None
+    finally:
+        writer.close()
+    if edge:
+        with _shell_lock:
+            _shell_edges.append(edge)
+
+
+async def shell_loop() -> None:
+    """Phase 6 (plan Part 4 'shell hook'): listen on a 0600 unix socket in
+    the runtime dir for zsh hook reports. Same-user only; opt-in."""
+    if not config.SHELL_HOOK:
+        print("remix-brain: shell hook off (REMIX_SHELL_HOOK=1 to enable)")
+        return
+    sock = Path(str(config.SHELL_SOCK))
+    try:
+        sock.parent.mkdir(parents=True, exist_ok=True)
+        if sock.exists():
+            sock.unlink()              # stale socket from a dead session
+        server = await asyncio.start_unix_server(
+            _handle_shell_conn, path=str(sock))
+        os.chmod(sock, 0o600)          # this user, and nobody else
+    except OSError as e:
+        print(f"remix-brain: shell socket failed ({e!r})")
+        return
+    print(f"remix-brain: shell hook listening on {sock}")
+    async with server:
+        await server.serve_forever()
 
 
 async def inbox_loop() -> None:
@@ -1373,6 +1448,7 @@ async def main() -> None:
         awaken_s=((memory.awaken() or {}).get("elapsed_s")))
     _backfill_task: asyncio.Task | None = None
     _inbox_task: asyncio.Task | None = None
+    _shell_task: asyncio.Task | None = None
     ws_server.on("ready", _on_ready)
     ws_server.on("context", _on_context)
     ws_server.on("perform_done", _on_perform_done)
@@ -1414,6 +1490,7 @@ async def main() -> None:
         _proactive_task = asyncio.create_task(proactive_loop())
     _backfill_task = asyncio.create_task(_memory_backfill())
     _inbox_task = asyncio.create_task(inbox_loop())
+    _shell_task = asyncio.create_task(shell_loop())
     print(f"remix-brain: awareness {'on' if config.AWARENESS else 'off'} "
           f"(app names only, titles redacted), proactive "
           f"{'on' if config.PROACTIVE and config.AWARENESS else 'off'} "
@@ -1443,6 +1520,7 @@ async def main() -> None:
         _cancel(_proactive_task)
         _cancel(_backfill_task)
         _cancel(_inbox_task)
+        _cancel(_shell_task)
         if _ptt:
             await _ptt.cancel()   # never leave the mic open on the way out
         # Parting note (plan 2.1.4): one reflection over this session, if

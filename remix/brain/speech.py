@@ -129,6 +129,26 @@ def _vitals_str(vitals: dict | None) -> str:
         bits.append(f"battery {round(_f(vitals.get('battery'))) or 0}%")
     if vitals.get("disk") is not None:
         bits.append(f"disk {round(_f(vitals.get('disk'))) or 0}% full")
+    if vitals.get("swap") is not None:                    # Phase 6 senses
+        bits.append(f"swap {round(_f(vitals.get('swap'))) or 0}%")
+    if vitals.get("net") is not None:
+        bits.append(f"network {round(_f(vitals.get('net')))} KB/s")
+    if vitals.get("diskio") is not None:
+        bits.append(f"disk io {round(_f(vitals.get('diskio')))} KB/s")
+    top = vitals.get("top") or []
+    if top:
+        bits.append("busiest right now: " + ", ".join(
+            f"{t.get('name')} {round(_f(t.get('cpu')) or 0)}%"
+            for t in top[:2]))
+    body = vitals.get("body") or {}
+    if body.get("wear") is not None:
+        bits.append(f"battery wear {round(_f(body['wear']))}%")
+    if body.get("cycles") is not None:
+        bits.append(f"{int(body['cycles'])} charge cycles")
+    if body.get("smart"):
+        bits.append(f"drive health {body['smart']}")
+    if body.get("errors") is not None:
+        bits.append(f"{int(body['errors'])} kernel errors since boot")
     return ", ".join(bits) if bits else "unavailable right now"
 
 
@@ -254,7 +274,7 @@ def build_system_prompt(vitals: dict | None = None, stance: str | None = None,
         vitals=_vitals_str(vitals),
         stance=stance or "none; pick your own reaction",
         grounding=grounding.facts(_vitals_str(vitals), _machine_blurb(),
-                                  context, aware),
+                                  context, aware, vitals),
     )
     return prompt + _memory_block(user_text) + temper_line()
 
