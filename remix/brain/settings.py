@@ -41,7 +41,7 @@ KNOBS = [
     ("BITS", "BITS", "bool",
      "the laptop's own life: lid, wifi, usb, screenshots..."),
     ("TEMP_TINT", "TEMP_TINT", "bool",
-     "her colour follows the core temperature (the original spec's want)"),
+     "her colour follows the core temperature (OFF by default; 1 = the tint)"),
     ("BODY_REFRESH_S", "BODY_REFRESH_S", "float",
      "how often body truths (battery wear, SMART, kernel errors) re-probe"),
     ("LLM_STREAM", "LLM_STREAM", "bool",

@@ -136,6 +136,12 @@ class StreamReplyTests(unittest.TestCase):
 
 
 class TempTintTests(unittest.TestCase):
+    def test_default_is_off(self):
+        # The user asked for this: she keeps her fixed colour unless the
+        # knob is turned on explicitly (REMIX_TEMP_TINT=1).
+        self.assertFalse(__import__("brain.config",
+                                    fromlist=["TEMP_TINT"]).TEMP_TINT)
+
     def test_disabled_or_unknown_temp_never_sends(self):
         from brain import main as m
         with mock.patch.object(m.config, "TEMP_TINT", False):
@@ -143,29 +149,31 @@ class TempTintTests(unittest.TestCase):
 
     def test_bands_and_first_reading_sends_its_colour(self):
         from brain import main as m
-        band, color = m._temp_tint(58, None)
-        self.assertEqual(band, 1)
-        self.assertEqual(color, "#ff5148")
-        # no change inside the band
-        self.assertEqual((1, None), m._temp_tint(70, 1))
-        # cold
-        self.assertEqual(0, m._temp_tint(40, None)[0])
-        self.assertEqual("#5ab0ff", m._temp_tint(40, None)[1])
-        # hot
-        self.assertEqual("#ff3814", m._temp_tint(90, 2)[1])
+        with mock.patch.object(m.config, "TEMP_TINT", True):
+            band, color = m._temp_tint(58, None)
+            self.assertEqual(band, 1)
+            self.assertEqual(color, "#ff5148")
+            # no change inside the band
+            self.assertEqual((1, None), m._temp_tint(70, 1))
+            # cold
+            self.assertEqual(0, m._temp_tint(40, None)[0])
+            self.assertEqual("#5ab0ff", m._temp_tint(40, None)[1])
+            # hot
+            self.assertEqual("#ff3814", m._temp_tint(90, 2)[1])
 
     def test_hysteresis_at_the_edge(self):
         from brain import main as m
-        # hovering just under 72 in the normal band: no flicker
-        self.assertEqual((1, None), m._temp_tint(71.9, 1))
-        # one full degree past the edge moves her
-        band, color = m._temp_tint(73.5, 1)
-        self.assertEqual(band, 2)
-        self.assertEqual(color, "#ff7a29")
-        # and back down needs a full degree the other way
-        self.assertEqual((2, None), m._temp_tint(71.9, 2))
-        band, color = m._temp_tint(70.5, 2)
-        self.assertEqual(band, 1)
+        with mock.patch.object(m.config, "TEMP_TINT", True):
+            # hovering just under 72 in the normal band: no flicker
+            self.assertEqual((1, None), m._temp_tint(71.9, 1))
+            # one full degree past the edge moves her
+            band, color = m._temp_tint(73.5, 1)
+            self.assertEqual(band, 2)
+            self.assertEqual(color, "#ff7a29")
+            # and back down needs a full degree the other way
+            self.assertEqual((2, None), m._temp_tint(71.9, 2))
+            band, color = m._temp_tint(70.5, 2)
+            self.assertEqual(band, 1)
 
 
 class SettingsMergeTests(unittest.TestCase):

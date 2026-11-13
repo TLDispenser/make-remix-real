@@ -60,9 +60,9 @@ MOCK = _env("MOCK", "0") == "1"  # real vitals verified 2026-11-06; set REMIX_MO
 # Phase 6 senses (plan Part 4): body truths are slow — probe at most this
 # often (battery wear, SMART health, kernel-error count; all local, no sudo).
 BODY_REFRESH_S = float(_env("BODY_REFRESH_S", "600.0"))
-# Phase 7 (plan 4.10): her colour follows the core temperature (the original
-# spec's want). 0 = the fixed theme colour.
-TEMP_TINT = _env("TEMP_TINT", "1") == "1"
+# Phase 7 (plan 4.10): her colour following the core temperature is available
+# but OFF by default (she keeps her fixed theme colour). 1 = the tint.
+TEMP_TINT = _env("TEMP_TINT", "0") == "1"
 
 # Phase 6 shell hook: zsh preexec/precmd report long jobs to her over a unix
 # socket in the runtime dir. OFF by default — a command line is user content
