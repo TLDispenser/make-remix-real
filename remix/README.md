@@ -17,7 +17,7 @@ verified against live docs, and the user's constraints locked in on 2026-11-05:
 | 4 Right brain (LLM words) | ✅ live; now **grounded** (she only knows her vitals/hardware/window/time/this chat; invented tabs/windows/memories/vitals are screened) |
 | 5 Push-to-talk (local STT) | ✅ done — faster-whisper, hold-to-talk, hard 15 s mic cap, see "Voice" below |
 | 6 Awareness | ✅ done — Hyprland app sensing (names only, titles redacted), idle/power/audio senses, unprompted lines from local text pools (DND + rate limits) |
-| 7 Voice out + polish | ✅ voice done: **espeak-ng** (not an AI voice), lip-sync from the audio, per-beat faces timed to it. Tray/settings still open |
+| 7 Voice out + polish | ✅ voice done: **espeak-ng** (not an AI voice), lip-sync from the audio, per-beat faces timed to it. Settings: **TUI done** (2026-11-13, `./settings.sh`) — tray still open |
 | 8 Criticism round (2026-11-08) | ✅ mostly done — persistent **memory sandbox** (`~/.local/share/remix/sandbox/`, optional GitHub mirror), time sense (uptime/awaken/dated journal), temper knob + slight random personality drift, softer sides (dry ≠ cruel), honest stats everywhere, **ambient thoughts**, **urgent marker** (6.4), motion boost + pacing, per-beat espeak prosody. Godot-side single-eye twitch + urgent (OS taskbar attention request + orange frame) now applied (2026-11-08c, see `godot/PROPOSED_face_edits.md`) |
 
 Loose-ends pass (2026-11-08): `CORE_*` settings renamed to `REMIX_*` (old names
@@ -277,7 +277,50 @@ persona prompt invites it (one line in `speech.py`'s system prompt would).
 #   godot --path remix/godot   # or open remix/godot/project.godot in the editor
 ```
 
-First-run checklist (Hyprland):
+## Settings TUI (2026-11-13)
+
+```bash
+./settings.sh        # the TUI when textual is in the venv, else the plain menu
+./settings.sh plain  # force the no-dep menu (works over SSH with no venv)
+```
+
+Every knob `config.py` can read (147 of them), organized into eleven
+sections: You & her / Voice out / Ears / Senses & privacy / Body & vitals /
+Attention / Jev & budget / The seam / LLM (right brain) / Memory & home /
+Face link. Values shown are **live config** — what she is actually running
+on right now. Keys: arrows or `j k` to move, `space` flips bools and cycles
+choices, `enter` edits in a dialog, `/` searches every knob by name or help
+text, `[`/`]` (or left/right) switch sections, `u` unstages a row, `r` stages
+the knob's built-in default, `?` shows the help, `ctrl+s` writes.
+
+**What saving does:** edits are staged (amber `● staged` marker) and NOT
+written until `ctrl+s`, which updates the FIRST definition of each changed
+key in `remix/.env` and preserves every other line byte for byte — your keys
+included. Secrets (API keys, tokens) are shown as set/unset only and are
+never displayed or prefilled. Quitting with staged changes raises a
+write/discard/cancel guard. After saving, most knobs need
+`./restart.sh brain`; the few with a runtime command (`PROACTIVE` → `/quiet`,
+`TITLES` → `/aware`, `LISTEN` → `/listen`) say so on the row.
+
+The status strip under the header is honest, not decorative: whether the
+brain is actually up on its WebSocket port right now, whether a Jev key is
+configured, how many LLM providers are in the pool, and `vitals real|MOCK`.
+A `≠` marker means `.env` holds a raw value that differs from live config —
+the real environment or an earlier duplicate line won at load (the loader
+names duplicates out loud; see `config.py`).
+
+Two things to know:
+- `textual==8.2.8` is pinned in `requirements.txt` but only `settings_tui.py`
+  imports it — the brain never does, and without it `./settings.sh` falls
+  back to the plain menu. Same `.env` contract either way
+  (`brain/settings.py` holds the write logic both UIs share).
+- The plain menu had a real bug found while building this: it wrote bare
+  `KEY=` lines, but `config._env()` only reads `REMIX_*`/`CORE_*` — so menu
+  edits silently reverted after a restart. Both UIs write `REMIX_*` now, and
+  `brain/tests/test_settings_catalog.py` enforces the naming so it can't
+  come back.
+
+## First-run checklist (Hyprland):
 - `hyprctl clients | grep -iA3 remix` → find the avatar's window **title** (`Remix`)
 - pin her above everything (Hyprland 0.53+ rule syntax, verified against the wiki):
 
