@@ -25,6 +25,7 @@ import shutil
 import sqlite3
 import subprocess
 import time
+import urllib.request
 from pathlib import Path
 
 from . import config
@@ -658,7 +659,11 @@ def _git(*args: str, cwd: str | None = None) -> tuple:
 
 
 def sync_once() -> str | None:
-    """Commit + push the sandbox. Non-fatal; returns a short status string."""
+    """Commit + push the sandbox. Non-fatal; returns a short status string.
+    Phase 5 (plan 2.2): the readable files (home.py) are refreshed before
+    the commit; a diary entry's first sentence becomes the commit message;
+    and nothing is pushed unless the mirror is verified PRIVATE (plan 2.2
+    #7 — the journal is chat text)."""
     if not sync_enabled():
         return None
     flush()
@@ -673,22 +678,74 @@ def sync_once() -> str | None:
             return f"init failed: {out.strip()[:120]}"
         _git("config", "user.name", "remix")
         _git("config", "user.email", "remix@sandbox.local")
+    try:
+        from . import home                     # lazy: home must not import back
+        home.write_journal_days(store().get("lines") or [])
+        home.write_reflections(store().get("lines") or [])
+    except Exception as e:
+        print(f"remix-brain: readable files refresh failed ({e!r})")
     _git("add", "-A")
     if _git("diff", "--cached", "--quiet")[0] == 0:
         return "clean (nothing new to commit; pushes on the next journal change)"
-    _git("commit", "-q", "-m",
-         "journal " + time.strftime("%Y-%m-%d %H:%M"))
+    _git("commit", "-q", "-m", commit_message())
     # Token goes in the push URL only — never stored in .git/config.
     url = config.MEMORY_REPO
     head = url.rsplit("/", 1)
     authed = f"https://remix-token:{config.MEMORY_TOKEN}@" + (
         head[0].split("://", 1)[-1] + "/" + head[1]).removeprefix("/")
+    # Safety pass (plan 2.2 #7): only a verified-PRIVATE repo gets the
+    # journal. Unverifiable (GitHub unreachable) = fail closed, not pushed.
+    vis = _repo_visibility()
+    if vis == "public":
+        return "refused: the mirror repo is PUBLIC — journal stays local"
+    if vis == "unknown":
+        return "not pushed: repo visibility unknown (GitHub unreachable)"
     rc, out = _git("push", "--quiet", authed, "HEAD:main")
     _git("remote", "remove", "origin") if _git(
         "remote", "get-url", "origin")[0] == 0 else None
+    from . import home as _home
+    _home.clear_subject()          # the entry this message described is pushed
     # Git echoes the authed URL in network-failure messages; never let the
     # token reach the return value (it would land in the log).
     out = out.replace(config.MEMORY_TOKEN, "***")
     if rc != 0:
         return f"push failed: {out.strip()[:120]}"
     return "pushed"
+
+
+def commit_message() -> str:
+    """A diary entry's first sentence, when one is waiting to be mirrored;
+    otherwise the plain journal stamp (plan 2.2 #4: her day reads in log)."""
+    try:
+        from . import home
+        s = home.commit_subject()
+        if s:
+            return s
+    except Exception:
+        pass
+    return "journal " + time.strftime("%Y-%m-%d %H:%M")
+
+
+_repo_private: int | None = None      # 1 verified private / 0 public / None unchecked
+
+
+def _repo_visibility() -> str:
+    """'private' | 'public' | 'unknown' — one GitHub API call per boot."""
+    global _repo_private
+    if _repo_private is not None:
+        return {1: "private", 0: "public"}[_repo_private]
+    try:
+        slug = config.MEMORY_REPO.rstrip("/").removesuffix(".git")
+        owner, name = slug.rsplit("/", 2)[-2:]
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{owner}/{name}",
+            headers={"Authorization": f"Bearer {config.MEMORY_TOKEN}",
+                     "Accept": "application/vnd.github+json",
+                     "User-Agent": "remix"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.load(r)
+        _repo_private = 1 if data.get("private") else 0
+        return {1: "private", 0: "public"}[_repo_private]
+    except Exception as e:
+        print(f"remix-brain: repo visibility check failed ({e!r})")
+        return "unknown"

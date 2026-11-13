@@ -145,13 +145,15 @@ class SeamTests(unittest.TestCase):
                 plan = run(brain_main._decide_proactive(_plan()))
                 self.assertEqual(expect, plan["form"])
 
-    def test_leave_note_degrades_to_caption_until_the_outbox(self):
+    def test_leave_note_stays_leave_note_now_that_the_outbox_exists(self):
+        # Phase 5 (plan 2.2 #6): the degrade-to-caption stopgap is gone;
+        # the form survives intact and the outbox branch handles it.
         self._modes("off", "off", "live")
         brain_main._jev = FakeJev(result={
             "stance": None, "speak_p": None, "form": "leave_note",
             "confidence": 0.0, "speak_confidence": 0.0, "latency_s": 0.0})
         plan = run(brain_main._decide_proactive(_plan()))
-        self.assertEqual("caption", plan["form"])
+        self.assertEqual("leave_note", plan["form"])
 
     def test_garbled_answers_fall_back_to_local(self):
         self._modes("live", "live", "live")

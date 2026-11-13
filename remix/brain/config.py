@@ -408,6 +408,12 @@ MEMORY_SYNC_MIN_S = float(_env("MEMORY_SYNC_MIN_S", "1800.0"))   # push this oft
 MEMORY_MAX_ENTRIES = int(_env("MEMORY_MAX_ENTRIES", "1000"))     # journal rows kept in memory.json
 MEMORY_SEARCH_LIMIT = int(_env("MEMORY_SEARCH_LIMIT", "5"))      # FTS candidates retrieved
 MEMORY_INJECT_LIMIT = int(_env("MEMORY_INJECT_LIMIT", "6"))      # max retrieved memories in prompt
+# Phase 5 (plan 2.2): the sandbox as a home. The inbox watcher is OPT-IN:
+# the file excerpt goes to the cloud LLM, so it is only for things you are
+# happy to send. Outbox/notes/diary need no flag — they are hers.
+INBOX = _env("INBOX", "0") == "1"
+INBOX_POLL_S = float(_env("INBOX_POLL_S", "30.0"))   # how often the watcher looks
+INBOX_EXCERPT_CHARS = int(_env("INBOX_EXCERPT_CHARS", "400"))  # cap BEFORE the LLM
 HISTORY_MAX_MESSAGES = int(_env("HISTORY_MAX_MESSAGES", "20"))   # conversation context window (10 exchanges)
 # Temper (1a): a slight per-boot personality drift, and REMIX_TEMPER sets the
 # baseline: cranky (default, the character you have now), balanced, soft.

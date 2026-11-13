@@ -415,6 +415,17 @@ def scrub_title(title: str) -> str | None:
     return s
 
 
+def redact_text(text: str) -> str:
+    """The same four substitutions as scrub_title, but for WHOLE TEXT that is
+    about to leave the machine (her diary/journal/outbox files, inbox
+    excerpts): paragraphs and line breaks survive, secrets don't."""
+    s = _EMAIL.sub(" ", text or "")
+    s = _URL.sub(" ", s)
+    s = _IP.sub(" ", s)
+    s = _PATH.sub(" ", s)
+    return s
+
+
 def _allowlist() -> set:
     """App classes whose window titles may pass (still scrubbed). Re-read each
     call so REMIX_TITLE_ALLOW can be changed without restarting the brain."""

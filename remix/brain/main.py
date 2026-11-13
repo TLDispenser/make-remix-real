@@ -14,8 +14,9 @@ import socket as _socket
 import subprocess
 import threading
 import time
+from pathlib import Path
 
-from . import audio, awareness, bits, config, decisions, faces, jev, listening, memory, proactive, rules, speech, stt, tts, vitals, ws_server
+from . import audio, awareness, bits, config, decisions, faces, home, jev, listening, memory, proactive, rules, speech, stt, tts, vitals, ws_server
 from .faces import NEUTRAL, Face
 
 _rule: rules.RuleBrain | None = None
@@ -271,6 +272,15 @@ async def _memory_backfill() -> None:
         have = {r.get("about") for r in rows
                 if r.get("kind") == "summary" and r.get("about")}
         today = time.strftime("%Y-%m-%d")
+        # Phase 5: days that already have a summary ROW but no diary FILE
+        # (written before home.py existed) get their file from the row's
+        # words — $0, no new generation.
+        for r in rows:
+            if r.get("kind") != "summary" or not r.get("about"):
+                continue
+            day_file = Path(str(config.SANDBOX_DIR)) / "diary" / f"{r['about']}.md"
+            if not day_file.exists():
+                home.save_day_entry(r["about"], str(r.get("text") or ""))
         by_day: dict = {}
         for r in rows:
             day = str(r.get("at") or "")[:10]
@@ -287,6 +297,7 @@ async def _memory_backfill() -> None:
                 vitals=_latest_snapshot, aware=awareness.current())
             if text:
                 memory.record("summary", text, about=day)
+                home.save_day_entry(day, text)   # Phase 5: her readable diary
                 done += 1
                 print(f"remix-brain: day summary written for {day}")
         # --- missed reflection: rows exist after the newest reflection row
@@ -300,6 +311,7 @@ async def _memory_backfill() -> None:
                 vitals=_latest_snapshot, aware=awareness.current())
             if text:
                 memory.record("reflection", text)
+                home.write_reflections(rows)     # Phase 5: reflections.md
                 print("remix-brain: missed reflection written at boot")
     except Exception as e:
         print(f"remix-brain: memory backfill failed ({e!r})")
@@ -773,9 +785,7 @@ async def _decide_proactive(plan: dict) -> dict | None:
     m = active.get("form")
     if m and d["form"] in ("speak", "caption", "look", "quiet", "leave_note"):
         if m == "live":
-            # leave_note needs the outbox (Phase 5); degrade to caption.
-            plan["form"] = ("caption" if d["form"] == "leave_note"
-                            else d["form"])
+            plan["form"] = d["form"]    # leave_note is real now (Phase 5)
         decisions.log("form", m, jev=d["form"],
                       used=("jev" if m == "live" else "local"),
                       local="speak", extra=f"[{trigger}]")
@@ -952,6 +962,40 @@ async def proactive_loop() -> None:
             decisions.log("outcome", "-", jev=None, used="quiet",
                           local="speak", extra=f"[{plan.get('trigger')}]")
             continue
+        if form == "leave_note":       # Phase 5 (plan 2.2 #6): a written note
+            # She is out of sight or you are away: the words are written down
+            # for you to find, not said to an empty room. The ladder still
+            # starts when she is out of sight — a waiting note is attention.
+            started_note = time.monotonic()
+            try:
+                note = await asyncio.wait_for(
+                    speech.generate_proactive_line(
+                        plan, vitals=_latest_snapshot, context=_context,
+                        aware=awareness.current()),
+                    timeout=config.CHATTER_TIMEOUT_S)
+            except Exception as e:
+                print(f"remix-brain: note generation failed ({e!r})")
+                note = None
+            if not note:
+                print(f"remix-brain: note [{plan.get('trigger')}] -> "
+                      f"silence (nothing clean came back)")
+                continue
+            if (_ptt and _ptt.listening) or time.monotonic() < _rule.speak_gate_until \
+                    or _last_exchange_at > started_note:
+                continue               # you are right there: no note needed
+            path = home.save_outbox(note, urgent=bool(plan.get("urgent")))
+            if path:
+                memory.record("her", "(left in her outbox) " + note)
+                decisions.log("outcome", "-", jev=None, used="left_note",
+                              local="speak",
+                              extra=f"[{plan.get('trigger')}] {path.name}")
+                print(f"remix-brain: left a note ({plan.get('trigger')}) "
+                      f"-> {path.name}")
+            if awareness.out_of_sight() is True:
+                await _maybe_escalate(str(plan.get("trigger") or "note"), note)
+            if plan.get("urgent"):
+                await _set_urgent(True, plan.get("trigger") or "note")
+            continue
         # Words, born in the moment: same pipeline family as a reply.
         started = time.monotonic()
         try:
@@ -994,6 +1038,80 @@ async def proactive_loop() -> None:
                 and not (awareness.current().get("muted")
                          and awareness.current().get("idle_s", 0) > 90)):
             await _set_urgent(False, "the room changed")
+
+
+async def inbox_loop() -> None:
+    """Phase 5 (plan 2.2 #5): files you drop in inbox/ become situations.
+    OPT-IN (REMIX_INBOX=1) because the excerpt goes to the cloud LLM — only
+    for things you are happy to send. One file, one reaction, chosen by Jev
+    (form decision, same modes as everything else); her words are written
+    fresh or not at all."""
+    if not config.INBOX:
+        print("remix-brain: inbox watcher off (REMIX_INBOX=1 to enable)")
+        return
+    home.ensure_dirs()
+    await asyncio.sleep(15.0)          # let boot settle
+    while True:
+        await asyncio.sleep(config.INBOX_POLL_S)
+        try:
+            notes = await asyncio.to_thread(
+                home.poll_inbox, config.INBOX_EXCERPT_CHARS)
+        except Exception as e:
+            print(f"remix-brain: inbox poll failed ({e!r})")
+            continue
+        for n in notes:
+            await _react_to_inbox_note(n)
+
+
+async def _react_to_inbox_note(note: dict) -> None:
+    """One inbox file -> one reaction. Jev picks the form (live mode) or the
+    local fallback speaks; quiet files are read and left unremarked."""
+    name = str(note.get("name") or "a file")
+    situation = (f'they left a file called "{name}" in her inbox. It says: '
+                 f"{note.get('excerpt') or '(unreadable)'}")
+    d = None
+    if _jev is not None and config.JEV_ENABLED:
+        try:
+            d = await _jev.decide_proactive("inbox_note", situation, ["flat"])
+        except Exception as e:
+            print(f"remix-brain: inbox decision failed ({e!r})")
+    mode = decisions.mode("form")
+    form = (d or {}).get("form") if mode == "live" else "speak"
+    if d is not None:
+        decisions.log("form", mode, jev=(d or {}).get("form"),
+                      used=("jev" if mode == "live" else "local"),
+                      local="speak", extra="[inbox_note]")
+    decisions.log("inbox_note", mode, jev=f"{(d or {}).get('speak_p')}",
+                  used=("jev" if d is not None and mode != "off" else "local"),
+                  local="speak", extra=f'file={name}')
+    if form == "quiet":
+        print(f"remix-brain: inbox note read quietly ({name})")
+        return
+    plan = {"trigger": "inbox_note", "situation": situation, "stance": "flat",
+            "face": NEUTRAL}
+    try:
+        text = await asyncio.wait_for(
+            speech.generate_proactive_line(
+                plan, vitals=_latest_snapshot, context=_context,
+                aware=awareness.current()),
+            timeout=config.CHATTER_TIMEOUT_S)
+    except Exception as e:
+        print(f"remix-brain: inbox reaction failed ({e!r})")
+        text = None
+    if not text:
+        print(f"remix-brain: inbox [{name}] -> silence")
+        return
+    memory.record("event", f'they left her a file: "{name}"')
+    if form == "leave_note":           # she writes her reaction down instead
+        path = home.save_outbox(text)
+        if path:
+            print(f"remix-brain: inbox reaction filed to outbox ({path.name})")
+        return
+    await _deliver_proactive({**plan, "text": text,
+                              "mute_voice": form == "caption"})
+    decisions.log("outcome", "-", jev=None,
+                  used=("caption" if form == "caption" else "spoke"),
+                  local="speak", extra="[inbox_note]")
 
 
 async def _on_command(text: str) -> None:
@@ -1245,6 +1363,7 @@ async def main() -> None:
     global _audio_task, _hypr_task
     _loop = asyncio.get_running_loop()
     memory.load()                      # journal is live from here on
+    home.ensure_dirs()                 # Phase 5: diary/journal/inbox/outbox exist
     _rule = rules.RuleBrain()
     _jev = jev.JevBrain(seed_faces=memory.recent_faces(),
                         variety_hook=memory.note_face)
@@ -1253,6 +1372,7 @@ async def main() -> None:
     _pro = proactive.Proactive(
         awaken_s=((memory.awaken() or {}).get("elapsed_s")))
     _backfill_task: asyncio.Task | None = None
+    _inbox_task: asyncio.Task | None = None
     ws_server.on("ready", _on_ready)
     ws_server.on("context", _on_context)
     ws_server.on("perform_done", _on_perform_done)
@@ -1293,6 +1413,7 @@ async def main() -> None:
         _hypr_task = asyncio.create_task(awareness.events_loop())
         _proactive_task = asyncio.create_task(proactive_loop())
     _backfill_task = asyncio.create_task(_memory_backfill())
+    _inbox_task = asyncio.create_task(inbox_loop())
     print(f"remix-brain: awareness {'on' if config.AWARENESS else 'off'} "
           f"(app names only, titles redacted), proactive "
           f"{'on' if config.PROACTIVE and config.AWARENESS else 'off'} "
@@ -1321,6 +1442,7 @@ async def main() -> None:
         _cancel(_hypr_task)
         _cancel(_proactive_task)
         _cancel(_backfill_task)
+        _cancel(_inbox_task)
         if _ptt:
             await _ptt.cancel()   # never leave the mic open on the way out
         # Parting note (plan 2.1.4): one reflection over this session, if
@@ -1333,11 +1455,44 @@ async def main() -> None:
                     timeout=30.0)
                 if refl:
                     memory.record("reflection", refl)
+                    home.write_reflections(memory.lines(limit=400))
                     print("remix-brain: parting reflection written")
             except Exception as e:
                 print(f"remix-brain: parting reflection failed ({e!r})")
+        # Phase 5 (plan 2.2 #4): the real diary — today's entry in her own
+        # voice at graceful shutdown. An abrupt death is covered by the next
+        # boot's backfill instead. The summary row carries about=today, so
+        # tomorrow's boot backfill won't write a duplicate.
+        try:
+            await _write_diary_entry()
+        except Exception as e:
+            print(f"remix-brain: diary entry failed ({e!r})")
         memory.shutdown()             # "I was off" anchors to this timestamp
         print(f"remix-brain: stopped after {time.monotonic() - started:.0f}s")
+
+
+async def _write_diary_entry() -> None:
+    """Today's diary entry (plan 2.2 #4), once per day unless new rows came
+    after the last one. Skipped when nothing was said today."""
+    if not memory.has_journal():
+        return
+    today = time.strftime("%Y-%m-%d")
+    rows = memory.lines(limit=400)                 # newest-first
+    last = next((i for i, r in enumerate(rows) if r.get("kind") == "summary"
+                 and r.get("about") == today), None)
+    newer_today = [r for r in (rows[:last] if last is not None else rows)
+                   if str(r.get("at") or "").startswith(today)]
+    if not newer_today:
+        return                                     # nothing new to write up
+    text = await asyncio.wait_for(
+        speech.generate_day_summary(list(reversed(newer_today)),
+                                    vitals=_latest_snapshot,
+                                    aware=awareness.current()),
+        timeout=30.0)
+    if text:
+        memory.record("summary", text, about=today)
+        home.save_day_entry(today, text)
+        print("remix-brain: diary entry written")
 
 
 if __name__ == "__main__":
