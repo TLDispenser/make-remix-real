@@ -6,8 +6,14 @@
 # never displayed. Most knobs need `./restart.sh brain` to take effect; the
 # menu says which ones have a live slash command instead.
 #
+# 2026-11-13: KNOBS env keys now carry the REMIX_ prefix — _env() reads
+# REMIX_* / CORE_* only, so the old bare names were written but never read
+# back after restart. (The nicer TUI lives in brain/settings_tui.py,
+# `./settings.sh` picks it when textual is installed; this menu stays the
+# no-dep fallback.)
+#
 # Run from the remix/ directory:
-#   ./.venv/bin/python -m brain.settings
+#   ./.venv/bin/python -m brain.settings   (or just ./settings.sh)
 import sys
 from pathlib import Path
 
@@ -18,39 +24,39 @@ _ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 # (env key, config attr, kind, one-line explanation)
 # kind: 'bool' | 'int' | 'float' | 'str' | choice-tuples like ('choice', a, b)
 KNOBS = [
-    ("USER_NAME", "USER_NAME", "str",
+    ("REMIX_USER_NAME", "USER_NAME", "str",
      "what she should call you in instruction context"),
-    ("TEMPER", "TEMPER", ("choice", "cranky", "balanced", "soft"),
+    ("REMIX_TEMPER", "TEMPER", ("choice", "cranky", "balanced", "soft"),
      "baseline personality drift per boot"),
-    ("QUIET_HOURS", "QUIET_HOURS", "str",
+    ("REMIX_QUIET_HOURS", "QUIET_HOURS", "str",
      'no unprompted lines in these hours, "1-8" format; empty = off'),
-    ("PROACTIVE", "PROACTIVE", "bool",
+    ("REMIX_PROACTIVE", "PROACTIVE", "bool",
      "her own unprompted lines at all (off = she only answers)"),
-    ("SUBTITLES", "SUBTITLES", ("choice", "auto", "always", "never"),
+    ("REMIX_SUBTITLES", "SUBTITLES", ("choice", "auto", "always", "never"),
      "when her words show as on-screen text"),
-    ("TTS_EXPRESSIVE", "TTS_EXPRESSIVE", "bool",
+    ("REMIX_TTS_EXPRESSIVE", "TTS_EXPRESSIVE", "bool",
      "her voice follows the faces she makes (0 = the old fixed voice)"),
-    ("TTS_EXPRESSIVENESS", "TTS_EXPRESSIVENESS", "float",
+    ("REMIX_TTS_EXPRESSIVENESS", "TTS_EXPRESSIVENESS", "float",
      "0.5 subtle .. 2.0 theatrical (TTS_EXPRESSIVE only)"),
-    ("LISTEN", "LISTEN", "bool",
+    ("REMIX_LISTEN", "LISTEN", "bool",
      "she reacts to what you TYPE while she is not addressed (push-to-talk "
      "mic is separate and always local)"),
-    ("TITLES", "TITLES", ("choice", "off", "scrub", "raw"),
+    ("REMIX_TITLES", "TITLES", ("choice", "off", "scrub", "raw"),
      "window titles reaching the LLM: off / scrubbed / raw (allowlist still "
      "applies; raw sends more to the cloud)"),
-    ("BITS", "BITS", "bool",
+    ("REMIX_BITS", "BITS", "bool",
      "the laptop's own life: lid, wifi, usb, screenshots..."),
-    ("TEMP_TINT", "TEMP_TINT", "bool",
+    ("REMIX_TEMP_TINT", "TEMP_TINT", "bool",
      "her colour follows the core temperature (OFF by default; 1 = the tint)"),
-    ("BODY_REFRESH_S", "BODY_REFRESH_S", "float",
+    ("REMIX_BODY_REFRESH_S", "BODY_REFRESH_S", "float",
      "how often body truths (battery wear, SMART, kernel errors) re-probe"),
-    ("LLM_STREAM", "LLM_STREAM", "bool",
+    ("REMIX_LLM_STREAM", "LLM_STREAM", "bool",
      "stream replies so sentence one speaks early (0 = one-shot calls)"),
-    ("MOCK", "MOCK", "bool",
+    ("REMIX_MOCK", "MOCK", "bool",
      "synthetic vitals feed (demo mode; 0 = the real machine)"),
-    ("INBOX", "INBOX", "bool",
+    ("REMIX_INBOX", "INBOX", "bool",
      "watch inbox/ for files you drop for her (excerpt goes to the cloud)"),
-    ("SHELL_HOOK", "SHELL_HOOK", "bool",
+    ("REMIX_SHELL_HOOK", "SHELL_HOOK", "bool",
      "unix socket for the zsh hook (long shell jobs; command text goes to "
      "the cloud, redacted first)"),
 ]
