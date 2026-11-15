@@ -871,6 +871,34 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
 
 # ------------------------------------------------- proactive lines (Phase 6)
 
+def _jev_world() -> dict:
+    """What Jev sees when she judges her silent life (2026-11-15, user ask:
+    'give Jev a bit more info'). The machine she runs on, the moment it is,
+    and the last couple of exchanges — the same facts the local brain has,
+    so her vote is a judgment about the room, not about a one-line tag."""
+    v = _latest_snapshot or {}
+    a = awareness.current() or {}
+    idle = a.get("idle_s")
+    try:
+        talk = [{"role": m.get("role"), "text": str(m.get("content"))[:120]}
+                for m in list(speech._history)[-2:]]
+    except Exception:
+        talk = []
+    world = {
+        "machine": {k: v.get(k) for k in ("cpu", "temp", "ram", "battery")},
+        "moment": {
+            "app_in_focus": a.get("app"),
+            "keyboard_idle_min": (round(idle / 60.0) if idle else None),
+            "they_are_looking_at_her": a.get("self_focused"),
+            "she_is_out_of_sight": a.get("out_of_sight"),
+            "hour": time.localtime().tm_hour,
+        },
+    }
+    if talk:
+        world["recent_talk"] = talk
+    return world
+
+
 async def _decide_proactive(plan: dict) -> dict | None:
     """The seam (Phase 2, plan 1.2 rule 3): silent life asks the left brain
     what it would do — stance, whether to speak, in what form — strictly
@@ -889,7 +917,8 @@ async def _decide_proactive(plan: dict) -> dict | None:
         return plan
     d = await _jev.decide_proactive(
         trigger, plan.get("situation") or "",
-        list(proactive.STANCE_CHOICES.get(trigger, ["flat"])))
+        list(proactive.STANCE_CHOICES.get(trigger, ["flat"])),
+        context=_jev_world())
     if d is None:                       # budget spent / call failed
         for k, m in active.items():
             decisions.log(k, m, jev=None, used="local",

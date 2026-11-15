@@ -331,17 +331,25 @@ class JevBrain:
     }
 
     async def decide_proactive(self, trigger: str, situation: str,
-                               stance_options: list) -> dict | None:
+                               stance_options: list,
+                               context: dict | None = None) -> dict | None:
         """Silent-life decisions in ONE request (the caps were already
         applied by the trigger engine; this judges INSIDE them):
           stance        choice among the trigger's allowed menu
           should_speak  noul: is one line out loud worth it right now?
           form          choice: speak / caption / look / quiet
+        `context` (2026-11-15, user ask: "give Jev a bit more info") is the
+        world she judges FROM — machine state, the moment, recent talk —
+        merged into the state block. A judge who cannot see the room votes
+        'flat, not worth saying' out of ignorance, not taste.
         Returns None on budget/off/failure — the caller then does exactly
         what it would have done before this feature existed (logged)."""
         now = time.monotonic()
         sig = _signature("proactive", trigger, {}, [situation,
-                                                    self.recent_faces()])
+                                                    self.recent_faces(),
+                                                    json.dumps(context or {},
+                                                               sort_keys=True,
+                                                               default=str)])
         hit = self._cache.get(sig)
         if hit and hit[0] > now:
             return hit[1]
@@ -352,14 +360,17 @@ class JevBrain:
 
         stance_criteria = {
             s: _PROACTIVE_STANCE_TEXT.get(s, s) for s in stance_options}
+        state = {
+            "scene": self.PROACTIVE_SCENE,
+            "she_just_noticed": situation,
+            "trigger": trigger,
+            "recent_faces": self.recent_faces(),
+        }
+        if context:
+            state["world"] = context
         body = {
             "model": config.JEV_MODEL,
-            "state": {
-                "scene": self.PROACTIVE_SCENE,
-                "she_just_noticed": situation,
-                "trigger": trigger,
-                "recent_faces": self.recent_faces(),
-            },
+            "state": state,
             "questions": {
                 "stance": {
                     "type": "choice", "criteria": stance_criteria,
@@ -370,8 +381,12 @@ class JevBrain:
                     "type": "noul",
                     "instructions": (
                         "Is one short line out loud about this worth saying "
-                        "right now, or would silence be better? Say yes only "
-                        "when the moment genuinely calls for her voice."),
+                        "right now, or would silence be better? She is a "
+                        "presence in the room, not a helper on call: a dry "
+                        "observation, a greeting, a small noticed thing all "
+                        "deserve her voice. Say no only when it would "
+                        "interrupt something, repeat her last beat, or add "
+                        "nothing at all."),
                 },
                 "form": {
                     "type": "choice", "criteria": dict(self.FORM_OPTION_TEXT),

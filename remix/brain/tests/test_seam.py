@@ -33,8 +33,9 @@ class FakeJev:
         self.result = result
         self.calls = []
 
-    async def decide_proactive(self, trigger, situation, options):
-        self.calls.append((trigger, situation, list(options)))
+    async def decide_proactive(self, trigger, situation, options,
+                               context=None):
+        self.calls.append((trigger, situation, list(options), context))
         return self.result
 
 
@@ -177,7 +178,8 @@ class SeamTests(unittest.TestCase):
         self._modes("shadow", "off", "off")
         brain_main._jev = FakeJev(result=None)
         run(brain_main._decide_proactive(_plan(trigger="battery_low")))
-        trigger, situation, options = brain_main._jev.calls[0]
+        trigger, situation, options, world = brain_main._jev.calls[0]
+        self.assertIsNotNone(world)      # Jev judges the room, not a tag
         self.assertEqual("battery_low", trigger)
         self.assertEqual(proactive.STANCE_CHOICES["battery_low"], options)
 
@@ -343,6 +345,27 @@ class DecideProactiveTests(unittest.TestCase):
         self.assertAlmostEqual(0.44, d["speak_p"])
         self.assertEqual("look", d["form"])
         self.assertAlmostEqual(0.66, d["confidence"])
+
+    def test_world_context_reaches_the_judge(self):
+        # 2026-11-15: Jev judges the ROOM now, not a one-line tag. The world
+        # block rides in the request state, and a CHANGED world re-asks even
+        # inside the cache TTL (a stale moment must not produce her line).
+        b = self._brain({"answers": {
+            "stance": {"type": "choice", "choice": "flat",
+                       "confidence": 0.5, "probabilities": {"flat": 0.5}},
+            "should_speak": {"type": "noul", "noul": 0.5},
+            "form": {"type": "choice", "choice": "speak",
+                     "confidence": 0.5, "probabilities": {"speak": 0.5}}}})
+        world = {"machine": {"cpu": 7.0}, "moment": {"hour": 3}}
+        run(b.decide_proactive("ambient", "they have firefox open",
+                               ["flat"], context=world))
+        body = b._call.call_args[0][0]
+        self.assertEqual(world, body["state"]["world"])
+        run(b.decide_proactive("ambient", "they have firefox open",
+                               ["flat"],
+                               context={"machine": {"cpu": 90.0},
+                                        "moment": {"hour": 3}}))
+        self.assertEqual(2, b._call.call_count)
 
     def test_garbled_names_become_none_not_crashes(self):
         b = self._brain({"answers": {

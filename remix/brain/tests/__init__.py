@@ -11,3 +11,8 @@ _config.DECISIONS_LOG = False
 # at default; tests that exercise another mode set it explicitly.
 _config.TITLES = "off"
 _config.TITLE_ALLOW = ""
+# The decision modes too: she now runs dodge/speak/stance LIVE (user's
+# 2026-11-15 call), and the seam tests assert the boot defaults.
+_config.JEV_JUDGE_DODGE = "shadow"
+_config.JEV_DECIDE_SPEAK = "shadow"
+_config.JEV_DECIDE_STANCE = "shadow"
