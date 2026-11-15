@@ -449,5 +449,10 @@ MECHANIC_DIARY_CHARS = int(_env("MECHANIC_DIARY_CHARS", "400"))  # diary excerpt
 HISTORY_MAX_MESSAGES = int(_env("HISTORY_MAX_MESSAGES", "20"))   # conversation context window (10 exchanges)
 # Temper (1a): a slight per-boot personality drift, and REMIX_TEMPER sets the
 # baseline: cranky (default, the character you have now), balanced, soft.
+# 2026-11-15 (user: "she's a static character"): the temper SCALAR is now real
+# state (brain/mood.py) — weather + event nudges + decay — and picks the
+# baseline band itself, so balanced/soft finally do something. REMIX_MOODS=0
+# pins the old static behavior (TEMPER env + drift line only).
+MOODS = _env("MOODS", "1") == "1"
 TEMPER = (_env("TEMPER", "cranky") or "cranky").strip().lower()
 TEMPER_REHOUR = float(_env("TEMPER_REHOUR", "6.0"))   # re-roll the drift every N h

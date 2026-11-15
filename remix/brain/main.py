@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import audio, awareness, bits, config, decisions, faces, home, jev, listening, mechanic, memory, proactive, rules, speech, stt, tts, vitals, ws_server
+from . import audio, awareness, bits, config, decisions, faces, home, jev, listening, mechanic, memory, mood, proactive, rules, speech, stt, tts, vitals, ws_server
 from .faces import NEUTRAL, Face
 
 _rule: rules.RuleBrain | None = None
@@ -94,6 +94,7 @@ async def _on_audio_edge(quiet: bool) -> None:
                                                  max(3.5, len(line) * 0.045))})
         await ws_server.send(Face("default", "default").msg(look=[0.0, 0.1]))
         _mute_pending = True
+        mood.nudge(-0.4, "cut_off")   # the voice stopped mid-word; that stings
         decisions.log("mute_react", decisions.mode("mute_react"), jev=None,
                       used="local",
                       local="reflex: stop + caption + flat look")
@@ -296,7 +297,8 @@ async def _memory_backfill() -> None:
                 continue
             text = await speech.generate_day_summary(
                 list(reversed(by_day[day])),        # oldest first
-                vitals=_latest_snapshot, aware=awareness.current())
+                vitals=_latest_snapshot, aware=awareness.current(),
+                previous=home.last_diary(day))
             if text:
                 memory.record("summary", text, about=day)
                 home.save_day_entry(day, text)   # Phase 5: her readable diary
@@ -332,6 +334,7 @@ async def body_loop(rule: rules.RuleBrain) -> None:
     async for snap in vitals.stream():
         _latest_snapshot = snap
         await ws_server.send({"type": "vitals", **snap})
+        mood.note_vitals(snap)   # the box she runs on is also how she feels
         # Phase 7 (plan 4.10): the original spec's want — her colour follows
         # the machine's temperature. Bands with a deadband so she doesn't
         # flicker at a boundary; REMIX_TEMP_TINT=0 puts her back to fixed.
@@ -894,6 +897,9 @@ def _jev_world() -> dict:
             "hour": time.localtime().tm_hour,
         },
     }
+    how = mood.describe()          # a judge should know which mood she's in
+    if how:
+        world["mood"] = how
     if talk:
         world["recent_talk"] = talk
     return world
@@ -1839,7 +1845,8 @@ async def _write_diary_entry() -> None:
     text = await asyncio.wait_for(
         speech.generate_day_summary(list(reversed(newer_today)),
                                     vitals=_latest_snapshot,
-                                    aware=awareness.current()),
+                                    aware=awareness.current(),
+                                    previous=home.last_diary(today)),
         timeout=30.0)
     if text:
         memory.record("summary", text, about=today)

@@ -49,6 +49,24 @@ def redact(text: str) -> str:
     return awareness.redact_text(text)
 
 
+def last_diary(before: str, cap: int = 400) -> str | None:
+    """Her most recent diary page dated BEFORE `before` (YYYY-MM-DD), so
+    tonight's diary can pick up yesterday's thread (2026-11-15 diary rework).
+    Pages are already redacted at write time; capped for the prompt."""
+    try:
+        days = sorted(p for p in (_base() / "diary").glob("*.md")
+                      if p.stem < before)
+        if not days:
+            return None
+        text = days[-1].read_text(errors="replace")
+        # drop the "# date" header line; keep her words
+        body = "\n".join(l for l in text.splitlines()
+                         if not l.startswith("# ")).strip()
+        return body[:cap] or None
+    except OSError:
+        return None
+
+
 def save_day_entry(day: str, text: str) -> str | None:
     """diary/<day>.md — her entry for a day, in her own voice. Returns the
     first sentence, which becomes the mirror's commit message (plan 2.2 #4:

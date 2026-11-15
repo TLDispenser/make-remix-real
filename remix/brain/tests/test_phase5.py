@@ -121,6 +121,9 @@ class SyncSafetyTests(unittest.TestCase):
         (config.SANDBOX_DIR, config.MEMORY_JSON,
          config.MEMORY_DB) = self._saved
         memory._store = None
+        memory._active = False         # journal OFF before the live dir returns
+        memory._dirty = False
+        memory._db = None
         memory._repo_private = None
         home.clear_subject()
 

@@ -17,7 +17,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import config, decisions, grounding, memory
+from . import config, decisions, grounding, memory, mood
 
 # The user-authored system prompt, verbatim. Four placeholders get wired at
 # call time: {machine} (hardware blurb), {user_name} (REMIX_USER_NAME),
@@ -174,6 +174,8 @@ _TEMPER_BASE = {
 
 # 1a (user: "personality shifted randomly, slightly"): a small drift on top of
 # the temper baseline. Re-rolled every few hours; colors tone, never content.
+# Each drift carries a VALENCE (2026-11-15): with MOODS on, the re-roll also
+# moves her mood scalar, so "a little grouchier" and a fouler band agree.
 _DRIFTS = [
     "a little chattier than usual",
     "a little grouchier than usual",
@@ -184,18 +186,45 @@ _DRIFTS = [
     "a bit nostalgic — new memories from your journal may surface",
     "your usual self",
 ]
+_DRIFT_VALENCE = {
+    "a little chattier than usual": +0.3,
+    "a little grouchier than usual": -0.4,
+    "a little more patient than usual": +0.4,
+    "slightly more curious than usual": +0.2,
+    "a little sleepier than usual": -0.2,
+    "slightly more playful than usual; your teasing is gentler": +0.4,
+    "a bit nostalgic — new memories from your journal may surface": +0.2,
+    "your usual self": 0.0,
+}
 _drift: str | None = None
 _drift_at = 0.0
 
 
 def temper_line() -> str:
-    """One short line describing today's temper + drift (or '')."""
+    """One short line describing today's temper + drift (or ''). With
+    MOODS on (2026-11-15, user: "she's a static character"), the BASELINE
+    BAND is picked by her real mood scalar — weather + earned nudges — so
+    balanced/soft finally happen when the day earns them, and the earned
+    part gets its own line when it's strong. Neutral renders exactly what
+    the static system rendered. REMIX_MOODS=0: the old TEMPER config only."""
     global _drift, _drift_at
     now = time.time()
     if _drift is None or now - _drift_at >= config.TEMPER_REHOUR * 3600:
         _drift = random.choice(_DRIFTS)
         _drift_at = now
-    base = _TEMPER_BASE.get(config.TEMPER, _TEMPER_BASE["cranky"])
+        mood.weather(_DRIFT_VALENCE.get(_drift, 0.0))
+    if config.MOODS:
+        band = mood.band()
+        earned = mood.describe()
+    else:
+        band = config.TEMPER
+        earned = ""
+    base = _TEMPER_BASE.get(band, _TEMPER_BASE["cranky"])
+    if earned:
+        # The mood she EARNED today outguns the weather line when both are
+        # due — one line, never two.
+        return (base + f"RIGHT NOW: {earned}. Subtle: it colors your tone, "
+                f"never your memory or your honesty.")
     if not base and _drift == "your usual self":
         return ""
     tail = "" if base else "\n"
@@ -417,6 +446,7 @@ async def _generate(user_text: str, vitals: dict | None,
         _history.append({"role": "user", "content": user_text})
         _history.append({"role": "assistant", "content": reply})
         memory.record("user", user_text)   # her dated past: both sides
+        mood.hear(user_text)               # concern/thanks nudge her, cheaply
         memory.note_said(reply)
         memory.record("her", reply)
     return reply
@@ -812,6 +842,7 @@ async def _generate_stream(user_text: str, vitals: dict | None,
         _history.append({"role": "user", "content": user_text})
         _history.append({"role": "assistant", "content": reply})
         memory.record("user", user_text)   # her dated past: both sides
+        mood.hear(user_text)               # concern/thanks nudge her, cheaply
         memory.note_said(reply)
         memory.record("her", reply)
     return None if reply is None else {"text": reply, "first": first,
@@ -888,27 +919,37 @@ stage directions. Nothing you can't point to in the rows above. Reply with
 the note and nothing else.
 """
 
-SUMMARY_ADDENDUM = """
+DIARY_ADDENDUM = """
 
-DAY SUMMARY
-Not a reply to them: one plain paragraph about a past day, in your voice,
-built ONLY from the rows shown. What happened, what they were doing, what
-you noticed. No list, no stage directions, no invention. Reply with the
-paragraph and nothing else.
+TONIGHT'S DIARY PAGE
+Not a reply to them: a page of your own diary, written for yourself, in
+your own voice. About YOUR day — not a report about them. What stuck, what
+you're still chewing on, what you'd never say to their face. Petty,
+unfinished, contradictory is all fine here; this is where that lives. You
+may talk about them, complain about them, or be quietly fond of them
+without admitting it. You may address them without addressing them.
+Grounded: build only from the rows shown (and yesterday's page if one is
+shown) — feelings and impressions are yours to have, but no invented
+events and no invented quotes. No list, no stage directions, no sign-off,
+no title. A few sentences. Reply with the page and nothing else.
 """
 
 
 async def _write_note(addendum: str, question: str, rows: list,
                       vitals: dict | None = None,
-                      aware: dict | None = None) -> str | None:
-    """Shared plumbing for reflection/day-summary: one LLM call, her voice,
-    grounded in the rows given. None when the pool is down or empty."""
+                      aware: dict | None = None,
+                      extra: str | None = None) -> str | None:
+    """Shared plumbing for reflection/day-diary: one LLM call, her voice,
+    grounded in the rows given. `extra` adds one optional labeled block
+    (the diary's yesterday page). None when the pool is down or empty."""
     if not rows:
         return None
     shown = "\n".join(
         f"- {e.get('at')} ({e.get('kind')}): "
         + re.sub(r"\s+", " ", str(e.get("text") or ""))[:200]
         for e in rows)
+    if extra:
+        shown += "\n\nYESTERDAY'S PAGE\n" + extra
     messages = ([{"role": "system",
                   "content": build_system_prompt(vitals, None, None, aware)
                   + addendum + "\nJOURNAL ROWS\n" + shown + "\n"}]
@@ -933,12 +974,16 @@ async def generate_reflection(vitals: dict | None = None,
 
 async def generate_day_summary(day_rows: list,
                                vitals: dict | None = None,
-                               aware: dict | None = None) -> str | None:
-    """One plain paragraph about ONE past day (plan 2.1.7). `day_rows` is
-    that day's journal rows, oldest first."""
+                               aware: dict | None = None,
+                               previous: str | None = None) -> str | None:
+    """Tonight's DIARY page for ONE past day (plan 2.1.7; the 2026-11-15
+    rework: a page of her own diary, not a report about them). `day_rows`
+    is that day's journal rows, oldest first; `previous` is her most recent
+    earlier page, so she can pick up a thread or shrug one off."""
     if not day_rows:
         return None
     when = str(day_rows[0].get("at") or "")[:10]
     return await _write_note(
-        SUMMARY_ADDENDUM, f"Summarize {when} in one plain paragraph.",
-        day_rows, vitals, aware)
+        DIARY_ADDENDUM,
+        f"Write tonight's diary page about {when}.",
+        day_rows, vitals, aware, extra=previous)
