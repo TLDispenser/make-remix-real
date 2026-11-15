@@ -985,5 +985,5 @@ async def generate_day_summary(day_rows: list,
     when = str(day_rows[0].get("at") or "")[:10]
     return await _write_note(
         DIARY_ADDENDUM,
-        f"Write tonight's diary page about {when}.",
+        f"Write the diary page for {when}.",
         day_rows, vitals, aware, extra=previous)

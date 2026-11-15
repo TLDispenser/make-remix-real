@@ -317,8 +317,79 @@ async def _memory_backfill() -> None:
                 memory.record("reflection", text)
                 home.write_reflections(rows)     # Phase 5: reflections.md
                 print("remix-brain: missed reflection written at boot")
+        # --- one-shot diary voice migration (2026-11-15): pages written by
+        # the old DAY-SUMMARY prompt get re-authored in the new diary voice,
+        # oldest first, each page seeing the one before it. The mirror's git
+        # history keeps every old page. Runs LAST: fresh summary rows must
+        # not sit in the reflection's row window above.
+        await _migrate_diary_voice()
     except Exception as e:
         print(f"remix-brain: memory backfill failed ({e!r})")
+
+
+# The day the diary stopped being a day-summary (commit b38bb72). Pages
+# dated before this get re-authored once, then never touched again.
+DIARY_MIGRATE_BEFORE = "2026-11-15"
+
+
+def _spread_rows(rows: list, cap: int) -> list:
+    """Even sample of a day's rows (input oldest-first): first and last
+    always in, the middle evenly spaced. A 285-row day still fits the
+    prompt without losing the shape of the day."""
+    if len(rows) <= cap:
+        return rows
+    step = (len(rows) - 1) / (cap - 1)
+    return [rows[round(k * step)] for k in range(cap)]
+
+
+def _diary_migrate_marker() -> Path:
+    return Path(str(config.SANDBOX_DIR)) / "diary" / ".voice-migrated"
+
+
+async def _migrate_diary_voice() -> None:
+    """The migration itself: once, pages before DIARY_MIGRATE_BEFORE that
+    she already has a file for, grounded in that day's rows. Any LLM
+    failure just skips the page — the marker is written only when every
+    eligible page is re-authored, so the next boot resumes."""
+    if _diary_migrate_marker().exists():
+        return
+    rows = memory.lines(limit=2000)            # newest-first; whole journal
+    by_day: dict = {}
+    for r in rows:
+        day = str(r.get("at") or "")[:10]
+        if day and day < DIARY_MIGRATE_BEFORE:
+            by_day.setdefault(day, []).append(r)
+    base = Path(str(config.SANDBOX_DIR)) / "diary"
+    # A page counts as re-authored when a summary row ABOUT that day was
+    # WRITTEN on/after the rework day — so a boot interrupted by the pool
+    # resumes where it stopped instead of redoing finished pages.
+    reauthored = {r.get("about") for r in rows
+                  if r.get("kind") == "summary" and r.get("about")
+                  and str(r.get("at") or "")[:10] >= DIARY_MIGRATE_BEFORE}
+    days = sorted(d for d in by_day
+                  if d not in reauthored and (base / f"{d}.md").exists())
+    for day in days:
+        try:
+            text = await asyncio.wait_for(
+                speech.generate_day_summary(
+                    _spread_rows(list(reversed(by_day[day])), 40),
+                    vitals=_latest_snapshot,
+                    aware=awareness.current(),
+                    previous=home.last_diary(day)),
+                timeout=30.0)
+        except Exception:
+            text = None
+        if not text:
+            print(f"remix-brain: diary re-author skipped for {day} (pool down?)")
+            return                              # no marker; resume next boot
+        memory.record("summary", text, about=day)
+        home.save_day_entry(day, text)
+        print(f"remix-brain: diary page re-authored for {day}")
+    try:
+        _diary_migrate_marker().write_text(
+            f"diary voice migration done {time.strftime('%Y-%m-%d')}\n")
+    except OSError:
+        pass                                    # it would just run once more
 
 
 async def body_loop(rule: rules.RuleBrain) -> None:

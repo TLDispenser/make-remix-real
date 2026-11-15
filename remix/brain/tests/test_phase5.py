@@ -1,12 +1,13 @@
 # Phase 5 tests (plan 2.2): the sandbox as a home — readable diary files,
 # the outbox (leave_note), the opt-in inbox watcher, and the push safety
 # pass (redaction + refuse-public-repo). Hermetic: temp sandbox, no network.
+import asyncio
 import os
 import tempfile
 import unittest
 from pathlib import Path
 
-from brain import config, home, memory
+from brain import config, home, main, memory, speech
 
 VITALS = {"cpu": 40, "ram": 60, "temp": 53, "battery": 80, "disk": 96}
 
@@ -180,6 +181,103 @@ class SyncSafetyTests(unittest.TestCase):
         self.assertEqual("I watched.", memory.commit_message())
         home.clear_subject()
         self.assertTrue(memory.commit_message().startswith("journal "))
+
+
+def _run(coro):
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+class DiaryMigrationTests(unittest.TestCase):
+    """The one-shot diary voice migration (2026-11-15): old day-summary
+    pages get re-authored in the diary voice, oldest first, each seeing the
+    page before it, grounded in that day's rows. Resumable; runs once."""
+
+    def setUp(self):
+        self._saved = fresh_sandbox(self)
+        memory._store = None
+        memory._active = False
+        memory._db = None
+        memory._remember_enabled = True
+        memory.load()
+        self._gen = speech.generate_day_summary
+        self.calls = []
+
+        async def fake(day_rows, vitals=None, aware=None, previous=None):
+            day = str(day_rows[0].get("at"))[:10]
+            self.calls.append((day, len(day_rows), previous))
+            return f"diary page for {day}"
+
+        speech.generate_day_summary = fake
+        # three past days, each with rows and an old-voice page already on disk
+        for day, n in (("2026-11-01", 5), ("2026-11-02", 7), ("2026-11-03", 3)):
+            for i in range(n):
+                memory.record("user", f"line {i} of {day}",
+                              when=dt(day, i))
+            home.save_day_entry(day, f"old summary voice for {day}")
+        main._diary_migrate_marker().unlink(missing_ok=True)
+
+    def tearDown(self):
+        speech.generate_day_summary = self._gen
+        memory._store = None
+        memory._active = False
+        memory._dirty = False
+        memory._db = None
+        memory._remember_enabled = True
+        (config.SANDBOX_DIR, config.MEMORY_JSON, config.MEMORY_DB) = self._saved
+
+    def test_rewrites_oldest_first_with_chaining_and_runs_once(self):
+        _run(main._migrate_diary_voice())
+        self.assertEqual(["2026-11-01", "2026-11-02", "2026-11-03"],
+                         [c[0] for c in self.calls])
+        # each page sees the page before it (the freshly rewritten one)
+        self.assertIsNone(self.calls[0][2])
+        self.assertIn("diary page for 2026-11-01", self.calls[1][2])
+        self.assertIn("diary page for 2026-11-02", self.calls[2][2])
+        # rows were spread, not dumped whole (7-row day arrives intact)
+        self.assertEqual(7, self.calls[1][1])
+        # files rewritten, summary rows recorded about each day
+        self.assertIn("diary page for 2026-11-02",
+                      (Path(str(config.SANDBOX_DIR)) / "diary" / "2026-11-02.md")
+                      .read_text())
+        days = {r.get("about") for r in memory.lines(limit=50)
+                if r.get("kind") == "summary"}
+        self.assertTrue({"2026-11-01", "2026-11-02", "2026-11-03"} <= days)
+        # marker written: a second run is a no-op
+        self.assertTrue(main._diary_migrate_marker().exists())
+        self.calls.clear()
+        _run(main._migrate_diary_voice())
+        self.assertEqual([], self.calls)
+
+    def test_pool_failure_resumes_without_redoing_finished_pages(self):
+        real = speech.generate_day_summary
+        tried = set()
+
+        async def flaky(day_rows, vitals=None, aware=None, previous=None):
+            day = str(day_rows[0].get("at"))[:10]
+            if day == "2026-11-02" and day not in tried:
+                tried.add(day)                    # pool down, once
+                return None
+            return await real(day_rows, vitals=vitals, aware=aware,
+                              previous=previous)
+
+        speech.generate_day_summary = flaky
+        _run(main._migrate_diary_voice())
+        self.assertEqual(1, len(self.calls))       # only 11-01 finished
+        _run(main._migrate_diary_voice())          # resume: 11-01 not redone
+        self.assertEqual(["2026-11-01", "2026-11-02", "2026-11-03"],
+                         [c[0] for c in self.calls])
+
+
+def dt(day, i):
+    """A stable epoch inside `day`, spaced so rows order deterministically."""
+    import calendar
+    import datetime
+    d = datetime.date.fromisoformat(day)
+    return calendar.timegm((d.year, d.month, d.day, 10 + i % 12, 0, 0))
 
 
 if __name__ == "__main__":
