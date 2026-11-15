@@ -327,9 +327,12 @@ async def _memory_backfill() -> None:
         print(f"remix-brain: memory backfill failed ({e!r})")
 
 
-# The day the diary stopped being a day-summary (commit b38bb72). Pages
-# dated before this get re-authored once, then never touched again.
-DIARY_MIGRATE_BEFORE = "2026-11-15"
+# The moment the diary stopped being a day-summary (commit b38bb72,
+# 10:00:38). Pages whose summary rows were all written BEFORE this instant
+# get re-authored once, then never touched again. A full timestamp, not a
+# date: boot backfill wrote old-voice pages at 00:12 the SAME day, and a
+# date-only cutoff would have counted those as already migrated.
+DIARY_MIGRATE_BEFORE = "2026-11-15 10:00"
 
 
 def _spread_rows(rows: list, cap: int) -> list:
@@ -356,16 +359,16 @@ async def _migrate_diary_voice() -> None:
     rows = memory.lines(limit=2000)            # newest-first; whole journal
     by_day: dict = {}
     for r in rows:
-        day = str(r.get("at") or "")[:10]
-        if day and day < DIARY_MIGRATE_BEFORE:
-            by_day.setdefault(day, []).append(r)
+        at = str(r.get("at") or "")
+        if at and at < DIARY_MIGRATE_BEFORE:
+            by_day.setdefault(at[:10], []).append(r)
     base = Path(str(config.SANDBOX_DIR)) / "diary"
     # A page counts as re-authored when a summary row ABOUT that day was
-    # WRITTEN on/after the rework day — so a boot interrupted by the pool
-    # resumes where it stopped instead of redoing finished pages.
+    # WRITTEN at/after the rework instant — so a boot interrupted by the
+    # pool resumes where it stopped instead of redoing finished pages.
     reauthored = {r.get("about") for r in rows
                   if r.get("kind") == "summary" and r.get("about")
-                  and str(r.get("at") or "")[:10] >= DIARY_MIGRATE_BEFORE}
+                  and str(r.get("at") or "") >= DIARY_MIGRATE_BEFORE}
     days = sorted(d for d in by_day
                   if d not in reauthored and (base / f"{d}.md").exists())
     for day in days:

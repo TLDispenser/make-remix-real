@@ -203,6 +203,8 @@ class DiaryMigrationTests(unittest.TestCase):
         memory._db = None
         memory._remember_enabled = True
         memory.load()
+        self._cutoff = main.DIARY_MIGRATE_BEFORE
+        main.DIARY_MIGRATE_BEFORE = "2026-11-04 00:00"   # clock-independent
         self._gen = speech.generate_day_summary
         self.calls = []
 
@@ -222,6 +224,7 @@ class DiaryMigrationTests(unittest.TestCase):
 
     def tearDown(self):
         speech.generate_day_summary = self._gen
+        main.DIARY_MIGRATE_BEFORE = self._cutoff
         memory._store = None
         memory._active = False
         memory._dirty = False
