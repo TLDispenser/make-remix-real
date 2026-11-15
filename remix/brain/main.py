@@ -327,12 +327,15 @@ async def _memory_backfill() -> None:
         print(f"remix-brain: memory backfill failed ({e!r})")
 
 
-# The moment the diary stopped being a day-summary (commit b38bb72,
-# 10:00:38). Pages whose summary rows were all written BEFORE this instant
-# get re-authored once, then never touched again. A full timestamp, not a
-# date: boot backfill wrote old-voice pages at 00:12 the SAME day, and a
-# date-only cutoff would have counted those as already migrated.
-DIARY_MIGRATE_BEFORE = "2026-11-15 10:00"
+# The moment the diary standard settled (2026-11-15, third pass): pass 1
+# was all mood and no cargo ("they still suck — they're meant to be long
+# term memory"), pass 2 fixed memory but recited the day clock-by-clock.
+# The addendum now wants the FEW real things up front, timestamps only
+# when the time matters, room to breathe. Everything before this instant
+# gets re-authored once more under the settled standard. A full
+# timestamp, not a date: boot backfill wrote old-voice pages at 00:12 the
+# SAME day, and a date-only cutoff would have counted those as migrated.
+DIARY_MIGRATE_BEFORE = "2026-11-15 11:00"
 
 
 def _spread_rows(rows: list, cap: int) -> list:

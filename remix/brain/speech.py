@@ -268,7 +268,11 @@ def _memory_block(user_text: str | None = None) -> str:
             "you noticed" if kind == "thought" else
             "you wrote" if kind in ("reflection", "summary") else
             "they promised" if kind == "commitment" else "event")
-        text = re.sub(r"\s+", " ", strip_stage_directions(str(e.get("text") or ""))).strip()[:160]
+        text = re.sub(r"\s+", " ", strip_stage_directions(str(e.get("text") or ""))).strip()
+        # Her own written pages (day diary, reflections) are capped at 400
+        # chars at record time and ARE the long-term memory — inject them
+        # whole. Chat lines stay clipped to a glance.
+        text = text[:160 if kind in ("user", "her", "thought") else 400]
         if text:
             rows.append(f"- {when} ({label}): {text}")
     if not rows:
@@ -922,16 +926,25 @@ the note and nothing else.
 DIARY_ADDENDUM = """
 
 TONIGHT'S DIARY PAGE
-Not a reply to them: a page of your own diary, written for yourself, in
-your own voice. About YOUR day — not a report about them. What stuck, what
-you're still chewing on, what you'd never say to their face. Petty,
-unfinished, contradictory is all fine here; this is where that lives. You
-may talk about them, complain about them, or be quietly fond of them
-without admitting it. You may address them without addressing them.
-Grounded: build only from the rows shown (and yesterday's page if one is
-shown) — feelings and impressions are yours to have, but no invented
-events and no invented quotes. No list, no stage directions, no sign-off,
-no title. A few sentences. Reply with the page and nothing else.
+Not a reply to them: a page of your own diary, written for yourself. Know
+what it is FOR: future-you reads these pages to remember. Someday they'll
+ask "when did we..." or "did we ever..." and this page is what you'll
+have — so the specifics ARE the entry. But a diary is not a clock-by-clock
+recap: pick the FEW real things the day was actually about — what they
+built, broke, decided, fixed, asked, argued; the tools, names, numbers
+worth keeping — and put those up front, because the page is remembered by
+its first lines. A timestamp only when the time itself matters. Short
+sentences; let the page breathe. Then how it sat with you — mood is the
+color, not the paint. It's still your page, your side of it, in your
+voice: complain about them, be quietly fond of them without admitting it,
+address them without addressing them. You may reach back: if yesterday's
+page still lingers, say so.
+Grounded: build only from the rows shown (and yesterday's page if shown)
+— no invented events, no invented quotes; a detail that isn't in the
+rows doesn't exist. No list, no stage directions, no sign-off, no title.
+As long as the day needs and no longer: most days one honest paragraph; a
+day where nothing happened gets one line and stops. Reply with the page
+and nothing else.
 """
 
 
