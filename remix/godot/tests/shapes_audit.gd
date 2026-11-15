@@ -39,6 +39,17 @@ func _initialize() -> void:
 				print("FAIL %s prop spin flag not a bool" % pose_name); bad += 1
 		if float(s["jitter"]) < 0.0:
 			print("FAIL %s negative jitter" % pose_name); bad += 1
+		# has_eyes matches the geometry: false ONLY for degenerate eye
+		# placeholders (all ten points on one spot — Scribble, whose knot
+		# travels in `lines`). The engine skips drawing collapsed ribbons.
+		var collapsed := true
+		for key in ["left_eye", "right_eye"]:
+			var e0: Vector2 = (s[key] as PackedVector2Array)[0]
+			for q2 in s[key]:
+				if absf(q2.x - e0.x) > 0.01 or absf(q2.y - e0.y) > 0.01:
+					collapsed = false
+		if bool(s["has_eyes"]) == collapsed:
+			print("FAIL %s has_eyes=%s does not match its eye geometry" % [pose_name, str(s["has_eyes"])]); bad += 1
 		# Eyes face each other: point 0 is bottom and on the outer half on
 		# both sides (closed-bar shapes stack rungs bottom-to-top too).
 		var l: PackedVector2Array = s["left_eye"]

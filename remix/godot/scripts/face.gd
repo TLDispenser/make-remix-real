@@ -19,7 +19,8 @@
 #   blink     the eye unit squashes to a line (not in every pose)
 #   twitch    brief bottom-lid flick (the "bottomlid" eye shape), eye shapes opt in
 #   life      breathing glow, tiny gaze drift, tremble (Spooked)
-#   props     the PROP UNIT: extra polygons riding with the eye unit
+#   props     the PROP UNIT: extra polygons FIXED where the SVG authors
+#             them (thunk's spinner — it never rides the gaze)
 #             (.cls-5 = spins, .cls-4 = static; Thunking's loading wheel —
 #             ONE ring band, hub-built so its bbox center is the true hub),
 #             plus per-JOINT teleport jitter (Scribble): the knot's strokes
@@ -85,8 +86,9 @@ var _ln_f := PackedFloat32Array()      # live alpha per stroke (0..1)
 var _ln_ft := PackedFloat32Array()     # where each stroke's alpha is headed
 
 # BLUSH UNIT: the global cheek hatching (FaceShapes.blush(), authored in
-# Bashful's SVG as .cls-6). It belongs to the FACE, not to any pose: it
-# rides the eye unit's drift in every expression and never changes shape,
+# Bashful's SVG as .cls-6). It belongs to the FACE, not to any pose: it is
+# PINNED TO THE MOUTH unit (rides the mouth's drift and the collision push,
+# never the eyes' gaze or the blink squash) and never changes shape,
 # so it needs no retarget — only its channel fades, which is what the
 # app's blush toggle (KEY_B) drives.
 var _bl_a := PackedVector2Array()      # current endpoints
@@ -97,8 +99,9 @@ var _bl_tgt_a := PackedVector2Array()  # settled endpoints (== authored)
 var _bl_tgt_b := PackedVector2Array()
 var _bl_w := PackedFloat32Array()      # stroke widths
 
-# PROP UNIT: geometry rides with the eye unit, but no springs — the spinner is
-# rigid, so it rotates directly (a spring would wobble it out of round).
+# PROP UNIT: geometry fixed where the SVG authors it (2026-11-15: the
+# throbber is separate and DOES NOT move) — rigid, no springs — so the
+# spinner is a thought, not a body part. It rotates about its own bbox hub.
 var _pr_base: Array[PackedVector2Array] = []   # authored points, rel design space
 var _pr_hub: Array[Vector2] = []               # rotation center (bbox center)
 var _pr_spin: Array[bool] = []                 # .cls-5 props rotate, .cls-4 don't
@@ -113,6 +116,20 @@ var _eye_off := Vector2.ZERO
 var _eye_off_v := Vector2.ZERO
 var _mouth_off := Vector2.ZERO
 var _mouth_off_v := Vector2.ZERO
+
+# COLLISION pushes: soft displacements when the eye and mouth units' boxes
+# overlap, each living in a LOOSE spring so contact is a bump that eases
+# back (2026-11-15 user ask), never a hard clamp.
+var _push_eye := Vector2.ZERO
+var _push_eye_v := Vector2.ZERO
+var _push_mouth := Vector2.ZERO
+var _push_mouth_v := Vector2.ZERO
+
+# Line strokes grouped into CHAINS: strokes sharing endpoints are drawn as
+# ONE polyline with real joins, instead of per-stroke lines whose doubled
+# antialiasing shows a seam at every shared joint ("I can tell they're
+# separate lines"). Isolated strokes are chains of one, drawn as before.
+var _chains: Array = []
 
 var _t := 0.0
 var _blink_in := 3.0
@@ -215,7 +232,18 @@ func set_level(v: float) -> void:
 
 func set_speaking(on: bool) -> void:
 	speaking = on
-	_scalar_target("mouth", 1.0 if (_mcfg()["silent"] or on) else 0.0)
+	_scalar_target("mouth", 1.0 if _mouth_visible() else 0.0)
+
+
+## Is the mouth drawn at all right now? The pose's own rules (a `silent`
+## mouth is hidden unless she is making sound), EXCEPT for eyes whose shape
+## carries `hide_mouth` — Scribble, whose knot IS her mouth: the lipsync
+## talking bar never fades in over it, even mid-speech (2026-11-15 user
+## ask, "consider the use-case": she is overloaded, not clean-mouthed).
+func _mouth_visible() -> bool:
+	if bool(_shapes[_ecfg()["src"]].get("hide_mouth", false)):
+		return false
+	return bool(_mcfg()["silent"]) or speaking
 
 
 ## One eye's bottom lid flicks (a tic, not a blink). `side` = "left_eye" or
@@ -267,6 +295,9 @@ func snapshot() -> Dictionary:
 		"level": level, "mouth_alpha": _sc["mouth"][0], "fill": _sc["fill"][0],
 		"outline": _sc["outline"][0], "lines": _sc["lines"][0], "props": _sc["props"][0],
 		"blush": _sc["blush"][0],
+		"push_eye": _push_eye, "push_mouth": _push_mouth,
+		"eyes_drawn": not _ribbon_collapsed(_cur["left_eye"]),
+		"lines_fixed": _lines_fixed(),
 		"blink_scale": _blink_scale(), "mouth_width": _mouth_width(),
 		"mouth_height": _mouth_height(), "mouth_open_scale": _mouth_open_scale(),
 	}
@@ -293,6 +324,14 @@ func _mcfg() -> Dictionary:
 	return FaceConfig.MOUTHS[mouth_name]
 
 
+## Do this pose's line strokes ride the eye unit (gaze, drift, tremble,
+## blink squash), or are they FIXED where authored? Scribble's knot is an
+## object on the face, not an eyelid — it jitters in place and never moves
+## as a whole (shape flag `lines_fixed`, 2026-11-15 user ask).
+func _lines_fixed() -> bool:
+	return bool(_shapes[_ecfg()["src"]].get("lines_fixed", false))
+
+
 func _next_blink_gap() -> float:
 	return randf_range(blink_min_gap, blink_max_gap) * float(_ecfg()["blink_gap"])
 
@@ -317,7 +356,7 @@ func _retarget(eyes_changed: bool) -> void:
 	_scalar_target("outline", 1.0 if outlined else 0.0)
 	if outlined:
 		_scalar_target("outline_w", float(eye_shape["eye_outline"]))
-	_scalar_target("mouth", 1.0 if (_mcfg()["silent"] or speaking) else 0.0)
+	_scalar_target("mouth", 1.0 if _mouth_visible() else 0.0)
 
 	if eyes_changed:
 		_retarget_lines(eye_shape)
@@ -412,6 +451,52 @@ func _retarget_lines(shape: Dictionary) -> void:
 			_jit_node[2 * i + e] = joints[pt]
 	for i in range(2 * lines.size(), _jit_node.size()):
 		_jit_node[i] = 0   # dead slots lie collapsed; node 0 keeps them put
+	# CHAINS: group strokes that share an endpoint into ordered joint paths,
+	# so the draw can render each chain as ONE polyline with real joins
+	# (per-stroke draw_line double-blends its antialiasing at every shared
+	# joint, which read as separate lines). A joint where 3+ strokes meet
+	# ends a chain; strokes left over become chains of one (plain lines).
+	var adj := {}
+	for i in lines.size():
+		for e in 2:
+			var j: int = _jit_node[2 * i + e]
+			if not adj.has(j):
+				adj[j] = []
+			adj[j].append(i)
+	var used := PackedByteArray()
+	used.resize(_ln_a.size())
+	_chains = []
+	for i in lines.size():
+		if used[i]:
+			continue
+		used[i] = 1
+		var path := PackedInt32Array([_jit_node[2 * i], _jit_node[2 * i + 1]])
+		var idxs := PackedInt32Array([i])
+		for dir in 2:
+			while true:
+				var j: int = path[path.size() - 1] if dir == 0 else path[0]
+				var js: Array = adj.get(j, [])
+				if js.size() > 2:
+					break
+				var nxt := -1
+				var nxt_e := 0
+				for s in js:
+					if not used[s]:
+						nxt = s
+						nxt_e = 2 * s if _jit_node[2 * s] == j else 2 * s + 1
+						break
+				if nxt < 0:
+					break
+				used[nxt] = 1
+				var other := 4 * nxt + 1 - nxt_e
+				if dir == 0:
+					path.append(_jit_node[other])
+					idxs.append(nxt)
+				else:
+					path.insert(0, _jit_node[other])
+					idxs.insert(0, nxt)
+		_chains.append({"path": path, "idxs": idxs,
+				"closed": path[0] == path[path.size() - 1] and idxs.size() > 1})
 	if lines.is_empty():
 		# Retract in place while fading out.
 		for i in _ln_a.size():
@@ -546,6 +631,59 @@ func _process(delta: float) -> void:
 	_mouth_off_v += ((mouth_t - _mouth_off) * 100.0 - _mouth_off_v * 20.0) * delta
 	_mouth_off += _mouth_off_v * delta
 
+	# COLLISION: the eye and mouth units must not overlap (a full down-gaze
+	# plus a wide-open mouth can touch, and idle drift closes the rest). When
+	# the boxes intersect they are pushed apart along the shallowest axis,
+	# the mouth taking most of the push (it is the one that grows with
+	# speech). The pushes live in LOOSE springs — soft on contact, easing
+	# back with a little bounce once the boxes separate again.
+	var e_lo := Vector2(INF, INF)
+	var e_hi := Vector2(-INF, -INF)
+	var eoff := _eye_off + _push_eye \
+			+ Vector2(sin(_t * 0.37) * 5.0, sin(_t * 0.21) * 3.0)
+	var esy := _blink_scale()
+	var e_cy := _eye_cy()
+	for key in EYE_KEYS:
+		for p in _cur[key]:
+			var q := _xf_point(p, eoff, Vector2(0.0, e_cy), Vector2(1.0, esy))
+			e_lo = e_lo.min(q)
+			e_hi = e_hi.max(q)
+	var m_lo := Vector2(INF, INF)
+	var m_hi := Vector2(-INF, -INF)
+	for p in _open_mouth(_cur["mouth"]):
+		var q := p + _mouth_off + _push_mouth
+		m_lo = m_lo.min(q)
+		m_hi = m_hi.max(q)
+	var ov := Vector2(minf(e_hi.x, m_hi.x) - maxf(e_lo.x, m_lo.x),
+			minf(e_hi.y, m_hi.y) - maxf(e_lo.y, m_lo.y))
+	var want_eye := Vector2.ZERO
+	var want_mouth := Vector2.ZERO
+	if ov.x > 0.0 and ov.y > 0.0:
+		var ec := (e_lo + e_hi) * 0.5
+		var mc := (m_lo + m_hi) * 0.5
+		var d: float
+		var sgn: float
+		if ov.x < ov.y:
+			d = ov.x + 2.0
+			sgn = signf(mc.x - ec.x)
+			if sgn == 0.0:
+				sgn = 1.0
+			want_eye = Vector2(-d * 0.35 * sgn, 0.0)
+			want_mouth = Vector2(d * 0.65 * sgn, 0.0)
+		else:
+			d = ov.y + 2.0
+			sgn = signf(mc.y - ec.y)
+			if sgn == 0.0:
+				sgn = 1.0
+			want_eye = Vector2(0.0, -d * 0.35 * sgn)
+			want_mouth = Vector2(0.0, d * 0.65 * sgn)
+	# The loose springs themselves: gentle pull toward the wanted push (or
+	# back to rest), deliberately underdamped so the return has life.
+	_push_eye_v += ((want_eye - _push_eye) * 50.0 - _push_eye_v * 9.0) * delta
+	_push_eye = (_push_eye + _push_eye_v * delta).limit_length(80.0)
+	_push_mouth_v += ((want_mouth - _push_mouth) * 50.0 - _push_mouth_v * 9.0) * delta
+	_push_mouth = (_push_mouth + _push_mouth_v * delta).limit_length(80.0)
+
 	# Speech level: quick attack, slightly slower release.
 	var rate := level_attack if _level_raw > level else level_release
 	level = lerpf(level, _level_raw, 1.0 - exp(-rate * delta))
@@ -624,6 +762,24 @@ func _bbox_center(pts: PackedVector2Array) -> Vector2:
 	return (lo + hi) * 0.5
 
 
+## The eye unit's vertical pivot: both eyes' bbox centers, averaged.
+func _eye_cy() -> float:
+	return (_bbox_center(_cur["left_eye"]).y + _bbox_center(_cur["right_eye"]).y) * 0.5
+
+
+## True when a ribbon has collapsed to (almost) a single point. A degenerate
+## draw paints nothing visible, so it is skipped — Scribble's eye
+## placeholders (the `has_eyes: false` poses) never paint a stray dot, and
+## a morph into them shrinks the eyes away to nothing smoothly.
+func _ribbon_collapsed(pts: PackedVector2Array) -> bool:
+	var lo := pts[0]
+	var hi := pts[0]
+	for p in pts:
+		lo = lo.min(p)
+		hi = hi.max(p)
+	return (hi - lo).length_squared() < 1.0
+
+
 ## How far speech has opened the mouth: ONE thickness multiplier used for every
 ## part of the mouth. Level 0 = as drawn (1.0x); level 1 = the mouth's `open`.
 func _mouth_open_scale() -> float:
@@ -698,15 +854,18 @@ func _draw() -> void:
 	if float(ecfg["tremble"]) > 0.0:
 		tremble = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * float(ecfg["tremble"])
 	var drift := Vector2(sin(_t * 0.37) * 5.0, sin(_t * 0.21) * 3.0)
-	var eye_off := _eye_off + drift + tremble
-	var mouth_off := _mouth_off + tremble
+	var eye_off := _eye_off + drift + tremble + _push_eye
+	var mouth_off := _mouth_off + tremble + _push_mouth
 
 	# ---- eye unit
-	var eye_cy := (_bbox_center(_cur["left_eye"]).y + _bbox_center(_cur["right_eye"]).y) * 0.5
+	var eye_cy := _eye_cy()
 	var sy := _blink_scale()
 	var fill_a: float = _sc["fill"][0]
 	var out_a: float = _sc["outline"][0]
 	for key in EYE_KEYS:
+		if fill_a > 0.01 or out_a > 0.01:
+			if _ribbon_collapsed(_cur[key]):
+				continue   # eyes the pose doesn't have (Scribble): no dot
 		var pts := _xform(_cur[key], eye_off, Vector2.ONE, Vector2(0.0, eye_cy), Vector2(1.0, sy))
 		if fill_a > 0.01:
 			_fill_ribbon(pts, _alpha(col, fill_a))
@@ -716,35 +875,61 @@ func _draw() -> void:
 	if lines_a > 0.01:
 		var lc := _alpha(col, lines_a)
 		var jit_on := _jit_r > 0.0
-		for i in _ln_a.size():
-			var la: float = lc.a * _ln_f[i]
-			if la < 0.01:
-				continue   # dead or still drawing on
-			var a := _ln_a[i]
-			var b := _ln_b[i]
-			if jit_on:
-				a += _jit_o[_jit_node[2 * i]]
-				b += _jit_o[_jit_node[2 * i + 1]]
-			if a.distance_squared_to(b) < 0.01:
-				continue   # collapsed: a zero-length line is a DOT, not nothing
-			draw_line(
-				_xf_point(a, eye_off, Vector2(0.0, eye_cy), Vector2(1.0, sy)),
-				_xf_point(b, eye_off, Vector2(0.0, eye_cy), Vector2(1.0, sy)),
-				_alpha(lc, _ln_f[i]),
-				maxf(_ln_w[i], 1.0), true
-			)
+		# FIXED strokes (Scribble's knot, shape flag) draw where authored —
+		# no gaze, no drift, no tremble, no blink squash. The joints still
+		# teleport; the knot never moves as a whole.
+		var xf := not _lines_fixed()
+		for chain: Dictionary in _chains:
+			var path: PackedInt32Array = chain["path"]
+			var idxs: PackedInt32Array = chain["idxs"]
+			var k := 0
+			while k < idxs.size():
+				var f0: float = _ln_f[idxs[k]]
+				if f0 < 0.01:
+					k += 1
+					continue   # dead or still drawing on
+				var w0: float = _ln_w[idxs[k]]
+				var m := k
+				while m + 1 < idxs.size() \
+						and _ln_f[idxs[m + 1]] == f0 and _ln_w[idxs[m + 1]] == w0:
+					m += 1
+				# One run of equal alpha and width = ONE path: its vertices
+				# walk the chain's shared joints, so every internal joint is
+				# a true join instead of two overlapping line caps.
+				var pts := PackedVector2Array()
+				var prev_j := path[k]
+				for si in range(k, m + 1):
+					var s: int = idxs[si]
+					var e0 := 2 * s if _jit_node[2 * s] == prev_j else 2 * s + 1
+					var e1 := 4 * s + 1 - e0
+					if si == k:
+						pts.append(_ln_vertex(e0, jit_on, xf, eye_off, eye_cy, sy))
+					pts.append(_ln_vertex(e1, jit_on, xf, eye_off, eye_cy, sy))
+					prev_j = _jit_node[e1]
+				var rc := _alpha(lc, f0)
+				var wd := maxf(w0, 1.0)
+				if m == k:
+					draw_line(pts[0], pts[1], rc, wd, true)
+				else:
+					draw_polyline(pts, rc, wd, true)
+					if bool(chain["closed"]) and k == 0 and m == idxs.size() - 1:
+						# A closed loop drawn as an open path: fill the
+						# wrap-around joint so the ends read as one join.
+						draw_circle(pts[0], wd * 0.5, rc, true, -1.0, true)
+				k = m + 1
 
-	# ---- blush unit: the GLOBAL cheek hatching. Rides the eye unit's drift
-	# (gaze, tremble) so it stays on her face, but NOT the blink squash —
-	# cheeks aren't eyelids; a blink must not yank them upward. One channel,
-	# faded by the app's blush toggle (KEY_B), worn in every pose.
+	# ---- blush unit: the GLOBAL cheek hatching, PINNED TO THE MOUTH unit
+	# (2026-11-15 user ask): it rides the mouth's drift and any collision
+	# push, so it belongs to the lower face — not the eyes' gaze, and not
+	# the blink squash (cheeks aren't eyelids). One channel, faded by the
+	# app's blush toggle (KEY_B), worn in every pose.
 	var blush_a: float = _sc["blush"][0]
 	if blush_a > 0.01:
 		var bc := _alpha(col, blush_a)
 		for i in _bl_a.size():
 			draw_line(
-				_bl_a[i] + eye_off,
-				_bl_b[i] + eye_off,
+				_bl_a[i] + mouth_off,
+				_bl_b[i] + mouth_off,
 				bc, maxf(_bl_w[i], 1.0), true
 			)
 
@@ -754,17 +939,18 @@ func _draw() -> void:
 		var mpts := _xform(_open_mouth(_cur["mouth"]), mouth_off, Vector2.ONE, Vector2.ZERO, Vector2.ONE)
 		_fill_ribbon(mpts, _alpha(col, mouth_a))
 
-	# ---- prop unit: rides with the EYE unit's drift (gaze, tremble) but never
-	# blinks — the spinner is a thought, not a body part. Rigid rotate; no
+	# ---- prop unit: FIXED in the face at the position authored in the SVG
+	# (2026-11-15 user ask: the throbber is separate and does not move —
+	# no gaze, no drift, no tremble). Rigid rotate about its own hub; no
 	# springs, so the ring band stays perfectly round while it turns. Fills
-	# via triangulation (props may carry ANY point count; the wheel has 42).
+	# via triangulation (props may carry ANY point count).
 	var props_a: float = _sc["props"][0]
 	if props_a > 0.01:
 		var pc := _alpha(col, props_a)
 		var rad := deg_to_rad(_spin_a)
 		for p in _pr_base.size():
 			var pts := _rot_pts(_pr_base[p], _pr_hub[p], rad if _pr_spin[p] else 0.0)
-			_fill_poly(_xform(pts, eye_off, Vector2.ONE, Vector2.ZERO, Vector2.ONE), pc)
+			_fill_poly(pts, pc)
 
 
 func _alpha(c: Color, a: float) -> Color:
@@ -781,6 +967,19 @@ func _xform(pts: PackedVector2Array, off: Vector2, _unused: Vector2, pivot: Vect
 	for i in pts.size():
 		out[i] = _xf_point(pts[i], off, pivot, scale_xy)
 	return out
+
+
+## Where a line-stroke endpoint sits on screen: its spring position, plus
+## the joint's teleport offset, then the eye-unit transform — skipped for
+## FIXED strokes, which draw where authored.
+func _ln_vertex(e: int, jit_on: bool, xf: bool, eye_off: Vector2,
+		eye_cy: float, sy: float) -> Vector2:
+	var p := _ln_a[e >> 1] if (e & 1) == 0 else _ln_b[e >> 1]
+	if jit_on:
+		p += _jit_o[_jit_node[e]]
+	if xf:
+		p = _xf_point(p, eye_off, Vector2(0.0, eye_cy), Vector2(1.0, sy))
+	return p
 
 
 ## Rotate a polygon about `hub` by `rad` radians (0 = pass through untouched).

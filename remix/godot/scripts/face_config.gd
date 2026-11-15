@@ -14,16 +14,21 @@
 #
 # A shape may also carry a third thing: the PROP UNIT. In the SVG these are
 # polygons tagged .cls-4 (static prop) or .cls-5 (spinning prop) — extra
-# geometry that rides with the eyes but is neither eye nor mouth. Thunking
-# carries a loading wheel in the corner (ONE ring band, .cls-5, spinning
-# about its own bbox center). Strokes ("lines", any count) ride with the
-# eyes too: tired's under-eye bags, spooked's speed lines, scribble's knot —
-# whose joints teleport per the shape's "jitter" radius (the knot stays ONE
-# connected scribble; shared endpoints move together). Separately, any SVG
-# may tag strokes .cls-6: the GLOBAL blush overlay (bashful's cheek
-# hatching), which the engine wears in EVERY pose and the app's blush
-# toggle (KEY_B) fades in and out. Edit shapes in the SVGs, not here;
-# re-run tools/svg_to_shapes.py.
+# geometry FIXED where the SVG authors it (2026-11-15: the throbber is
+# separate and does not move — it rides no gaze, no drift, no tremble).
+# Thunking carries a loading wheel in the upper-left (per the reference
+# PNG: one ring band, .cls-5, spinning about its own bbox center). Strokes
+# ("lines", any count) ride with the eyes too: tired's under-eye bags,
+# spooked's speed lines, scribble's knot — whose joints teleport per the
+# shape's "jitter" radius, but which (shape flag lines_fixed) draws FIXED
+# in place: it jitters without moving as a whole, and its shape carries
+# hide_mouth, so the lipsync bar never fades in over it (the knot IS her
+# mouth). Its degenerate eye placeholders carry has_eyes: false and the
+# engine never paints a collapsed ribbon. Separately, any SVG may tag
+# strokes .cls-6: the GLOBAL blush overlay (bashful's cheek hatching),
+# which the engine wears in EVERY pose, pinned to the MOUTH unit's drift,
+# and which the app's blush toggle (KEY_B) fades in and out. Edit shapes
+# in the SVGs, not here; re-run tools/svg_to_shapes.py.
 #
 # All distances are SVG design-space pixels (the 1920x1080 canvas).
 #
@@ -98,7 +103,7 @@ const EYES := {
 	"thunk": {"src": "thunk", "range": Vector2(30, 15), "blink": false,
 		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0, "twitch": false},
 	"scribble": {"src": "scribble", "range": Vector2(25, 15), "blink": false,
-		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 2.0, "twitch": false},
+		"blink_gap": 1.0, "blink_speed": 1.0, "tremble": 0.0, "twitch": false},
 	"strange": {"src": "strange", "range": Vector2(35, 20), "blink": true,
 		"blink_gap": 1.4, "blink_speed": 0.9, "tremble": 0.5, "twitch": true},
 	"smug": {"src": "smug", "range": Vector2(30, 18), "blink": true,

@@ -203,7 +203,8 @@ func _initialize() -> void:
 	face.set_pose("thunk"); step(120)
 	check(face.snapshot()["props"] > 0.98, "thunk shows its prop wheel")
 	check(face.is_active(), "a spinning wheel keeps the face active")
-	check(face._pr_hub[0].distance_to(Vector2(700, 396.7)) < 0.5, "wheel hub is its true center (rel 700, 396.7)")
+	check(face._pr_hub[0].distance_to(Vector2(-784.5, -292.8)) < 0.5,
+			"wheel hub is its true center (upper-left, per the reference PNG)")
 	face.set_pose("smug"); step(120)
 	check(face.snapshot()["props"] < 0.02, "the wheel fades out with the pose")
 
@@ -227,6 +228,37 @@ func _initialize() -> void:
 		# sharing a joint use the same offset, so their drawn tips touch.
 		seam_gap = maxf(seam_gap, face._ln_b[i].distance_to(face._ln_a[i + 1]))
 	check(seam_gap < 1.0, "strokes share their joints on the knot (max seam %.2f px < 1)" % seam_gap)
+
+	# 11b) THE KNOT IS HER MOUTH: even mid-speech the lipsync bar never
+	#      fades in over scribble (hide_mouth shape flag), its degenerate
+	#      eye placeholders never paint (has_eyes: false), and its strokes
+	#      draw FIXED where authored (lines_fixed).
+	face.set_pose("scribble"); step(120)
+	check(face.snapshot()["lines_fixed"] == true, "scribble's knot draws fixed in place")
+	check(face.snapshot()["eyes_drawn"] == false, "scribble's collapsed eye placeholders are not drawn")
+	face.set_speaking(true)
+	face.set_level(0.9); step(60)
+	check(face.snapshot()["mouth_alpha"] < 0.02, "no lipsync bar over scribble, even while speaking")
+	face.set_speaking(false)
+	face.set_level(0.0)
+	face.set_pose("default"); step(90)
+	check(face.snapshot()["mouth_alpha"] > 0.98, "a normal pose's mouth shows again")
+	check(face.snapshot()["eyes_drawn"] == true, "normal eyes draw again")
+
+	# 11c) the knot never moves AS A WHOLE: it rides no gaze. Gaze still
+	#      moves the eye unit; the fixed-flag pose's strokes draw at their
+	#      authored positions (flag checked above; this is the observable:
+	#      _retarget keeps the knot's spring targets at their authored spots
+	#      regardless of look).
+	face.set_pose("scribble"); step(120)
+	face.set_look(Vector2(1.0, 1.0)); step(120)
+	var drift_max := 0.0
+	for i in shapes["scribble"]["lines"].size():
+		var kl: Array = shapes["scribble"]["lines"][i]
+		drift_max = maxf(drift_max, face._ln_a[i].distance_to(kl[0]))
+		drift_max = maxf(drift_max, face._ln_b[i].distance_to(kl[1]))
+	check(drift_max < 0.5, "the knot's authored spots never shift with gaze (max %.2f px)" % drift_max)
+	face.set_look(Vector2.ZERO)
 
 	# 12) blush is GLOBAL: the cheek hatching is its own overlay worn in
 	#     every pose; the toggle fades it everywhere and touches nothing else.
@@ -265,6 +297,34 @@ func _initialize() -> void:
 	face.set_face("spooked", "none"); step(120)   # 21 -> 4 again, other geometry
 	for i in range(4, face._ln_a.size()):
 		check(face._ln_f[i] < 0.01, "dead knot stroke %d faded into spooked (%.3f)" % [i, face._ln_f[i]])
+
+	# 14) COLLISION: overlapping unit boxes push apart through LOOSE springs
+	#     (2026-11-15 user ask). At rest the face never overlaps — this is a
+	#     safety net — so the test forces the case: the mouth is shoved up
+	#     into the eyes' box, and must be pushed back down while the eyes
+	#     give a little up; on release both relax home.
+	face.set_pose("default"); step(120)
+	var mc: PackedVector2Array = face._tgt["mouth"]
+	var cc: PackedVector2Array = face._cur["mouth"]
+	for i in 10:
+		mc[i] += Vector2(0, -120)
+		cc[i] += Vector2(0, -120)
+	face._tgt["mouth"] = mc
+	face._cur["mouth"] = cc
+	step(90)
+	var pm: Vector2 = face.snapshot()["push_mouth"]
+	var pe: Vector2 = face.snapshot()["push_eye"]
+	check(pm.y > 5.0, "an intruding mouth is pushed back down (+y %.1f)" % pm.y)
+	check(pe.y < -2.0, "the eyes give a little upward (-y %.1f)" % pe.y)
+	for i in 10:
+		mc[i] += Vector2(0, 120)
+		cc[i] += Vector2(0, 120)
+	face._tgt["mouth"] = mc
+	face._cur["mouth"] = cc
+	step(240)
+	check(face.snapshot()["push_mouth"].length() < 3.0,
+			"the push relaxes home once the boxes separate (%.1f px)" % face.snapshot()["push_mouth"].length())
+	check(face.snapshot()["push_eye"].length() < 3.0, "the eyes' give relaxes too")
 
 	await process_frame
 	print("ENGINE_%s fails=%d poses=%d mixes=%d" % ["OK" if fails == 0 else "FAILED", fails, names.size(), mixes])

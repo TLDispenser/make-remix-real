@@ -23,10 +23,10 @@ Per pose the generator extracts:
   blush                        the BLUSH UNIT: .cls-6 strokes emitted once
                                as a top-level overlay worn in EVERY pose
                                (Bashful's cheek hatching)
-  props                        the PROP UNIT: extra polygons that ride with
-                               the eyes but are neither eye nor mouth
+  props                        the PROP UNIT: extra polygons FIXED where
+                               they are authored (they ride nothing) —
                                (.cls-4 = static, .cls-5 = spins; Thunking's
-                               loading spinner), placed absolutely
+                               loading spinner, per the reference PNG)
   jitter                       per-stroke-endpoint teleport radius (JITTER,
                                Scribble's pulsing knot)
 Coordinates are in the SVG's 1920x1080 design space, shifted so (0,0) is the
@@ -55,6 +55,18 @@ POSES = ["default", "anger", "smirk", "pout", "spooked", "tired", "tsun",
 # stroke endpoint around its defined point on a per-point clock (Scribble's
 # pulsing knot). 0 = settled strokes, as for blush.
 JITTER = {"scribble": 45.0}
+
+# Poses whose strokes NEVER ride the eye unit (no gaze, no drift, no tremble,
+# no blink squash): the knot is an object on the face, not an eyelid
+# (2026-11-15 user ask: the scribble knot should jitter in place, not move
+# as a whole). Other poses' strokes keep riding the eyes.
+LINES_FIXED = {"scribble"}
+
+# Poses whose eyes carry NO mouth at all — the strokes ARE the mouth: the
+# lipsync talking bar must never fade in over them, even mid-speech (the
+# scribble knot IS her mouth). The engine forces the mouth channel to 0
+# while these eyes are worn.
+HIDE_MOUTH = {"scribble"}
 
 # Horizontal: every pose's eye pair and mouth are centered on x = 0 (always on).
 # Vertical: your SVGs put the whole face ABOVE the screen's middle (the default
@@ -167,6 +179,18 @@ def classify(polys):
     return out
 
 
+def has_eyes(left: list, right: list) -> bool:
+    """False when an SVG ships degenerate eye placeholders (Scribble: the
+    knot travels in `lines`, so the eyes are ten identical points). The
+    mirror of has_mouth. The points themselves are still emitted — they are
+    what the springs collapse a previous pose's eyes INTO, so the morph
+    shrinks them away smoothly instead of popping them off."""
+    def degenerate(pts):
+        return all(abs(p[0] - pts[0][0]) < 0.01 and abs(p[1] - pts[0][1]) < 0.01
+                   for p in pts)
+    return not (degenerate(left) and degenerate(right))
+
+
 def parse_pose(name: str) -> dict:
     svg = (ART / f"{name}.svg").read_text()
     styles = parse_styles(svg)
@@ -216,6 +240,7 @@ def parse_pose(name: str) -> dict:
         "has_mouth": has_mouth,
         "mouth": [rel(p) for p in to_ribbon(feats["mouth"])] if has_mouth else None,
         "eye_outline": eye_outline,
+        "has_eyes": has_eyes(left, right),
         "lines": [(rel(a), rel(b), w) for a, b, w in lines],
         "blush": [(rel(a), rel(b), w) for a, b, w in blush],
         # Props: absolute design coords (never re-centered horizontally), as
@@ -223,6 +248,8 @@ def parse_pose(name: str) -> dict:
         # ring is authored hub-symmetric so its bbox center is the true hub.
         "props": [{"pts": [rel(q) for q in pr["pts"]], "spin": pr["spin"]} for pr in props],
         "jitter": JITTER.get(name, 0.0),
+        "lines_fixed": name in LINES_FIXED,
+        "hide_mouth": name in HIDE_MOUTH,
     }
 
 
@@ -250,6 +277,7 @@ def emit(poses: dict) -> str:
         # Mouthless poses (Spooked) already borrowed Default's mouth in main().
         out.append(f'\t\t\t"mouth": PackedVector2Array([{", ".join(v(q) for q in p["mouth"])}]),')
         out.append(f'\t\t\t"has_mouth": {str(p["has_mouth"]).lower()},')
+        out.append(f'\t\t\t"has_eyes": {str(p["has_eyes"]).lower()},')
         out.append(f'\t\t\t"eye_outline": {p["eye_outline"]:g},')
         ls = ", ".join(f"[{v(a)}, {v(b)}, {w:g}]" for a, b, w in p["lines"])
         out.append(f'\t\t\t"lines": [{ls}],')
@@ -259,6 +287,8 @@ def emit(poses: dict) -> str:
         )
         out.append(f'\t\t\t"props": [{ps}],')
         out.append(f'\t\t\t"jitter": {p["jitter"]:g},')
+        out.append(f'\t\t\t"lines_fixed": {str(p["lines_fixed"]).lower()},')
+        out.append(f'\t\t\t"hide_mouth": {str(p["hide_mouth"]).lower()},')
         out.append("\t\t},")
     out.append("\t}")
     out.append("")
@@ -305,7 +335,9 @@ def main():
     print(f"wrote {OUT.relative_to(ROOT)}: {len(poses)} poses")
     for name, p in poses.items():
         print(f"  {name:8s} outline={p['eye_outline']:g} lines={len(p['lines'])} "
-              f"blush={len(p['blush'])} props={len(p['props'])} jitter={p['jitter']:g} mouth_drawn={p['has_mouth']}")
+              f"blush={len(p['blush'])} props={len(p['props'])} jitter={p['jitter']:g} "
+              f"eyes_drawn={p['has_eyes']} mouth_drawn={p['has_mouth']} "
+              f"lines_fixed={str(p['lines_fixed']).lower()} hide_mouth={str(p['hide_mouth']).lower()}")
 
 
 if __name__ == "__main__":
