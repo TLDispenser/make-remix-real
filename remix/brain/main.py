@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import audio, awareness, bits, config, decisions, faces, home, jev, listening, memory, proactive, rules, speech, stt, tts, vitals, ws_server
+from . import audio, awareness, bits, config, decisions, faces, home, jev, listening, mechanic, memory, proactive, rules, speech, stt, tts, vitals, ws_server
 from .faces import NEUTRAL, Face
 
 _rule: rules.RuleBrain | None = None
@@ -32,6 +32,8 @@ _silent_task: asyncio.Task | None = None
 _gate_task: asyncio.Task | None = None   # audio mute/volume refresher
 _aware_task: asyncio.Task | None = None  # awareness poller (Phase 6)
 _proactive_task: asyncio.Task | None = None
+_mechanic_task: asyncio.Task | None = None   # self-improvement heartbeat
+_mechanic_visit: asyncio.Task | None = None  # the live visit itself
 _typing_at = 0.0
 _listener = listening.Listener()     # partial-line reflexes + peek/commit bookkeeping
 _listen_task: asyncio.Task | None = None
@@ -1230,6 +1232,108 @@ async def _handle_shell_conn(reader: asyncio.StreamReader,
             _shell_edges.append(edge)
 
 
+# ------------------------------------------------- self-improvement (2026)
+# She cannot edit her own code; she CAN notice what hurts and send for
+# outside help (mechanic.py). The trigger is hers (pure discretion, symptom
+# score vs threshold); the LIMITS are real and enforced regardless: never
+# during a live exchange or her speech, never in quiet hours, one visit at a
+# time, a day of rest after any call, worktree isolation, branch delivery.
+
+async def _mechanic_await(spawned: tuple) -> None:
+    """Wait out a live visit; then tell you where the work landed."""
+    global _mechanic_visit
+    proc, name = spawned
+    code = None
+    try:
+        await proc.communicate()
+        code = proc.returncode
+    except Exception as e:
+        print(f"remix-brain: mechanic visit failed ({e!r})")
+    _mechanic_visit = None
+    print(f"remix-brain: mechanic visit finished (opencode exit {code}, "
+          f"worktree {name})")
+    try:
+        decisions.log("mechanic", "live", jev="-", used="opencode",
+                      local=f"exit {code}", extra=f"worktree={name}")
+    except Exception:
+        pass
+    if code == 0:
+        await ws_server.send(
+            {"type": "notice", "seconds": 8.0,
+             "text": f"// checkup done — the work is on worktree {name}; "
+                     f"merge it when you have looked at it //"})
+    else:
+        await ws_server.send(
+            {"type": "notice", "seconds": 6.0,
+             "text": "// the checkup came back wrong — see "
+                     "brain/mechanic-last.log //"})
+
+
+async def _mechanic_tick() -> None:
+    if not _face_ready or _rule is None:
+        return
+    if speech.busy() or time.monotonic() < _rule.speak_gate_until:
+        return                      # the mechanic shares her pool: never now
+    if proactive._quiet_hour(time.localtime().tm_hour):
+        return
+    visit = _mechanic_visit
+    already = bool(visit and not visit.done())
+    st = mechanic.load_state()
+    now = time.time()
+    reason = mechanic.gates(st, now, already_running=already)
+    if reason:
+        return
+    score, findings = await asyncio.to_thread(
+        mechanic.scan, config.BRAIN_DIR / "brain.log",
+        config.BRAIN_DIR / "decisions.log", st)
+    itch_n = mechanic.itch(st, now)
+    total = score + itch_n
+    if total < config.MECHANIC_THRESHOLD:
+        return
+    brief_path = await asyncio.to_thread(
+        home.save_brief, mechanic.brief(total, itch_n, findings))
+    mechanic.mark_called(st, now)   # the rest gate starts HERE, visit or not
+    decisions.log("mechanic", config.MECHANIC, jev="-", used="local",
+                  local=f"score={total}",
+                  extra=str(brief_path) if brief_path else "brief-write-failed")
+    if not brief_path:
+        return
+    if config.MECHANIC == "shadow":
+        await ws_server.send(
+            {"type": "notice", "seconds": 6.0,
+             "text": "// I would be sending for a checkup now (shadow) — "
+                     "the brief is in my outbox //"})
+        return
+    spawned = await mechanic.dispatch(
+        brief_path, config.BRAIN_DIR.parent.parent,
+        config.BRAIN_DIR / "mechanic-last.log")
+    if spawned is None:
+        print("remix-brain: mechanic wanted to visit but opencode is not "
+              "on PATH — stayed home")
+        return
+    _, name = spawned
+    print(f"remix-brain: mechanic dispatched (worktree {name})")
+    await ws_server.send({"type": "notice", "seconds": 6.0,
+                          "text": "// sending for a checkup — a worktree "
+                                  "will appear when it is done //"})
+    _mechanic_visit = asyncio.create_task(_mechanic_await(spawned))
+
+
+async def mechanic_loop() -> None:
+    """Her discretion, ticking. off/shadow/live via REMIX_MECHANIC (off is
+    handled by the caller: this task only exists when she may call)."""
+    print(f"remix-brain: mechanic {config.MECHANIC} (she may send for "
+          f"outside help; delivery = a worktree branch you merge)")
+    home.ensure_dirs()
+    await asyncio.sleep(45.0)           # let boot settle
+    while True:
+        await asyncio.sleep(config.MECHANIC_TICK_S)
+        try:
+            await _mechanic_tick()
+        except Exception as e:
+            print(f"remix-brain: mechanic tick failed ({e!r})")
+
+
 async def shell_loop() -> None:
     """Phase 6 (plan Part 4 'shell hook'): listen on a 0600 unix socket in
     the runtime dir for zsh hook reports. Same-user only; opt-in."""
@@ -1572,7 +1676,7 @@ def _on_ptt_msg(m: dict) -> None:
 async def main() -> None:
     started = time.monotonic()
     global _rule, _jev, _ptt, _loop, _gate_task, _pro, _aware_task, _proactive_task
-    global _audio_task, _hypr_task
+    global _audio_task, _hypr_task, _mechanic_task, _mechanic_visit
     _loop = asyncio.get_running_loop()
     memory.load()                      # journal is live from here on
     home.ensure_dirs()                 # Phase 5: diary/journal/inbox/outbox exist
@@ -1628,6 +1732,8 @@ async def main() -> None:
     _backfill_task = asyncio.create_task(_memory_backfill())
     _inbox_task = asyncio.create_task(inbox_loop())
     _shell_task = asyncio.create_task(shell_loop())
+    if config.MECHANIC in ("shadow", "live"):
+        _mechanic_task = asyncio.create_task(mechanic_loop())
     print(f"remix-brain: awareness {'on' if config.AWARENESS else 'off'} "
           f"(app names only, titles redacted), proactive "
           f"{'on' if config.PROACTIVE and config.AWARENESS else 'off'} "
@@ -1658,6 +1764,8 @@ async def main() -> None:
         _cancel(_backfill_task)
         _cancel(_inbox_task)
         _cancel(_shell_task)
+        _cancel(_mechanic_visit)
+        _cancel(_mechanic_task)
         if _ptt:
             await _ptt.cancel()   # never leave the mic open on the way out
         # Parting note (plan 2.1.4): one reflection over this session, if

@@ -59,6 +59,10 @@ KNOBS = [
     ("REMIX_SHELL_HOOK", "SHELL_HOOK", "bool",
      "unix socket for the zsh hook (long shell jobs; command text goes to "
      "the cloud, redacted first)"),
+    ("REMIX_MECHANIC", "MECHANIC", ("choice", "off", "shadow", "live"),
+     "self-improvement: she may send for an outside opencode session that "
+     "leaves a worktree branch for you to merge (shadow = brief only, "
+     "nothing spawned)"),
 ]
 _SECRET_HINTS = ("KEY", "TOKEN", "SECRET")
 

@@ -219,6 +219,18 @@ SECTIONS = [
            "how often the inbox watcher looks (s)"),
         _k("REMIX_INBOX_EXCERPT_CHARS", "INBOX_EXCERPT_CHARS", "int",
            "file excerpt cap BEFORE the LLM"),
+        _k("REMIX_MECHANIC", "MECHANIC", (_C, "off", "shadow", "live"),
+           "self-improvement: she may send for an outside opencode session "
+           "(branch you merge). shadow = she decides + writes the brief, "
+           "spawns nothing"),
+        _k("REMIX_MECHANIC_TICK_S", "MECHANIC_TICK_S", "float",
+           "how often she re-checks whether a checkup is worth it (s)"),
+        _k("REMIX_MECHANIC_REST_S", "MECHANIC_REST_S", "float",
+           "rest after any call (shadow or live) before she may call again"),
+        _k("REMIX_MECHANIC_THRESHOLD", "MECHANIC_THRESHOLD", "int",
+           "symptom score that earns a visit (her discretion above it)"),
+        _k("REMIX_MECHANIC_DIARY_CHARS", "MECHANIC_DIARY_CHARS", "int",
+           "diary excerpt cap in the brief she hands the mechanic"),
     ]),
     _SECTION("Body & vitals", "the machine she lives in", [
         _k("REMIX_MOCK", "MOCK", "bool",

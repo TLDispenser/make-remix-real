@@ -290,6 +290,12 @@ _history: collections.deque = collections.deque(
 _reply_waiters = 0   # replies waiting on _lock: chatter yields to them
 _lock = asyncio.Lock()
 
+
+def busy() -> bool:
+    """True while a real exchange is talking or waiting — anything else
+    (chatter, the mechanic) steps aside instead of sharing the pool."""
+    return _reply_waiters > 0 or _lock.locked()
+
 # ------------------------------------------------- unprompted lines (chatter)
 
 # Appended to the normal system prompt when she speaks unprompted: same voice,

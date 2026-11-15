@@ -434,6 +434,18 @@ MEMORY_INJECT_LIMIT = int(_env("MEMORY_INJECT_LIMIT", "6"))      # max retrieved
 INBOX = _env("INBOX", "0") == "1"
 INBOX_POLL_S = float(_env("INBOX_POLL_S", "30.0"))   # how often the watcher looks
 INBOX_EXCERPT_CHARS = int(_env("INBOX_EXCERPT_CHARS", "400"))  # cap BEFORE the LLM
+# Self-improvement (user idea, 2026-11-15): she cannot edit her own code, but
+# she can notice what hurts and send for outside help — an opencode session
+# (the same $0 model) working in an isolated git worktree and leaving a BRANCH
+# for the user to merge. Mode is a decision-style knob: off / shadow / live.
+# shadow = she decides + writes the brief + logs, but spawns NOTHING ($0 dry
+# run). live = the real visit. The mechanics share her provider pool and Jev
+# credits are finite, so the limits below are enforced regardless of her wish.
+MECHANIC = (_env("MECHANIC", "off") or "off").strip().lower()
+MECHANIC_TICK_S = float(_env("MECHANIC_TICK_S", "120.0"))   # how often she re-checks her state
+MECHANIC_REST_S = float(_env("MECHANIC_REST_S", "86400.0")) # min rest AFTER a visit (a day, not a schedule)
+MECHANIC_THRESHOLD = int(_env("MECHANIC_THRESHOLD", "8"))   # symptom score that earns a visit
+MECHANIC_DIARY_CHARS = int(_env("MECHANIC_DIARY_CHARS", "400"))  # diary excerpt cap in the brief
 HISTORY_MAX_MESSAGES = int(_env("HISTORY_MAX_MESSAGES", "20"))   # conversation context window (10 exchanges)
 # Temper (1a): a slight per-boot personality drift, and REMIX_TEMPER sets the
 # baseline: cranky (default, the character you have now), balanced, soft.

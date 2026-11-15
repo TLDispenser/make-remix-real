@@ -117,6 +117,20 @@ def save_outbox(text: str, urgent: bool = False) -> Path | None:
     return path
 
 
+def save_brief(text: str) -> Path | None:
+    """outbox/<timestamp>-mechanic-brief.txt — the work order she hands the
+    outside mechanic (self-improvement, 2026-11-15). Functional on purpose:
+    a brief is a work order, not a diary entry, but it is HERS to write and
+    yours to read, so it lives in the outbox with everything else."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    path = _base() / "outbox" / (time.strftime("%Y%m%d-%H%M%S")
+                                 + "-mechanic-brief.txt")
+    _write(path, redact(text) + "\n")
+    return path
+
+
 def poll_inbox(excerpt_chars: int) -> list:
     """New .txt files in inbox/ -> [{'name', 'excerpt'}], each MOVED to
     inbox/seen/ so a file is reacted to exactly once. The excerpt is
