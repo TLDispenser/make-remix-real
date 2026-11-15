@@ -26,6 +26,7 @@ if HAS_TEXTUAL:
     from brain.settings_tui import ChoiceScreen, QuitGuard, SettingsTUI  \
         # noqa: E402
     from brain.settings_catalog import KNOB_BY_ENV  # noqa: E402
+from brain import config  # noqa: E402
 
 _TMP_ENV = """\
 # remix settings — test header
@@ -45,6 +46,15 @@ class TUITests(unittest.IsolatedAsyncioTestCase):
         self.dir = tempfile.mkdtemp()
         self.env = Path(self.dir) / ".env"
         self.env.write_text(_TMP_ENV)
+        # The TUI displays LIVE config, so the live view must match the temp
+        # .env this class writes: no secrets set (2026-11-15 — her real key
+        # used to leak in and "unset" rows read "set").
+        self._saved_secrets = (config.LLM_API_KEY, config.JEV_API_KEY)
+        config.LLM_API_KEY = ""
+        config.JEV_API_KEY = ""
+
+    def tearDown(self):
+        config.LLM_API_KEY, config.JEV_API_KEY = self._saved_secrets
 
     def _app(self) -> SettingsTUI:
         return SettingsTUI(env_path=self.env)
