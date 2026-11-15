@@ -25,7 +25,9 @@ from . import config, vocal_fx
 # Read letter-by-letter or fixed: espeak guesses these badly.
 _ACRONYMS = {"cpu": "C P U", "gpu": "G P U", "ssd": "S S D", "usb": "U S B",
              "pc": "P C", "os": "O S", "ui": "U I", "ai": "A I", "wifi": "wi fi",
-             "hdd": "H D D", "bios": "bye ose", "linux": "linnux"}
+             "hdd": "H D D", "bios": "bye ose", "linux": "linnux",
+             # her own name: plain "Remix" reads re-MIX; she is REE-mix
+             "remix": "Riemix"}
 _ACR_RE = re.compile(r"\b(" + "|".join(_ACRONYMS) + r")\b", re.I)
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]")
 
