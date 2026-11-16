@@ -168,6 +168,56 @@ class GroundingTests(unittest.TestCase):
         self.assertTrue(grounding.check("it's 91C in here", "hot?", "", VITALS))
         self.assertTrue(grounding.check("battery's at twelve percent", "bat?", "", VITALS))
         self.assertFalse(grounding.check("53C. fine.", "temp?", "", VITALS))
+
+
+class GroundedRetryTests(unittest.TestCase):
+    """The grounding retry's message shape and her right to her own words.
+    Live-fire 2026-11-15: she said "youtube cops again" (from the tab title),
+    the user asked how she knew, she referenced youtube in her reply — and
+    the check flagged her OWN line as invention (it only read the user's
+    half of the history), the retry went out ending on an assistant turn,
+    backup1 rejected the shape with a 400, every provider cooled down, and
+    she sat silent through the spookiest three exchanges of her life."""
+
+    def setUp(self):
+        speech._history.clear()
+
+    def tearDown(self):
+        speech._history.clear()
+
+    def test_retry_messages_end_on_a_user_turn(self):
+        seen = []
+
+        async def fake_llm(messages, temperature=0.7):
+            seen.append(list(messages))
+            return "fine. I can't see it. happy?"
+
+        with mock.patch.object(speech, "_call_llm", fake_llm):
+            out = run(speech._grounded(
+                "chromium is open in workspace two, still",
+                [{"role": "system", "content": "sys"}],
+                "what's open?", None, {}))
+        self.assertEqual("fine. I can't see it. happy?", out)
+        self.assertEqual("assistant", seen[0][-2]["role"])   # her draft
+        self.assertEqual("user", seen[0][-1]["role"])        # the note
+        self.assertIn("(not them", seen[0][-1]["content"])
+
+    def test_her_own_past_line_licenses_the_word(self):
+        speech._history.append({"role": "assistant",
+                                "content": "youtube cops again. go outside."})
+        calls = []
+
+        async def fake_llm(messages, temperature=0.7):
+            calls.append(1)
+            return "x"
+
+        with mock.patch.object(speech, "_call_llm", fake_llm):
+            out = run(speech._grounded(
+                "that youtube you had on is still going, huh",
+                [{"role": "system", "content": "sys"}],
+                "how did you know what I was watching?", None, {}))
+        self.assertEqual("that youtube you had on is still going, huh", out)
+        self.assertEqual([], calls)    # no retry: she vouched for herself
         self.assertFalse(grounding.check("ninety-nine percent full. delete shit.", "disk?", "", VITALS))
         self.assertTrue(grounding.check("it's 50C", "temp?", "", {"temp": None}))   # no sensor = no number
 

@@ -469,22 +469,43 @@ async def _generate(user_text: str, vitals: dict | None,
     return reply
 
 
+def _correction(messages: list, draft: str | None, note: str) -> list:
+    """A corrective retry that ends on a USER turn. Some providers reject
+    requests ending with a model turn (backup1: HTTP 400 'Requests ending
+    with a model turn are not supported', 2026-11-15 — the grounding retry's
+    [assistant draft, system note] tail read as exactly that), so every
+    retry now ends with the note itself, framed so she knows it isn't the
+    human talking."""
+    out = list(messages)
+    if draft is not None:
+        out.append({"role": "assistant", "content": draft})
+    out.append({"role": "user",
+                "content": "(not them — your own self-check) " + note})
+    return out
+
+
 async def _grounded(reply: str, messages: list, user_text: str,
                     vitals: dict | None, aware: dict | None = None) -> str:
     """Screen the reply for things she can't know. One retry with the problem
     named in plain prose; after that her second try ships as-is (plan 1.5.3:
     her words, her responsibility — the retry note tells her to own it with
     humor in her own voice). Never a canned deflection."""
-    hist = " ".join(m["content"] for m in _history if m["role"] == "user")
+    # The whole conversation is what she legitimately knows — HERS too: an
+    # unprompted line she said out loud five minutes ago is fair game to
+    # reference now (2026-11-15: "how did you know what I was watching" —
+    # she'd said "youtube cops again" from the tab title herself, and the
+    # check then flagged her own words as invention because it only read
+    # the user's half of the history).
+    hist = " ".join(m["content"] for m in _history
+                    if m["role"] in ("user", "assistant"))
     problems = grounding.check(reply, user_text, hist, vitals, aware)
     if not problems:
         return reply
     print(f"remix-brain: reply failed grounding ({'; '.join(problems)}) — retrying")
     decisions.log("grounding", "-", jev=None, used="retry",
                   local="word-list check", extra="; ".join(problems)[:120])
-    retry = messages + [{"role": "assistant", "content": reply},
-                        {"role": "system", "content": grounding.retry_note(problems)}]
-    second = await _call_llm(retry)
+    second = await _call_llm(_correction(messages, reply,
+                                         grounding.retry_note(problems)))
     if second and not grounding.check(second, user_text, hist, vitals, aware):
         return second
     if second is None:
@@ -522,9 +543,8 @@ async def generate_undodged(user_text: str, reply: str,
     messages = ([{"role": "system", "content":
                   build_system_prompt(vitals, stance, context, aware,
                                       user_text=user_text)}]
-                + list(_history)
-                + [{"role": "system", "content": DODGE_NOTE}])
-    second = await _call_llm(messages)
+                + list(_history))
+    second = await _call_llm(_correction(messages, None, DODGE_NOTE))
     if not second:
         return None
     second = strip_stage_directions(second).strip()
@@ -917,11 +937,9 @@ async def generate_proactive_line(plan: dict, vitals: dict | None = None,
                 # ONE corrective retry, then silence. Skipped when a real
                 # exchange started waiting while she wrote: it gets the
                 # brain immediately instead.
-                messages = messages + [
-                    {"role": "assistant", "content": cleaned or "(nothing)"},
-                    {"role": "system", "content": note}]
-                cleaned = _clean_line(
-                    await _call_llm(messages, temperature=0.85))
+                cleaned = _clean_line(await _call_llm(_correction(
+                    messages, cleaned or "(nothing)", note),
+                    temperature=0.85))
                 note = reject(cleaned)
         return cleaned if note is None else None
 
