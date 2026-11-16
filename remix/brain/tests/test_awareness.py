@@ -608,6 +608,12 @@ class OnMyMindTests(unittest.TestCase):
         plan = e.tick(dict(AWAY), {}, now=1000.0, mind_rows=[long_row])
         self.assertLessEqual(len(plan["situation"]), 300)
 
+    def test_the_plan_carries_the_verbatim_thing(self):
+        config.ON_MIND_COOLDOWN_S = 600.0
+        e = self._greeted()
+        plan = e.tick(dict(AWAY), {}, now=1000.0, mind_rows=[dict(self.ROW)])
+        self.assertEqual(self.ROW["text"], plan["bring"])
+
     def test_her_row_seeds_as_hers(self):
         config.ON_MIND_COOLDOWN_S = 600.0
         e = self._greeted()
@@ -719,6 +725,46 @@ class ChatterGenerationTests(unittest.TestCase):
             run(speech.generate_proactive_line(self._plan()))
         self.assertIn("UNPROMPTED LINE", seen[0]["content"])
         self.assertNotIn("UNPROMPTED OPENER", seen[0]["content"])
+
+    def test_vague_bringup_gets_one_shot_to_be_specific(self):
+        # 2026-11-15 live fire: "...and you're *still* doing it." — doing
+        # WHAT? A bring-up must carry the thing itself; the human doesn't
+        # keep her journal.
+        seen = []
+        responses = iter(["...and you're *still* doing it.",
+                          "that fern you were supposed to water yesterday."])
+
+        async def fake_llm(messages, temperature=0.85):
+            seen.append(list(messages))
+            return next(responses)
+
+        plan = self._plan(
+            situation='earlier today they said: "water the fern tomorrow" '
+                      "— it never got a real answer")
+        plan.update(trigger="on_my_mind", bring="water the fern tomorrow")
+        with mock.patch.object(speech, "_call_llm", fake_llm):
+            line = run(speech.generate_proactive_line(plan))
+        self.assertEqual("that fern you were supposed to water yesterday.",
+                         line)
+        self.assertEqual(2, len(seen))
+        self.assertIn("saying WHAT", seen[1][-1]["content"])
+
+    def test_specific_bringup_passes_without_a_retry(self):
+        seen = []
+
+        async def fake_llm(messages, temperature=0.85):
+            seen.append(list(messages))
+            return "that fern you were supposed to water yesterday."
+
+        plan = self._plan(
+            situation='earlier today they said: "water the fern tomorrow" '
+                      "— it never got a real answer")
+        plan.update(trigger="on_my_mind", bring="water the fern tomorrow")
+        with mock.patch.object(speech, "_call_llm", fake_llm):
+            line = run(speech.generate_proactive_line(plan))
+        self.assertEqual("that fern you were supposed to water yesterday.",
+                         line)
+        self.assertEqual(1, len(seen))
 
     def test_add_assistant_feeds_the_dedup_memory(self):
         speech.add_assistant("hi again")

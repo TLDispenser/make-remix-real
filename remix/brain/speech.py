@@ -341,7 +341,9 @@ out loud, to the room. One sentence, under 20 words, no quotes, no stage
 directions. Not a greeting-card line, not a status report, not assistant talk:
 something only you would say, about what you actually just noticed. A flat
 observation or a fresh complaint beats a joke — fresh: nothing they have
-already heard and waved off. Reply with the line and nothing else.
+already heard and waved off. Specifics beat gestures: "that browser" is a
+shrug — name the actual thing you noticed (the app, the time, the number).
+Reply with the line and nothing else.
 """
 
 OPENER_ADDENDUM = """
@@ -353,8 +355,11 @@ them, under 25 words, no quotes, no stage directions. A question you
 actually want answered, a jab that begs a comeback, a callback to something
 from earlier that you are not done with. The test: if they answered, a
 conversation would be standing there — and if there is nothing you want
-from them, silence was the better line. Reply with the line and nothing
-else.
+from them, silence was the better line. Never a vaguepost: if you are
+bringing something up, put the thing itself in the line — quote or
+paraphrase the actual words, close enough that they know exactly what you
+mean. They don't keep a journal; your line is their only receipt. Reply
+with the line and nothing else.
 """
 
 _chatter_lock = asyncio.Lock()   # serializes chatter with itself
@@ -916,7 +921,12 @@ async def generate_proactive_line(plan: dict, vitals: dict | None = None,
             if not s:
                 return ("Say one line. One sentence, under 20 words, no "
                         "quotes.")
-            problems = grounding.check(s, "", "", vitals, aware)
+            # The situation seed IS what she legitimately knows right now —
+            # including a bring-up's verbatim row — so past-tense references
+            # to it ("that fern you said to water yesterday") are licensed,
+            # not invented. Empty history here was flagging her own
+            # on_my_mind lines as memory claims (2026-11-16).
+            problems = grounding.check(s, "", situation, vitals, aware)
             if problems:
                 return ("Your line broke the rules: " + "; ".join(problems)
                         + ". One line, using ONLY what's on your 'what you "
@@ -924,6 +934,16 @@ async def generate_proactive_line(plan: dict, vitals: dict | None = None,
             if _chatter_dup(s):
                 return ("You already said that. A different line, same "
                         "voice, about the same situation.")
+            # The vaguepost rule (2026-11-16): a bring-up that doesn't
+            # contain the thing itself ("...and you're still doing it.")
+            # makes THEM do the remembering. They can't — they don't keep
+            # her journal. One key word from the actual row must land.
+            bring = str(plan.get("bring") or "")
+            keys = re.findall(r"[a-z']{5,}", bring.lower())[:12]
+            if keys and not any(k in s.lower() for k in keys):
+                return ("You brought it up without saying WHAT. Quote or "
+                        "paraphrase the actual thing so they know what "
+                        "you mean — they don't keep your journal.")
             if len(s) > 200:
                 return "Too long. One sentence, under 20 words."
             return None

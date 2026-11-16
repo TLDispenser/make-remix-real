@@ -29,7 +29,6 @@ import time
 
 from . import config
 from .faces import Face, POSES
-
 # Exchange hush: right after she answered you, she shuts up for a bit.
 EXCHANGE_HUSH_S = 120.0
 
@@ -491,6 +490,8 @@ class Proactive:
                 "aim": opened_app if plan == "app_opened" else None,
                 "commitment": due_commitment,
                 "open": opener,
+                "bring": str(mind_pick.get("text") or "")
+                if plan == "on_my_mind" else None,
                 "situation": situation}
 
     def force(self, aware: dict | None = None, vitals: dict | None = None,

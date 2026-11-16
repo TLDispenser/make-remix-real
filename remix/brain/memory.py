@@ -609,7 +609,11 @@ def note_said(text: str) -> None:
 
 
 def said_set() -> set:
-    return set(store()["said"])
+    """The persisted said-set. Empty unless journaling is live (memory.load
+    ran at a real boot): test callers must never read her real files
+    (hermetic rule #3, caught 2026-11-16 by a test that matched a line she
+    said YESTERDAY through the live said-set)."""
+    return set(store()["said"]) if _active else set()
 
 
 def has_journal() -> bool:
