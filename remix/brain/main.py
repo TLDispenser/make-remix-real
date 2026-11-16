@@ -1179,6 +1179,17 @@ async def proactive_loop() -> None:
                 bit_edges = await asyncio.to_thread(bits.poll)
             except Exception as e:       # a broken bit never stops the heart
                 print(f"remix-brain: bits poll failed ({e!r})")
+        # on_my_mind candidates: real rows from TODAY only, at least 10 min
+        # old (never re-litigate what just happened), newest-first.
+        mind_rows = None
+        if config.ON_MIND_COOLDOWN_S > 0.0:
+            today = time.strftime("%Y-%m-%d")
+            cut = time.strftime("%Y-%m-%d %H:%M",
+                                time.localtime(time.time() - 600.0))
+            mind_rows = [r for r in memory.lines(limit=60)
+                         if r.get("kind") in ("user", "her", "thought")
+                         and str(r.get("at") or "").startswith(today)
+                         and str(r.get("at") or "") < cut][:12]
         try:
             plan = _pro.tick(
                 awareness.current(), _latest_snapshot,
@@ -1187,7 +1198,8 @@ async def proactive_loop() -> None:
                 busy_until=_rule.speak_gate_until,
                 commitments=memory.due_commitments(),
                 bit_edges=bit_edges,
-                shell_edges=_drain_shell_edges())
+                shell_edges=_drain_shell_edges(),
+                mind_rows=mind_rows)
         except Exception as e:               # chatter must never crash the brain
             print(f"remix-brain: proactive tick failed ({e!r})")
             continue

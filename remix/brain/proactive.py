@@ -66,6 +66,9 @@ STANCE_CHOICES = {
     "ambient": ["flat", "playful", "pout"],
     "poke": ["playful", "tsun", "flat"],
     "commitment_due": ["concerned", "flat", "playful"],
+    # 2026-11-15: she starts a conversation, not just a mutter. She brings
+    # back up something real from today's journal that never got an answer.
+    "on_my_mind": ["pout", "flat", "playful", "concerned"],
     # --- Phase 4 bits (plan 2.3): the laptop's own life. Narrow stances:
     # a bit states a fact, her mood shades it.
     "lid_closed": ["flat", "pout", "concerned"],
@@ -104,6 +107,8 @@ TRIGGER_COOLDOWN_S = {
     "app_closed": 1800.0,     # 30 min
     "ambient": config.AMBIENT_COOLDOWN_S,
     "commitment_due": 1.0,    # edge-gated: each commitment fires once
+    # on_my_mind uses its config cooldown directly (0 = the trigger is off).
+    "on_my_mind": config.ON_MIND_COOLDOWN_S,
     # Phase 6: shell jobs are edge-gated (each job fires once) but a build
     # loop that fails repeatedly shouldn't nag more than this floor.
     "shell_job": config.SHELL_COOLDOWN_S,
@@ -115,6 +120,12 @@ TRIGGER_COOLDOWN_S.update(config.BIT_COOLDOWN_FLOORS_S)
 # Triggers whose room-notice doubles as the "urgent" flag (6.4: she's being
 # ignored/muted and got pissed about it; main raises the marker).
 URGENT_ON = ("muted_long", "idle_deep")
+
+# Triggers where an unprompted line may become an opener (aimed at them, a
+# hook instead of a statement). Reports and alarms never turn invitations:
+# nobody wants "your battery is low. what do you think about that?"
+OPENABLE = ("greeting", "welcome_back", "ambient", "app_opened",
+            "app_closed", "idle_gentle", "long_session", "plugged", "poke")
 
 
 def _f(v):
@@ -145,7 +156,8 @@ def _situation(trigger: str, aware: dict, batt: float | None,
                away_mins: int | None = None,
                stuck_mins: int | None = None,
                app: str | None = None,
-               commitment: dict | None = None) -> str:
+               commitment: dict | None = None,
+               mind_row: dict | None = None) -> str:
     """What she just noticed, as one plain clause. This is the SEED her words
     grow from — speech.generate_proactive_line() reacts to it. Every number
     here comes straight from a real sense; nothing is invented."""
@@ -224,6 +236,14 @@ def _situation(trigger: str, aware: dict, batt: float | None,
         return f"they just closed {awareness._name_of(app or 'something')}"
     if trigger == "poke":
         return "they poked you and want to hear one line right now"
+    if trigger == "on_my_mind":
+        row = mind_row or {}
+        text = re.sub(r"\s+", " ", str(row.get("text") or "")).strip()[:160]
+        who = ("they said" if row.get("kind") == "user"
+               else "you said" if row.get("kind") == "her"
+               else "you muttered")
+        return (f"earlier today {who}: \"{text or 'something'}\" — it never "
+                f"got a real answer and it has been sitting with you")
     return "something on the machine changed"
 
 
@@ -252,6 +272,7 @@ class Proactive:
         self.greeted = False
         self.episode = {"gentle": False, "deep": False}
         self.prev_open = None         # set of open app classes (for edges)
+        self._mind_used = set()       # (at, kind, text-prefix) rows brought up
 
     # ---------------------------------------------------------------- API
 
@@ -260,7 +281,8 @@ class Proactive:
              busy_until: float = 0.0, wall_hour: int | None = None,
              commitments: list | None = None,
              bit_edges: list | None = None,
-             shell_edges: list | None = None) -> dict | None:
+             shell_edges: list | None = None,
+             mind_rows: list | None = None) -> dict | None:
         """One engine step. Returns {'trigger','stance','face','look','aim',
         'situation'} — the urge, never the words. `commitments` carries due
         promises/reminders (wall-clock checked by the caller); when present
@@ -401,11 +423,32 @@ class Proactive:
         elif self._ambient_ok(now) and \
                 self.rng.random() < config.AMBIENT_RATE:
             plan = "ambient"
+        elif (config.ON_MIND_COOLDOWN_S > 0.0 and mind_rows
+                and self._due("on_my_mind", now)):
+            # She starts a conversation instead: something real from today
+            # that never got an answer. Newest-first; skip what she already
+            # brought up this boot.
+            row = next((r for r in mind_rows
+                        if (str(r.get("at") or ""), str(r.get("kind") or ""),
+                            str(r.get("text") or "")[:48]) not in self._mind_used),
+                       None)
+            if row is not None:
+                mind_pick = dict(row)
+                plan = "on_my_mind"
 
         if plan is None:
             return None
 
         stance = self.rng.choice(STANCE_CHOICES.get(plan, ["flat"]))
+
+        # Opener decision (2026-11-15): an unprompted line can aim AT them
+        # and end on a hook, instead of a statement to the room. Reports
+        # (battery, wifi, reminders, check-ins) never become invitations —
+        # only the triggers where starting something is welcome. on_my_mind
+        # is one by nature: the whole point is to get an answer.
+        open_p = config.PROACTIVE_OPEN_P
+        opener = (open_p > 0.0 and plan in OPENABLE
+                  and self.rng.random() < open_p) or plan == "on_my_mind"
 
         # --- bookkeeping: the slot is spent whether or not the words
         # materialize (a failed generation is silence for this slot — never a
@@ -419,11 +462,17 @@ class Proactive:
             self._last_ambient = now
         if plan in ("idle_gentle", "idle_deep"):
             self.episode[plan[5:]] = True
+        if plan == "on_my_mind":
+            self._mind_used.add((str(mind_pick.get("at") or ""),
+                                 str(mind_pick.get("kind") or ""),
+                                 str(mind_pick.get("text") or "")[:48]))
 
         if plan == bit_plan and bit_plan is not None and bit_fact:
             situation = bit_fact
         elif plan == shell_plan and shell_plan is not None and shell_fact:
             situation = shell_fact
+        elif plan == "on_my_mind":
+            situation = _situation(plan, aware, batt, mind_row=mind_pick)
         else:
             situation = _situation(
                 plan, aware, batt,
@@ -441,6 +490,7 @@ class Proactive:
                 "urgent": plan in URGENT_ON,
                 "aim": opened_app if plan == "app_opened" else None,
                 "commitment": due_commitment,
+                "open": opener,
                 "situation": situation}
 
     def force(self, aware: dict | None = None, vitals: dict | None = None,
@@ -454,6 +504,7 @@ class Proactive:
         return {"trigger": "poke", "stance": stance,
                 "face": STANCE_FACE.get(stance, POSES["default"]),
                 "look": None,
+                "open": False,
                 "situation": _situation("poke", aware or {}, None)}
 
     # ----------------------------------------------------------- internals

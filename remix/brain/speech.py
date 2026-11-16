@@ -344,6 +344,19 @@ observation or a fresh complaint beats a joke — fresh: nothing they have
 already heard and waved off. Reply with the line and nothing else.
 """
 
+OPENER_ADDENDUM = """
+
+UNPROMPTED OPENER
+Nobody is talking to you — and this time you are not just saying something
+to the room: you are starting something with THEM. ONE sentence, aimed at
+them, under 25 words, no quotes, no stage directions. A question you
+actually want answered, a jab that begs a comeback, a callback to something
+from earlier that you are not done with. The test: if they answered, a
+conversation would be standing there — and if there is nothing you want
+from them, silence was the better line. Reply with the line and nothing
+else.
+"""
+
 _chatter_lock = asyncio.Lock()   # serializes chatter with itself
 _recent: collections.deque = collections.deque(maxlen=16)  # lines she's said
 
@@ -871,7 +884,9 @@ async def generate_proactive_line(plan: dict, vitals: dict | None = None,
             return None
         messages = ([{"role": "system", "content":
                      build_system_prompt(vitals, plan.get("stance"),
-                                         context, aware) + CHATTER_ADDENDUM}]
+                                         context, aware)
+                     + (OPENER_ADDENDUM if plan.get("open")
+                        else CHATTER_ADDENDUM)}]
                     + list(_history)      # continuity: she won't re-tread it
                     + [{"role": "user", "content":
                         f"You just noticed: {situation}"}])

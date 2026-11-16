@@ -213,6 +213,15 @@ AWAKEN_MIN_S = float(_env("AWAKEN_MIN_S", "120.0"))
 # rest from landing on a schedule.
 AMBIENT_RATE = float(_env("AMBIENT_RATE", "0.02"))        # per eligible 20 s tick
 AMBIENT_COOLDOWN_S = float(_env("AMBIENT_COOLDOWN_S", "3000.0"))  # >=50 min
+# 2026-11-15 ("I'm always the one driving the conversations"): two opt-in
+# ways for her to START something instead of muttering to the room.
+# PROACTIVE_OPEN_P: chance an eligible unprompted line becomes an OPENER —
+# aimed at them, ending on a hook that makes answering natural. 0 = off.
+PROACTIVE_OPEN_P = float(_env("PROACTIVE_OPEN_P", "0.0"))
+# ON_MIND_COOLDOWN_S: she brings something real back up (a line from today's
+# journal that never got an answer / a thought she never finished). Cooldown
+# between bring-ups, jittered like the rest. 0 = off.
+ON_MIND_COOLDOWN_S = float(_env("ON_MIND_COOLDOWN_S", "0.0"))
 # Urgent marker (6.4): muted_long / idle_deep fire -> she flags her window as
 # "urgent" until the human shows up or the room un-mutes. Godot may ignore it.
 URGENT_ENABLED = _env("URGENT", "1") == "1"

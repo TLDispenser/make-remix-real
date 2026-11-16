@@ -499,6 +499,123 @@ class ProactiveTests(unittest.TestCase):
         self.assertNotIn("text", plan)
 
 
+# --------------------------------------- openers + on_my_mind (2026-11-15)
+
+class OpenerDecisionTests(unittest.TestCase):
+    """The engine decides LOCALLY whether a line mutters to the room or
+    starts something with them. Reports never become invitations."""
+
+    def setUp(self):
+        self._saved = (config.PROACTIVE_OPEN_P, config.ON_MIND_COOLDOWN_S)
+        config.ON_MIND_COOLDOWN_S = 0.0
+
+    def tearDown(self):
+        config.PROACTIVE_OPEN_P, config.ON_MIND_COOLDOWN_S = self._saved
+
+    def _greeted(self):
+        e = proactive.Proactive(rng=random.Random(7), enabled=True)
+        e.greeted = True
+        return e
+
+    def test_report_triggers_never_open(self):
+        config.PROACTIVE_OPEN_P = 1.0
+        e = self._greeted()
+        e.tick(dict(AWAY, plugged=False), {"battery": 90.0}, now=1000.0)
+        plan = e.tick(dict(AWAY, plugged=False), {"battery": 10.0}, now=1010.0)
+        self.assertEqual("battery_low", plan["trigger"])
+        self.assertFalse(plan["open"])     # an alarm is not a conversation
+
+    def test_openable_trigger_opens_at_p_one(self):
+        config.PROACTIVE_OPEN_P = 1.0
+        e = self._greeted()
+        e.tick(dict(AWAY, plugged=False), {}, now=1000.0)
+        plan = e.tick(dict(AWAY, plugged=True), {}, now=1010.0)
+        self.assertEqual("plugged", plan["trigger"])
+        self.assertTrue(plan["open"])
+
+    def test_open_p_zero_is_off_everywhere(self):
+        config.PROACTIVE_OPEN_P = 0.0
+        e = self._greeted()
+        e.tick(dict(AWAY, plugged=False), {}, now=1000.0)
+        plan = e.tick(dict(AWAY, plugged=True), {}, now=1010.0)
+        self.assertFalse(plan["open"])
+
+    def test_muted_long_stays_a_statement(self):
+        config.PROACTIVE_OPEN_P = 1.0
+        e = self._greeted()
+        self.assertIsNone(e.tick(dict(AWAY, muted_s=100.0), {}, now=1000.0))
+        plan = e.tick(dict(AWAY, muted_s=660.0), {}, now=1500.0)
+        self.assertEqual("muted_long", plan["trigger"])
+        self.assertFalse(plan["open"])
+
+    def test_poke_is_never_an_opener(self):
+        config.PROACTIVE_OPEN_P = 1.0
+        e = self._greeted()
+        plan = e.force(dict(AWAY), {})
+        self.assertFalse(plan["open"])    # they're already there talking
+
+
+class OnMyMindTests(unittest.TestCase):
+    """She brings back up something real from today that never got an
+    answer — the start of a conversation, not a musing. Off by default."""
+
+    ROW = {"at": "2026-11-15 09:00", "kind": "user",
+           "text": "do you actually like the new eyes or are you just being nice"}
+
+    def setUp(self):
+        self._saved = (config.PROACTIVE_OPEN_P, config.ON_MIND_COOLDOWN_S)
+        config.PROACTIVE_OPEN_P = 0.0
+
+    def tearDown(self):
+        config.PROACTIVE_OPEN_P, config.ON_MIND_COOLDOWN_S = self._saved
+
+    def _greeted(self):
+        e = proactive.Proactive(rng=random.Random(7), enabled=True)
+        e.greeted = True
+        return e
+
+    def test_off_by_default_never_fires(self):
+        config.ON_MIND_COOLDOWN_S = 0.0
+        e = self._greeted()
+        self.assertIsNone(e.tick(dict(AWAY), {}, now=1000.0,
+                                 mind_rows=[dict(self.ROW)]))
+
+    def test_fires_with_the_row_in_the_seed(self):
+        config.ON_MIND_COOLDOWN_S = 600.0
+        e = self._greeted()
+        plan = e.tick(dict(AWAY), {}, now=1000.0, mind_rows=[dict(self.ROW)])
+        self.assertEqual("on_my_mind", plan["trigger"])
+        self.assertIn("do you actually like the new eyes", plan["situation"])
+        self.assertIn("they said", plan["situation"])
+        self.assertTrue(plan["open"])      # the whole point is an answer
+
+    def test_never_repeats_a_row_it_brought_up(self):
+        config.ON_MIND_COOLDOWN_S = 600.0
+        e = self._greeted()
+        plan = e.tick(dict(AWAY), {}, now=1000.0, mind_rows=[dict(self.ROW)])
+        self.assertEqual("on_my_mind", plan["trigger"])
+        # cooldown still running AND the row already used: nothing to say
+        self.assertIsNone(e.tick(dict(AWAY), {}, now=1200.0,
+                                 mind_rows=[dict(self.ROW)]))
+        # cooldown expired: still quiet — that row is spent
+        self.assertIsNone(e.tick(dict(AWAY), {}, now=5000.0,
+                                 mind_rows=[dict(self.ROW)]))
+
+    def test_row_text_is_capped(self):
+        config.ON_MIND_COOLDOWN_S = 600.0
+        e = self._greeted()
+        long_row = dict(self.ROW, text="word " * 60)
+        plan = e.tick(dict(AWAY), {}, now=1000.0, mind_rows=[long_row])
+        self.assertLessEqual(len(plan["situation"]), 300)
+
+    def test_her_row_seeds_as_hers(self):
+        config.ON_MIND_COOLDOWN_S = 600.0
+        e = self._greeted()
+        row = dict(self.ROW, kind="her", text="at least the fan gave up")
+        plan = e.tick(dict(AWAY), {}, now=1000.0, mind_rows=[row])
+        self.assertIn("you said", plan["situation"])
+
+
 # ------------------------------------------------ chatter words (generated)
 
 class ChatterGenerationTests(unittest.TestCase):
@@ -576,6 +693,32 @@ class ChatterGenerationTests(unittest.TestCase):
 
     def test_empty_situation_is_silence(self):
         self.assertIsNone(run(speech.generate_proactive_line({"trigger": "x"})))
+
+    def test_opener_plan_uses_the_opener_brief(self):
+        seen = []
+
+        async def fake_llm(messages, temperature=0.7):
+            seen.extend(messages)
+            return "you never answered me about the eyes. rude."
+
+        with mock.patch.object(speech, "_call_llm", fake_llm):
+            line = run(speech.generate_proactive_line(
+                dict(self._plan(), open=True)))
+        self.assertEqual("you never answered me about the eyes. rude.", line)
+        self.assertIn("UNPROMPTED OPENER", seen[0]["content"])
+        self.assertNotIn("UNPROMPTED LINE\n", seen[0]["content"])
+
+    def test_plain_plan_uses_the_room_brief(self):
+        seen = []
+
+        async def fake_llm(messages, temperature=0.7):
+            seen.extend(messages)
+            return "sound's been off. rude. noted."
+
+        with mock.patch.object(speech, "_call_llm", fake_llm):
+            run(speech.generate_proactive_line(self._plan()))
+        self.assertIn("UNPROMPTED LINE", seen[0]["content"])
+        self.assertNotIn("UNPROMPTED OPENER", seen[0]["content"])
 
     def test_add_assistant_feeds_the_dedup_memory(self):
         speech.add_assistant("hi again")
