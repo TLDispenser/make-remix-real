@@ -2,6 +2,7 @@
 # gates (limits she must respect), the brief (functional, diary excerpt
 # capped, redacted), the dispatch prompt's hard lines, and state persistence.
 # Hermetic: temp sandbox/logs, no opencode spawned.
+import asyncio
 import json
 import tempfile
 import unittest
@@ -177,6 +178,36 @@ class DispatchContractTests(unittest.TestCase):
         self.assertIn("--worktree", args)
         self.assertIn("--file", args)
         self.assertEqual(spawned["kwargs"]["cwd"], "/repo")
+
+
+class TickVisitReadTests(unittest.TestCase):
+    """Regression (2026-11-15): _mechanic_tick assigned _mechanic_visit
+    without `global`, which made the name LOCAL for the whole function —
+    the read at the top then raised UnboundLocalError on every tick, so
+    the mechanic could never run once live. The tick must get past the
+    visit read whenever the cheap gates pass."""
+
+    def test_tick_survives_the_visit_read(self):
+        from brain import main
+
+        class _Rule:
+            speak_gate_until = 0.0
+
+        saved = (main._face_ready, main._rule, main._mechanic_visit)
+        main._face_ready = True
+        main._rule = _Rule()
+        main._mechanic_visit = None
+        try:
+            with mock.patch.object(main.speech, "busy", return_value=False), \
+                 mock.patch.object(main.proactive, "_quiet_hour",
+                                   return_value=False), \
+                 mock.patch.object(main.mechanic, "load_state",
+                                   return_value={}), \
+                 mock.patch.object(main.mechanic, "gates",
+                                   return_value="rest"):
+                self.assertIsNone(asyncio.run(main._mechanic_tick()))
+        finally:
+            (main._face_ready, main._rule, main._mechanic_visit) = saved
 
 
 if __name__ == "__main__":

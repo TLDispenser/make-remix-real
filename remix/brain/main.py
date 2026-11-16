@@ -1382,6 +1382,7 @@ async def _mechanic_await(spawned: tuple) -> None:
 
 
 async def _mechanic_tick() -> None:
+    global _mechanic_visit
     if not _face_ready or _rule is None:
         return
     if speech.busy() or time.monotonic() < _rule.speak_gate_until:
