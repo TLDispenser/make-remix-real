@@ -216,7 +216,9 @@ def _markup(text: str, stutter: bool = False) -> str:
     if stutter:
         spoken = _stutter(spoken, text)
     spoken = html.escape(spoken, quote=False)
-    spoken = re.sub(r"\b([A-Z]{2,})\b", _EM_OPEN + r"\1" + _EM_CLOSE, spoken)
+    spoken = re.sub(
+        r"(?<![A-Za-z'\u2019])\b([A-Z]{2,}(?:['\u2019][A-Z]+)?)\b(?![A-Za-z'\u2019])",
+        _EM_OPEN + r"\1" + _EM_CLOSE, spoken)
     out, depth = [], 0
     for ch in spoken:                       # flatten nested emphasis to one level
         if ch == _EM_OPEN:
@@ -319,8 +321,11 @@ async def _synth_one(text: str, face=None, strain: float = 0.0):
     else:
         ch, width, frames = 1, 2, b""
     if sigh:
-        breath = vocal_fx.to_pcm16(vocal_fx.sigh(sr, seed=zlib.crc32(text.encode())))
-        frames = breath + (b"\x00\x00" * int(sr * 0.08)) + frames
+        if config.TTS_DSP and vocal_fx.HAS_NUMPY:
+            breath = vocal_fx.to_pcm16(vocal_fx.sigh(sr, seed=zlib.crc32(text.encode())))
+            frames = breath + (b"\x00\x00" * int(sr * 0.08)) + frames
+        else:
+            frames = (b"\x00\x00" * int(sr * 0.45)) + frames
     return _wav_bytes(ch, width, sr, frames), v["gap"]
 
 

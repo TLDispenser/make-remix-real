@@ -277,7 +277,8 @@ def record(kind: str, text: str, when: float | None = None,
         return
     ts = round(_now() if when is None else when)
     at = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
-    entry = {"t": ts, "at": at, "kind": kind, "text": text[:400]}
+    cap = 2000 if kind in ("summary", "reflection") else 400
+    entry = {"t": ts, "at": at, "kind": kind, "text": text[:cap]}
     if about:
         entry["about"] = about
     s = store()
@@ -290,7 +291,7 @@ def record(kind: str, text: str, when: float | None = None,
         try:
             con.execute(
                 "INSERT INTO entries (ts, at, kind, text) VALUES (?, ?, ?, ?)",
-                (float(ts), at, kind, text[:400]),
+                (float(ts), at, kind, text[:cap]),
             )
             con.commit()
         except Exception as e:
@@ -465,7 +466,7 @@ def retrieve(user_text: str, limit: int = 5) -> list:
 
 
 def forget(topic: str) -> int:
-    """Remove matching rows from store, SQLite database, and said set.
+    """Remove matching rows from store, SQLite database, commitments, and said set.
     Returns the number of rows forgotten."""
     topic = (topic or "").strip().lower()
     if not topic:
@@ -476,22 +477,39 @@ def forget(topic: str) -> int:
                   if topic not in str(e.get("text", "")).lower()]
     forgotten = before - len(s["lines"])
 
+    # Remove matching commitments
+    s["commitments"] = [c for c in s.get("commitments", [])
+                        if topic not in str(c.get("text", "")).lower()]
+
     # Remove from said set
     s["said"] = [t for t in s.get("said", []) if topic not in t.lower()]
 
-    # Remove from SQLite database
+    # Remove from SQLite database (escape LIKE wildcards so %/_ match literally)
     con = _db_conn()
     if con is not None:
+        escaped = (topic.replace("\\", "\\\\")
+                        .replace("%", "\\%")
+                        .replace("_", "\\_"))
+        like_pat = f"%{escaped}%"
         try:
             cur = con.cursor()
-            cur.execute("DELETE FROM entries WHERE LOWER(text) LIKE ?",
-                        (f"%{topic}%",))
+            cur.execute("DELETE FROM entries WHERE LOWER(text) LIKE ? ESCAPE '\\'",
+                        (like_pat,))
+            cur.execute("DELETE FROM commitments WHERE LOWER(text) LIKE ? ESCAPE '\\'",
+                        (like_pat,))
             con.commit()
         except Exception as e:
             print(f"remix-brain: memory forget db error ({e!r})")
 
     _mark()
     flush()
+    if forgotten > 0 and _active:
+        try:
+            from . import home
+            home.write_journal_days(s.get("lines") or [])
+            home.write_reflections(s.get("lines") or [])
+        except Exception as e:
+            print(f"remix-brain: memory forget home refresh failed ({e!r})")
     if forgotten > 0 and sync_enabled():
         _git("commit", "-q", "-m", f"forget {topic[:50]}")
     return forgotten

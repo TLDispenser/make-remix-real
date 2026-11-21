@@ -27,7 +27,7 @@ signal event_fired(event_name: String)
 signal performance_started(id: String)
 signal performance_done(id: String, ok: bool)
 
-const WS_URL := "ws://localhost:8765"
+const WS_URL := "ws://127.0.0.1:8765"
 const PROTOCOL := 2
 const RECONNECT_DELAY := 2.0
 const VOICE_BUS := "Voice"

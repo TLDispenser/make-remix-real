@@ -73,6 +73,12 @@ def _fmt(value) -> str:
     return str(value)
 
 
+def _env_val(value) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    return str(value)
+
+
 def _parse(kind, raw: str):
     raw = raw.strip()
     if kind == "bool":
@@ -159,10 +165,10 @@ def menu() -> None:
         except (ValueError, TypeError) as e:
             print(f"  ? {e}\n")
             continue
-        lines = set_key(load_lines(), key, _fmt(parsed))
+        lines = set_key(load_lines(), key, _env_val(parsed))
         write_lines(lines)
         setattr(config, attr, parsed)      # the running menu sees it now
-        print(f"  {key} = {_fmt(parsed)} written\n")
+        print(f"  {key} = {_env_val(parsed)} written\n")
 
 
 if __name__ == "__main__":

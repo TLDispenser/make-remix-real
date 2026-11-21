@@ -10,15 +10,30 @@
 #
 # Every function is deterministic for a given seed, keeps the input length
 # (except sigh, which makes a new clip), and never clips.
-import numpy as np
+from __future__ import annotations
+
+try:
+    import numpy as np
+except ImportError:  # optional DSP dependency
+    np = None  # type: ignore[assignment]
+
+HAS_NUMPY = np is not None
+
+
+def _require_np():
+    if np is None:
+        raise RuntimeError("numpy is required for vocal_fx DSP")
+    return np
 
 
 def to_float(pcm16: bytes) -> np.ndarray:
-    return np.frombuffer(pcm16, dtype="<i2").astype(np.float32) / 32768.0
+    n = _require_np()
+    return n.frombuffer(pcm16, dtype="<i2").astype(n.float32) / 32768.0
 
 
 def to_pcm16(x: np.ndarray) -> bytes:
-    return (np.clip(x, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+    n = _require_np()
+    return (n.clip(x, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
 
 
 def _lowpass(x: np.ndarray, width: int) -> np.ndarray:
@@ -90,7 +105,7 @@ def sigh(sr: int, seed: int = 0, seconds: float = 0.75, peak: float = 0.2) -> np
 def apply(pcm16: bytes, sr: int, tremble_amt: float = 0.0, muffle_amt: float = 0.0,
           crush_amt: float = 0.0, seed: int = 0) -> bytes:
     """PCM16 mono in -> PCM16 mono out, same length. All-zero amounts = unchanged."""
-    if tremble_amt <= 0 and muffle_amt <= 0 and crush_amt <= 0:
+    if not HAS_NUMPY or (tremble_amt <= 0 and muffle_amt <= 0 and crush_amt <= 0):
         return pcm16
     x = to_float(pcm16)
     if tremble_amt > 0:

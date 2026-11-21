@@ -601,7 +601,7 @@ func _process(delta: float) -> void:
 		var s: Array = _sc[key]
 		s[1] += ((s[2] - s[0]) * stiffness - s[1] * damping) * delta
 		s[0] += s[1] * delta
-	for key in ["fill", "outline", "mouth", "lines", "props"]:
+	for key in ["fill", "outline", "mouth", "lines", "props", "blush"]:
 		_sc[key][0] = clampf(_sc[key][0], 0.0, 1.0)
 
 	# PROP UNIT: the spinner turns; stroke joints teleport. A teleport is a

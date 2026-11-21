@@ -44,8 +44,9 @@ class SeamTests(unittest.TestCase):
 
     def setUp(self):
         self.saved = {k: getattr(config, k) for k in
-                      ("JEV_DECIDE_STANCE", "JEV_DECIDE_SPEAK",
+                      ("JEV_ENABLED", "JEV_DECIDE_STANCE", "JEV_DECIDE_SPEAK",
                        "JEV_DECIDE_FORM", "JEV_SPEAK_P")}
+        config.JEV_ENABLED = True
         self.saved_modes = dict(decisions._modes)
         decisions._modes.clear()
         self.saved_log = decisions._log
@@ -58,8 +59,9 @@ class SeamTests(unittest.TestCase):
     def tearDown(self):
         decisions._modes.clear()
         decisions._modes.update(self.saved_modes)
-        (config.JEV_DECIDE_STANCE, config.JEV_DECIDE_SPEAK,
+        (config.JEV_ENABLED, config.JEV_DECIDE_STANCE, config.JEV_DECIDE_SPEAK,
          config.JEV_DECIDE_FORM, config.JEV_SPEAK_P) = (
+            self.saved["JEV_ENABLED"],
             self.saved["JEV_DECIDE_STANCE"], self.saved["JEV_DECIDE_SPEAK"],
             self.saved["JEV_DECIDE_FORM"], self.saved["JEV_SPEAK_P"])
         config.DECISIONS_LOG = self.saved_flag

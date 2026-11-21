@@ -7,6 +7,8 @@
 #   * quitting with staged changes raises the guard; keys decide
 # Skipped cleanly when textual isn't installed (the plain menu works
 # without it — see settings.sh).
+from __future__ import annotations
+
 import os
 import sys
 import tempfile

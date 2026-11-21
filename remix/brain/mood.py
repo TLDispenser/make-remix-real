@@ -40,7 +40,7 @@ _state = {"mood": 0.0, "weather": 0.0, "at": 0.0, "loaded": False}
 #   moved it); weather is replaced wholesale on drift re-rolls and doesn't
 #   reset decay.
 _last_nudge = {}        # kind -> monotonic time (session-local rate limit)
-_last_vitals = 0.0
+_last_vitals = -float(_VITALS_GAP_S)
 
 
 def _path() -> Path:
@@ -180,4 +180,4 @@ def reset_for_test() -> None:
     global _last_vitals
     _state.update({"mood": 0.0, "weather": 0.0, "at": 0.0, "loaded": False})
     _last_nudge.clear()
-    _last_vitals = 0.0
+    _last_vitals = -float(_VITALS_GAP_S)

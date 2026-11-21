@@ -10,13 +10,34 @@
 import asyncio
 import os
 import shutil
+import signal
 import socket as _socket
 import subprocess
-import threading
 import time
-from pathlib import Path
 
-from . import audio, awareness, bits, config, decisions, faces, home, jev, listening, mechanic, memory, mood, proactive, rules, speech, stt, tts, vitals, ws_server
+from . import (
+    audio,
+    awareness,
+    backfill,
+    bits,
+    config,
+    decisions,
+    faces,
+    home,
+    jev,
+    listening,
+    mechanic,
+    memory,
+    mood,
+    proactive,
+    rules,
+    shell_hook,
+    speech,
+    stt,
+    tts,
+    vitals,
+    ws_server,
+)
 from .faces import NEUTRAL, Face
 
 _rule: rules.RuleBrain | None = None
@@ -99,9 +120,10 @@ async def _on_audio_edge(quiet: bool) -> None:
                       used="local",
                       local="reflex: stop + caption + flat look")
         print("remix-brain: muted mid-line — voice stopped, line captioned")
-        if decisions.mode("mute_react") == "live":
-            await _dry_beat("they just muted the sound while you were "
-                            "mid-sentence and the voice got cut off")
+        if decisions.mode("mute_react") != "off":
+            if now - _mute_last_react_at >= config.MUTE_REACT_COOLDOWN_S:
+                await _dry_beat("they just muted the sound while you were "
+                                "mid-sentence and the voice got cut off")
     elif not quiet and not speaking and _mute_pending:
         _mute_pending = False        # one dry beat per mute episode
         if now - _mute_last_react_at < config.MUTE_REACT_COOLDOWN_S:
@@ -109,7 +131,7 @@ async def _on_audio_edge(quiet: bool) -> None:
                           used="local", local="cooldown",
                           extra="unmute beat skipped")
             return
-        if decisions.mode("mute_react") == "live":
+        if decisions.mode("mute_react") != "off":
             await _dry_beat("the sound just came back after being muted "
                             "mid-sentence")
 
@@ -195,7 +217,8 @@ async def _maybe_escalate(source: str, text: str = "") -> None:
             print(f"remix-brain: escalate decision failed ({e!r})")
         decisions.log("escalate", mode,
                       jev=f"{jev_p:.2f}" if jev_p is not None else None,
-                      used="local",
+                      used=("jev" if (mode == "live" and jev_p is not None)
+                            else "local"),
                       local="rung 1" if local_yes else "stay put",
                       extra=f"[{source}] oos={oos}")
     ship = ((mode == "live" and jev_p is not None
@@ -256,146 +279,23 @@ async def memory_loop() -> None:
                 print(f"remix-brain: memory sync failed ({e!r})")
 
 
-async def _memory_backfill() -> None:
-    """Phase 3 boot backfill (plan 2.1.4 / 2.1.7), one-shot: day summaries
-    for past days that lack one (cap 2 per boot), and a reflection when the
-    last session ended too abruptly to write one. $0 pool; any failure just
-    skips the note — the journal never depends on the words existing."""
-    await asyncio.sleep(20.0)          # let boot settle (greeting, senses)
-    if not memory.has_journal():
-        return
-    try:
-        rows = memory.lines(limit=400)
-        if not rows:
-            return
-        # --- day summaries: group by local day; each day BEFORE today that
-        # has rows but no summary ABOUT it gets one paragraph, cap 2 per
-        # boot. A summary row carries `about` = the day it describes (its
-        # own `at` is the moment it was WRITTEN, which is useless here).
-        have = {r.get("about") for r in rows
-                if r.get("kind") == "summary" and r.get("about")}
-        today = time.strftime("%Y-%m-%d")
-        # Phase 5: days that already have a summary ROW but no diary FILE
-        # (written before home.py existed) get their file from the row's
-        # words — $0, no new generation.
-        for r in rows:
-            if r.get("kind") != "summary" or not r.get("about"):
-                continue
-            day_file = Path(str(config.SANDBOX_DIR)) / "diary" / f"{r['about']}.md"
-            if not day_file.exists():
-                home.save_day_entry(r["about"], str(r.get("text") or ""))
-        by_day: dict = {}
-        for r in rows:
-            day = str(r.get("at") or "")[:10]
-            if day and day < today:
-                by_day.setdefault(day, []).append(r)
-        done = 0
-        for day in sorted(by_day):
-            if done >= 2:
-                break
-            if day in have:
-                continue
-            text = await speech.generate_day_summary(
-                list(reversed(by_day[day])),        # oldest first
-                vitals=_latest_snapshot, aware=awareness.current(),
-                previous=home.last_diary(day))
-            if text:
-                memory.record("summary", text, about=day)
-                home.save_day_entry(day, text)   # Phase 5: her readable diary
-                done += 1
-                print(f"remix-brain: day summary written for {day}")
-        # --- missed reflection: rows exist after the newest reflection row
-        # (the previous shutdown was too abrupt to write one). lines() is
-        # newest-first, so everything ABOVE the newest reflection is newer.
-        last_refl = next((i for i, r in enumerate(rows)
-                          if r.get("kind") == "reflection"), None)
-        newer = rows[:last_refl] if last_refl is not None else rows
-        if newer:
-            text = await speech.generate_reflection(
-                vitals=_latest_snapshot, aware=awareness.current())
-            if text:
-                memory.record("reflection", text)
-                home.write_reflections(rows)     # Phase 5: reflections.md
-                print("remix-brain: missed reflection written at boot")
-        # --- one-shot diary voice migration (2026-11-15): pages written by
-        # the old DAY-SUMMARY prompt get re-authored in the new diary voice,
-        # oldest first, each page seeing the one before it. The mirror's git
-        # history keeps every old page. Runs LAST: fresh summary rows must
-        # not sit in the reflection's row window above.
-        await _migrate_diary_voice()
-    except Exception as e:
-        print(f"remix-brain: memory backfill failed ({e!r})")
-
-
-# The moment the diary standard settled (2026-11-15, third pass): pass 1
-# was all mood and no cargo ("they still suck — they're meant to be long
-# term memory"), pass 2 fixed memory but recited the day clock-by-clock.
-# The addendum now wants the FEW real things up front, timestamps only
-# when the time matters, room to breathe. Everything before this instant
-# gets re-authored once more under the settled standard. A full
-# timestamp, not a date: boot backfill wrote old-voice pages at 00:12 the
-# SAME day, and a date-only cutoff would have counted those as migrated.
-DIARY_MIGRATE_BEFORE = "2026-11-15 11:00"
-
-
-def _spread_rows(rows: list, cap: int) -> list:
-    """Even sample of a day's rows (input oldest-first): first and last
-    always in, the middle evenly spaced. A 285-row day still fits the
-    prompt without losing the shape of the day."""
-    if len(rows) <= cap:
-        return rows
-    step = (len(rows) - 1) / (cap - 1)
-    return [rows[round(k * step)] for k in range(cap)]
-
-
-def _diary_migrate_marker() -> Path:
-    return Path(str(config.SANDBOX_DIR)) / "diary" / ".voice-migrated"
+DIARY_MIGRATE_BEFORE = backfill.DIARY_MIGRATE_BEFORE
+_spread_rows = backfill.spread_rows
+_diary_migrate_marker = backfill.diary_migrate_marker
 
 
 async def _migrate_diary_voice() -> None:
-    """The migration itself: once, pages before DIARY_MIGRATE_BEFORE that
-    she already has a file for, grounded in that day's rows. Any LLM
-    failure just skips the page — the marker is written only when every
-    eligible page is re-authored, so the next boot resumes."""
-    if _diary_migrate_marker().exists():
-        return
-    rows = memory.lines(limit=2000)            # newest-first; whole journal
-    by_day: dict = {}
-    for r in rows:
-        at = str(r.get("at") or "")
-        if at and at < DIARY_MIGRATE_BEFORE:
-            by_day.setdefault(at[:10], []).append(r)
-    base = Path(str(config.SANDBOX_DIR)) / "diary"
-    # A page counts as re-authored when a summary row ABOUT that day was
-    # WRITTEN at/after the rework instant — so a boot interrupted by the
-    # pool resumes where it stopped instead of redoing finished pages.
-    reauthored = {r.get("about") for r in rows
-                  if r.get("kind") == "summary" and r.get("about")
-                  and str(r.get("at") or "") >= DIARY_MIGRATE_BEFORE}
-    days = sorted(d for d in by_day
-                  if d not in reauthored and (base / f"{d}.md").exists())
-    for day in days:
-        try:
-            text = await asyncio.wait_for(
-                speech.generate_day_summary(
-                    _spread_rows(list(reversed(by_day[day])), 40),
-                    vitals=_latest_snapshot,
-                    aware=awareness.current(),
-                    previous=home.last_diary(day)),
-                timeout=30.0)
-        except Exception:
-            text = None
-        if not text:
-            print(f"remix-brain: diary re-author skipped for {day} (pool down?)")
-            return                              # no marker; resume next boot
-        memory.record("summary", text, about=day)
-        home.save_day_entry(day, text)
-        print(f"remix-brain: diary page re-authored for {day}")
-    try:
-        _diary_migrate_marker().write_text(
-            f"diary voice migration done {time.strftime('%Y-%m-%d')}\n")
-    except OSError:
-        pass                                    # it would just run once more
+    await backfill.migrate_diary_voice(
+        before=DIARY_MIGRATE_BEFORE,
+        get_vitals=lambda: _latest_snapshot,
+    )
+
+
+async def _memory_backfill() -> None:
+    await backfill.run_backfill(
+        before=DIARY_MIGRATE_BEFORE,
+        get_vitals=lambda: _latest_snapshot,
+    )
 
 
 async def body_loop(rule: rules.RuleBrain) -> None:
@@ -814,7 +714,7 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
                  if _jev else asyncio.sleep(0, None))
     plan = None
     if first_spoken:
-        # sentence one is already out: the act plan faces only what remains
+        # sentence one may already be spoken: the act plan faces what remains
         plan = await plan_coro
         rest_text = (reply[len(first_spoken):].strip()
                      if reply.startswith(first_spoken) else reply)
@@ -851,6 +751,17 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
                     _play_silent(face_list, rest_beats, looks))
                 _rule.pause_for_speech(sum(max(0.8, len(b) * 0.06)
                                            for b in rest_beats))
+        else:
+            _seq += 1
+            face_list = (list(plan.faces)[:len(beat_list)]
+                         if plan else _local_arc(face, beat_list))
+            await ws_server.send({"type": "say", "text": reply, "final": True})
+            if not state["spoken_first"]:
+                looks = _beat_looks(beat_list, lead=aimed)
+                _silent_task = asyncio.create_task(
+                    _play_silent(face_list, beat_list, looks))
+                _rule.pause_for_speech(sum(max(0.8, len(b) * 0.06)
+                                           for b in beat_list))
         if _jev and not plan:
             for f in face_list:
                 _jev.note_face(f)
@@ -868,46 +779,9 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
         if _jev and not plan:
             for f in face_list:
                 _jev.note_face(f)
-        _seq += 1
-        pid = f"t{_seq}"
-        looks = _beat_looks(beat_list, lead=aimed)
-        await ws_server.send({"type": "say", "text": reply, "final": True})
-        if spoken:
-            cues = [f.cue(spoken.starts[i], looks[i])
-                    for i, f in enumerate(face_list)]
-            _rule.pause_for_speech(spoken.total + 1.0)
-            await ws_server.send({"type": "perform", "id": pid, "audio": spoken.path,
-                                  "cues": cues, "then": face_list[-1].spec()})
-            _spoken_now.update(pid=pid, text=reply)   # the mute reflex watches this
-        else:
-            _silent_task = asyncio.create_task(_play_silent(face_list, beat_list, looks))
-            _rule.pause_for_speech(sum(max(0.8, len(b) * 0.06) for b in beat_list))
-    if _jev:
-        decisions.log("act", "-", jev="faces",
-                      used="jev" if plan else "local",
-                      local="_local_arc",
-                      extra=f"{[str(f) for f in face_list]}"
-                            + (f" unseen={plan.unseen:.2f}"
-                               if plan is not None
-                               and plan.unseen is not None else ""))
-    # Grounding judge (shadow): log the disagreement space, never act on it.
-    # The local word list still decided everything about this reply.
-    if judge_on and plan is not None and plan.unseen is not None:
-        local_problems = speech.grounding.check(
-            reply, text, "", _latest_snapshot, awareness.current())
-        verdict = ("clean" if not local_problems
-                   else "flagged: " + "; ".join(local_problems[:3]))
-        agree = (plan.unseen >= config.JEV_SPEAK_P) == bool(local_problems)
-        decisions.log("judge_unseen", decisions.mode("judge_unseen"),
-                      jev=f"{plan.unseen:.2f}", used="local", local=verdict,
-                      extra="agree" if agree else "DISAGREE")
 
-    # Dodge judge (plan 2.4.3): shadow logs the score, live acts on it — ONE
-    # plain-prose retry when she dodged a question/command, and the second
-    # try ships either way (her words, her responsibility). Nothing has been
-    # sent yet, so re-voicing the corrected line is safe. When sentence one
-    # already streamed out, a retry would contradict her own mouth: logged,
-    # not redone.
+    # Dodge judge (plan 2.4.3): runs BEFORE shipping say/perform in one-shot
+    # mode so a live retry actually replaces the delivered line and audio.
     if (dodge_on and plan is not None and plan.dodged is not None
             and intent in ("question", "command")):
         dmode = decisions.mode("dodge_judge")
@@ -927,17 +801,59 @@ async def _on_user_text(m: dict, echo: bool = True) -> None:
                 if second:
                     reply = second
                     beat_list = speech.beats(reply)
-                    spoken = await tts.synthesize(beat_list, f"p{_seq}")
-                    face_list = list(plan.faces) if plan else _local_arc(face, beat_list)
+                    face_list = _local_arc(face, beat_list)
+                    spoken = await tts.synthesize(
+                        beat_list, f"p{_seq + 1}",
+                        faces=(face_list if config.TTS_EXPRESSIVE else None),
+                        strain=tts.strain_from(_latest_snapshot))
+                    if _jev:
+                        for f in face_list:
+                            _jev.note_face(f)
         else:
             decisions.log("dodge_judge", dmode, jev=f"{plan.dodged:.2f}",
                           used="jev", local="none", extra=f"intent={intent}")
 
-    if config.SUBTITLES == "always" or (config.SUBTITLES == "auto" and not spoken):
+    if not first_spoken:
+        _seq += 1
+        pid = f"t{_seq}"
+        looks = _beat_looks(beat_list, lead=aimed)
+        await ws_server.send({"type": "say", "text": reply, "final": True})
+        if spoken:
+            cues = [f.cue(spoken.starts[i], looks[i])
+                    for i, f in enumerate(face_list)]
+            _rule.pause_for_speech(spoken.total + 1.0)
+            await ws_server.send({"type": "perform", "id": pid, "audio": spoken.path,
+                                  "cues": cues, "then": face_list[-1].spec()})
+            _spoken_now.update(pid=pid, text=reply)   # the mute reflex watches this
+        else:
+            _silent_task = asyncio.create_task(_play_silent(face_list, beat_list, looks))
+            _rule.pause_for_speech(sum(max(0.8, len(b) * 0.06) for b in beat_list))
+
+    if _jev:
+        decisions.log("act", "-", jev="faces",
+                      used="jev" if plan else "local",
+                      local="_local_arc",
+                      extra=f"{[str(f) for f in face_list]}"
+                            + (f" unseen={plan.unseen:.2f}"
+                               if plan is not None
+                               and plan.unseen is not None else ""))
+    # Grounding judge (shadow): log the disagreement space, never act on it.
+    if judge_on and plan is not None and plan.unseen is not None:
+        local_problems = speech.grounding.check(
+            reply, text, "", _latest_snapshot, awareness.current())
+        verdict = ("clean" if not local_problems
+                   else "flagged: " + "; ".join(local_problems[:3]))
+        agree = (plan.unseen >= config.JEV_SPEAK_P) == bool(local_problems)
+        decisions.log("judge_unseen", decisions.mode("judge_unseen"),
+                      jev=f"{plan.unseen:.2f}", used="local", local=verdict,
+                      extra="agree" if agree else "DISAGREE")
+
+    any_spoken = bool(spoken or state["spoken_first"])
+    if config.SUBTITLES == "always" or (config.SUBTITLES == "auto" and not any_spoken):
         secs = min(14.0, max(3.5, len(reply) * 0.045))
         await ws_server.send({"type": "notice", "text": reply, "seconds": secs})
     print(f"remix-brain: reply ready ({len(beat_list)} beats, {len(reply)} chars, "
-          f"voice={'espeak' if spoken else 'none'}, "
+          f"voice={'espeak' if any_spoken else 'none'}, "
           f"faces={[str(f) for f in face_list]})"
           + (f" [first {t_first - t_started:.1f}s, full "
              f"{time.monotonic() - t_started:.1f}s]" if t_first else
@@ -1277,7 +1193,8 @@ async def proactive_loop() -> None:
             continue
         # The room may have changed while the words were being written.
         now = time.monotonic()
-        if (_ptt and _ptt.listening) or now < _rule.speak_gate_until \
+        if (_ptt and _ptt.listening) or _listener.active \
+                or now < _rule.speak_gate_until \
                 or _last_exchange_at > started \
                 or awareness.current().get("fullscreen"):
             print(f"remix-brain: chatter [{plan.get('trigger')}] dropped — "
@@ -1305,55 +1222,9 @@ async def proactive_loop() -> None:
 
 
 # ---------------------------------------------------- shell hook (Phase 6)
-# zsh preexec/precmd report long jobs over a unix socket; each becomes a
-# plain-fact edge the next proactive tick may turn into a line. The socket
-# is opt-in (REMIX_SHELL_HOOK=1): a command line is user content and her
-# reaction about it goes to the cloud LLM.
-_shell_edges: list = []          # completed shell jobs awaiting a tick
-_shell_lock = threading.Lock()
-
-
-def _drain_shell_edges() -> list:
-    with _shell_lock:
-        out, _shell_edges[:] = _shell_edges[:], []
-        return out
-
-
-def _shell_edge(line: str) -> dict | None:
-    """Parse one hook line (`cmd\\trc\\tduration`) into a plain-fact edge.
-    Pure so tests can hit it directly. Short commands are life, not news;
-    the command text is redacted and capped BEFORE it can reach the cloud
-    LLM (emails/URLs/paths/tokens die here)."""
-    cmd, _, rest = (line or "").partition("\t")
-    rc_s, _, dur_s = rest.partition("\t")
-    try:
-        rc = int((rc_s or "0").strip())
-        dur = float((dur_s or "0").strip())
-    except ValueError:
-        return None
-    if dur < config.SHELL_MIN_S:
-        return None
-    cmd = awareness.redact_text(cmd)[:config.SHELL_MAX_CMD].strip()
-    if not cmd:
-        cmd = "a command whose name died in the scrub"
-    return {"trigger": "shell_job",
-            "fact": (f"they just ran `{cmd}` in the shell; it ran "
-                     f"{max(1, round(dur))}s and "
-                     + ("FAILED" if rc != 0 else "finished fine"))}
-
-
-async def _handle_shell_conn(reader: asyncio.StreamReader,
-                             writer: asyncio.StreamWriter) -> None:
-    try:
-        raw = await asyncio.wait_for(reader.readline(), timeout=5.0)
-        edge = _shell_edge(raw.decode("utf-8", "replace").strip())
-    except Exception:
-        edge = None
-    finally:
-        writer.close()
-    if edge:
-        with _shell_lock:
-            _shell_edges.append(edge)
+_drain_shell_edges = shell_hook.drain_edges
+_shell_edge = shell_hook.parse_edge
+_handle_shell_conn = shell_hook.handle_conn
 
 
 # ------------------------------------------------- self-improvement (2026)
@@ -1459,26 +1330,7 @@ async def mechanic_loop() -> None:
             print(f"remix-brain: mechanic tick failed ({e!r})")
 
 
-async def shell_loop() -> None:
-    """Phase 6 (plan Part 4 'shell hook'): listen on a 0600 unix socket in
-    the runtime dir for zsh hook reports. Same-user only; opt-in."""
-    if not config.SHELL_HOOK:
-        print("remix-brain: shell hook off (REMIX_SHELL_HOOK=1 to enable)")
-        return
-    sock = Path(str(config.SHELL_SOCK))
-    try:
-        sock.parent.mkdir(parents=True, exist_ok=True)
-        if sock.exists():
-            sock.unlink()              # stale socket from a dead session
-        server = await asyncio.start_unix_server(
-            _handle_shell_conn, path=str(sock))
-        os.chmod(sock, 0o600)          # this user, and nobody else
-    except OSError as e:
-        print(f"remix-brain: shell socket failed ({e!r})")
-        return
-    print(f"remix-brain: shell hook listening on {sock}")
-    async with server:
-        await server.serve_forever()
+shell_loop = shell_hook.serve_forever
 
 
 async def inbox_loop() -> None:
@@ -1689,8 +1541,8 @@ async def _ptt_start() -> None:
                               "// can't open the mic. install pipewire-pulse (parec) //"})
 
 
-async def _ptt_stop() -> None:
-    if _ptt is None or not _ptt.listening:
+async def _ptt_stop(timed_out: bool = False) -> None:
+    if _ptt is None or (not _ptt.listening and not timed_out):
         return
     await ws_server.send({"type": "listening", "state": "stop"})
     await ws_server.send({"type": "mood", "mood": "thinking"})
@@ -1716,7 +1568,8 @@ async def _ptt_stop() -> None:
     if heard.reason in notices:
         await ws_server.send({"type": "notice", "text": notices[heard.reason],
                               "seconds": 2.5})
-    await ws_server.send(_rule.baseline_message())
+    if _rule:
+        await ws_server.send(_rule.baseline_message())
 
 
 def _ptt_command(action: str) -> None:
@@ -1731,8 +1584,16 @@ def _ptt_command(action: str) -> None:
 
 def _start_ptt_server() -> None:
     """Datagram listener: the global hotkey's one-shot client says start/stop."""
+    import threading
+
     def _thread() -> None:
         sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_DGRAM)
+        parent = os.path.dirname(config.PTT_SOCK)
+        if parent:
+            try:
+                os.makedirs(parent, mode=0o700, exist_ok=True)
+            except OSError:
+                pass
         try:
             os.unlink(config.PTT_SOCK)
         except FileNotFoundError:
@@ -1743,6 +1604,7 @@ def _start_ptt_server() -> None:
         except OSError as e:
             print(f"remix-brain: ptt socket unavailable ({e!r}) — hotkey voice "
                   f"input off (the Godot F2 key still works)")
+            sock.close()
             return
         print(f"remix-brain: ptt listening on {config.PTT_SOCK}")
         while True:
@@ -1832,7 +1694,7 @@ async def main() -> None:
                                     "// ears offline: whisper model failed to load //"})))
         _ptt = stt.PushToTalk(
             on_status=_ears,
-            on_timeout=lambda: asyncio.create_task(_ptt_stop()),
+            on_timeout=lambda: asyncio.create_task(_ptt_stop(timed_out=True)),
             on_partial=((lambda t: _listen_feed(t, "voice"))
                         if config.LISTEN else None))
         _start_ptt_server()
@@ -1868,9 +1730,15 @@ async def main() -> None:
               f"({len(config.BIT_COOLDOWN_FLOORS_S)} wall-cooldowns)")
     print(f"remix-brain: decision modes: {decisions.summary()}"
           f"{' (log off)' if not config.DECISIONS_LOG else ''}")
+    serve_task = asyncio.create_task(ws_server.serve())
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            _loop.add_signal_handler(sig, serve_task.cancel)
+        except (NotImplementedError, RuntimeError):
+            pass
     try:
-        await ws_server.serve()  # runs forever
-    except KeyboardInterrupt:
+        await serve_task
+    except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     except OSError as e:
         if getattr(e, "errno", None) == 98:  # EADDRINUSE
@@ -1879,6 +1747,11 @@ async def main() -> None:
             return
         print(f"remix-brain: FATAL — {e!r}")
     finally:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                _loop.remove_signal_handler(sig)
+            except (NotImplementedError, RuntimeError):
+                pass
         body_task.cancel()
         _cancel(memory_task)
         _cancel(_gate_task)
@@ -1893,6 +1766,12 @@ async def main() -> None:
         _cancel(_mechanic_task)
         if _ptt:
             await _ptt.cancel()   # never leave the mic open on the way out
+            try:
+                os.unlink(config.PTT_SOCK)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
         # Parting note (plan 2.1.4): one reflection over this session, if
         # there was one. A $0 call; failure just skips the note.
         if speech.had_exchanges():
@@ -1920,28 +1799,7 @@ async def main() -> None:
 
 
 async def _write_diary_entry() -> None:
-    """Today's diary entry (plan 2.2 #4), once per day unless new rows came
-    after the last one. Skipped when nothing was said today."""
-    if not memory.has_journal():
-        return
-    today = time.strftime("%Y-%m-%d")
-    rows = memory.lines(limit=400)                 # newest-first
-    last = next((i for i, r in enumerate(rows) if r.get("kind") == "summary"
-                 and r.get("about") == today), None)
-    newer_today = [r for r in (rows[:last] if last is not None else rows)
-                   if str(r.get("at") or "").startswith(today)]
-    if not newer_today:
-        return                                     # nothing new to write up
-    text = await asyncio.wait_for(
-        speech.generate_day_summary(list(reversed(newer_today)),
-                                    vitals=_latest_snapshot,
-                                    aware=awareness.current(),
-                                    previous=home.last_diary(today)),
-        timeout=30.0)
-    if text:
-        memory.record("summary", text, about=today)
-        home.save_day_entry(today, text)
-        print("remix-brain: diary entry written")
+    await backfill.write_diary_entry(vitals=_latest_snapshot)
 
 
 if __name__ == "__main__":

@@ -3,21 +3,22 @@ remix/.venv/
 remix/.env
 remix/brain/memory.json
 remix/brain/sandbox/
+remix/brain/mechanic_state.json
+remix/brain/mechanic-last.log
 remix/brain/brain.log
-remix/brain/brain.log.1
+remix/brain/brain.log.*
 remix/brain/decisions.log
 remix/brain/decisions.log.*
 remix/.run/
 remix/godot/godot.log
-# stray empty file created by a mis-quoted shell redirect; nobody's content
--
-hypr-config-edit
+remix/godot/.godot/
+.godot/
 __pycache__/
 *.pyc
-
-# Godot editor state
-.godot/
+*.pyo
 *.tmp
+*.orig
+*.rej
 
 # cooperation eval reports (measurement artifacts, regenerate anytime)
 remix/brain/eval_report/

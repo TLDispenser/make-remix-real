@@ -18,7 +18,7 @@
 #   * PROACTIVE enabled (REMIX_PROACTIVE=1, or /quiet toggles at runtime)
 #   * she is not mid-speech, the mic is closed, and the last exchange was
 #     not just now (never interrupt the human or herself)
-#   * not quiet hours (REMIX_QUIET_HOURS="1-8" = nothing between 01:00-08:59)
+#   * not quiet hours (REMIX_QUIET_HOURS="1-8" = nothing between 01:00-07:59)
 #   * NOT fullscreen — DND while fullscreen is spec (she doesn't interrupt
 #     a movie; the pose/notice system still shows her mood silently)
 #   * MIN_GAP since her last unprompted line, per-trigger cooldowns, edges
@@ -499,6 +499,7 @@ class Proactive:
         """/poke: the urge to say something right now, ignoring cooldowns.
         The words still come from the generation step, not from a pool."""
         now = time.monotonic() if now is None else now
+        self._daily_cap(now)
         self.last_line_at = now
         self.day_count += 1
         stance = self.rng.choice(STANCE_CHOICES["poke"])
@@ -528,7 +529,12 @@ class Proactive:
         return self.day_count < config.PROACTIVE_MAX_PER_DAY
 
     def _due(self, trigger: str, now: float) -> bool:
-        base = TRIGGER_COOLDOWN_S.get(trigger, 3600.0)
+        dynamic = {
+            "ambient": config.AMBIENT_COOLDOWN_S,
+            "on_my_mind": config.ON_MIND_COOLDOWN_S,
+            "shell_job": config.SHELL_COOLDOWN_S,
+        }
+        base = dynamic.get(trigger, TRIGGER_COOLDOWN_S.get(trigger, 3600.0))
         j = config.PROACTIVE_JITTER
         if base >= 300.0 and j > 0.0:
             # Jitter the cooldown itself: her unprompted lines must not land

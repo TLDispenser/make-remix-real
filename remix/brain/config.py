@@ -24,7 +24,22 @@ def _load_dotenv() -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        key, value = key.strip(), value.strip()
+        key = key.strip()
+        if key.startswith("export "):
+            key = key[7:].strip()
+        value = value.strip()
+        if value and value[0] in ('"', "'"):
+            q = value[0]
+            end = value.find(q, 1)
+            if end != -1:
+                tail = value[end + 1:].strip()
+                if not tail or tail.startswith("#"):
+                    value = value[1:end]
+        elif "#" in value:
+            for idx, ch in enumerate(value):
+                if ch == "#" and idx > 0 and value[idx - 1].isspace():
+                    value = value[:idx].rstrip()
+                    break
         if not key:
             continue
         if key in seen:
@@ -202,7 +217,7 @@ NOTIFY_TIMEOUT_S = float(_env("NOTIFY_TIMEOUT_S", "8000"))   # notify-send -t, m
 MUTE_REACT_COOLDOWN_S = float(_env("MUTE_REACT_COOLDOWN_S", "900"))
 SESSION_LONG_S = float(_env("SESSION_LONG_S", "10800.0")) # 3 h -> stretch nudge
 APP_STUCK_S = float(_env("APP_STUCK_S", "5400.0"))        # 90 min same app
-QUIET_HOURS = _env("QUIET_HOURS", "")                     # "1-8" = no chatter 01:00-08:59
+QUIET_HOURS = _env("QUIET_HOURS", "")                     # "1-8" = no chatter 01:00-07:59
 # Awaken (memory.py): if she was off at least this long, the boot greeting
 # becomes "I just woke up / we were apart for X" instead of a plain greeting.
 AWAKEN_MIN_S = float(_env("AWAKEN_MIN_S", "120.0"))
@@ -322,7 +337,7 @@ PTT_MODEL = _env("PTT_MODEL", "tiny.en")       # or a local dir; int8 on CPU
 PTT_LANGUAGE = _env("PTT_LANGUAGE") or None    # None = autodetect ("en" for *.en)
 PTT_SOCK = _env(
     "PTT_SOCK",
-    (os.environ.get("XDG_RUNTIME_DIR", "/tmp") + "/remix-ptt.sock"))
+    ((os.environ.get("XDG_RUNTIME_DIR") or "/tmp") + "/remix-ptt.sock"))
 PTT_MIN_PRESS_S = float(_env("PTT_MIN_PRESS_S", "0.3"))
 # Hard cap: the mic is CLOSED by the brain after this long even if the key-up
 # never arrives (lost release event), so the mic can never stay open.
@@ -355,7 +370,7 @@ TTS_DSP = _env("TTS_DSP", "1") == "1"
 TTS_STRAIN = _env("TTS_STRAIN", "1") == "1"
 TTS_DIR = _env(
     "TTS_DIR",
-    (os.environ.get("XDG_RUNTIME_DIR", "/tmp") + "/remix-voice"))
+    ((os.environ.get("XDG_RUNTIME_DIR") or "/tmp") + "/remix-voice"))
 # Captions on her face (the notice line): auto = only when she has no voice.
 SUBTITLES = (_env("SUBTITLES", "auto") or "auto").lower()   # auto|always|never
 # Whether her CHATTER (unprompted lines) gets a voice. auto = polite: she

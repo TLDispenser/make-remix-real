@@ -13,11 +13,11 @@
 # Variety: the answer is SAMPLED from Jev's own probabilities with a penalty on
 # whatever the face showed recently, instead of always taking the top pick.
 #
-# Budget policy (see RESEARCH_NOTES.md): silent life NEVER calls Jev; cooldown
+# Budget policy (see docs/RESEARCH_NOTES.md): silent life NEVER calls Jev; cooldown
 # between exchanges (react calls); hard hourly cap over BOTH call kinds (over cap
 # -> local fallback, silently); same-state cache = zero credits; every failure
 # path returns None and the caller does its own $0 thing.
-# Request/response shapes: https://api.typesafe.ai/openapi.json (RESEARCH_NOTES).
+# Request/response shapes: https://api.typesafe.ai/openapi.json (docs/RESEARCH_NOTES.md).
 import asyncio
 import hashlib
 import json

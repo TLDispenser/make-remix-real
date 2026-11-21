@@ -13,13 +13,32 @@ spam (<= 1 change per second on average). Exit 0 on pass, 1 on fail.
 """
 import asyncio
 import json
+import os
 import sys
 import time
 
 from websockets.asyncio.client import connect
 
-URL = "ws://127.0.0.1:8765"
-KNOWN = {"default", "anger", "smirk", "pout", "spooked", "tired", "tsun"}
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))))
+
+try:
+    from brain import faces  # noqa: E402
+    KNOWN = set(faces.POSES)
+    EYES = list(faces.EYES_TEXT)
+    MOUTHS = list(faces.MOUTHS_TEXT)
+except ImportError:
+    KNOWN = {
+        "default", "anger", "smirk", "pout", "spooked", "tired", "tsun",
+        "bashful", "thunk", "scribble", "strange", "smug",
+    }
+    EYES = sorted(KNOWN)
+    MOUTHS = ["default", "anger", "smirk", "pout", "trauma", "tsun", "none",
+              "bashful", "strange", "smug"]
+
+_HOST = os.environ.get("REMIX_WS_HOST") or os.environ.get("CORE_WS_HOST") or "127.0.0.1"
+_PORT = os.environ.get("REMIX_WS_PORT") or os.environ.get("CORE_WS_PORT") or "8765"
+URL = f"ws://{_HOST}:{_PORT}"
 
 
 async def main() -> int:
@@ -31,7 +50,8 @@ async def main() -> int:
     async with connect(URL) as ws:
         await ws.send(json.dumps({
             "v": 2, "type": "ready",
-            "poses": sorted(KNOWN), "moods": []}))
+            "poses": sorted(KNOWN), "eyes": EYES, "mouths": MOUTHS,
+            "moods": []}))
         while time.monotonic() < deadline:
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=1.0)

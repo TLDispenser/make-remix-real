@@ -365,9 +365,10 @@ class MuteReflexTests(unittest.TestCase):
 class EscalationTests(unittest.TestCase):
     def setUp(self):
         self.saved = {k: getattr(config, k) for k in
-                      ("DECISIONS_LOG", "OOS_URGENT", "ESCALATE_NOTIFY",
-                       "ESCALATE_DISPATCH", "URGENT_ENABLED")}
+                      ("DECISIONS_LOG", "JEV_ENABLED", "OOS_URGENT",
+                       "ESCALATE_NOTIFY", "ESCALATE_DISPATCH", "URGENT_ENABLED")}
         config.DECISIONS_LOG = False
+        config.JEV_ENABLED = True
         self.saved_log = decisions._log
         decisions._log = None
         self.saved_modes = dict(decisions._modes)

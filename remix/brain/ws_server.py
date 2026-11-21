@@ -3,15 +3,24 @@
 # and `perform_done`. Brain broadcasts pose/perform/notice/... messages.
 # API shapes verified 2026-11-05 (websockets 17.x): handler takes ONE
 # connection arg, serve() from websockets.asyncio.server.
+from __future__ import annotations
+
 import asyncio
 import json
-from typing import Callable, Optional, Set
+from typing import Any, Callable, Set
 
-from websockets.asyncio.server import (
-    ServerConnection,
-    broadcast as _broadcast,
-    serve as _ws_serve,
-)
+try:
+    from websockets.asyncio.server import (
+        ServerConnection,
+        broadcast as _broadcast,
+        serve as _ws_serve,
+    )
+    HAS_WEBSOCKETS = True
+except ImportError:
+    ServerConnection = Any  # type: ignore[misc,assignment]
+    _broadcast = None
+    _ws_serve = None
+    HAS_WEBSOCKETS = False
 
 from . import config
 
@@ -92,6 +101,8 @@ async def serve() -> None:
     # max_size: 1 MiB per inbound frame is ~100x our largest legal message
     # (a push-to-talk partial transcript); without it a hostile/buggy peer
     # could balloon the brain's memory with one frame.
+    if _ws_serve is None:
+        raise RuntimeError("websockets>=14 is required to run ws_server.serve()")
     async with _ws_serve(_handler, config.WS_HOST, config.WS_PORT,
                      origins=[None], max_size=1_048_576,
                      ping_interval=20):

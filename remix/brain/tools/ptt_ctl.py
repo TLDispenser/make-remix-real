@@ -4,11 +4,15 @@
 #   keydown -> `ptt_ctl.py start`   keyup -> `ptt_ctl.py stop`
 # Sends a tiny UDP datagram to the running brain's control socket. No
 # daemon here by design: 0.02s spawn, mic is opened by the brain only.
+import os
 import socket
 import sys
 
-SOCK = __import__("os").environ.get(
-    "XDG_RUNTIME_DIR", "/tmp") + "/remix-ptt.sock"
+SOCK = (
+    os.environ.get("REMIX_PTT_SOCK")
+    or os.environ.get("CORE_PTT_SOCK")
+    or ((os.environ.get("XDG_RUNTIME_DIR") or "/tmp") + "/remix-ptt.sock")
+)
 
 
 def main() -> int:

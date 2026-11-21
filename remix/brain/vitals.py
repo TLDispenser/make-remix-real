@@ -186,7 +186,7 @@ def _body_snapshot() -> dict | None:
 
 
 async def _real_snapshot() -> dict:
-    import psutil  # pinned 7.x: see RESEARCH_NOTES.md (8.0 will break APIs)
+    import psutil  # pinned 7.x: see docs/RESEARCH_NOTES.md (8.0 will break APIs)
 
     temp = None
     try:

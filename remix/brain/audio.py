@@ -140,13 +140,18 @@ async def event_loop() -> None:
             raise
         except Exception as e:
             print(f"remix-brain: audio event loop hiccup ({e!r})")
-            await asyncio.sleep(2.0)
         finally:
             try:
                 proc.kill()
+            except ProcessLookupError:
+                pass
             except Exception:
                 pass
-            await asyncio.sleep(1.0)   # don't spin on a dying desktop layer
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=1.0)
+            except Exception:
+                pass
+        await asyncio.sleep(1.0)   # don't spin on a dying desktop layer
 
 
 # ---------------------------------------------------------------- test hooks

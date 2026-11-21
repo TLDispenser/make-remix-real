@@ -13,9 +13,18 @@ cd "$(dirname "$0")"                       # remix/
 ROOT="$PWD"
 PY="${REMIX_PY:-./.venv/bin/python}"
 GODOT="${GODOT_BIN:-godot}"
-HOST=127.0.0.1; PORT=8765
+HOST="${REMIX_WS_HOST:-127.0.0.1}"; PORT="${REMIX_WS_PORT:-8765}"
 RUN=.run; mkdir -p "$RUN"
 MODE="${1:-all}"
+
+rotate_log() {
+  local f="$1" sz=0
+  [ -f "$f" ] || return 0
+  sz=$(wc -c < "$f" 2>/dev/null || echo 0)
+  if [ "$sz" -gt 2097152 ]; then
+    mv -f "$f" "${f}.1"
+  fi
+}
 
 port_up() { timeout 1 bash -c "echo > /dev/tcp/${HOST}/${PORT}" 2>/dev/null; }
 
@@ -42,6 +51,7 @@ stop_face()  { stop face  "$RUN/godot.pid" "^[^ ]*godot[^ ]* --path $ROOT/godot"
 
 start_brain() {
   [ -x "$PY" ] || { echo "no venv at $PY — create it first (see README)"; return 1; }
+  rotate_log brain/brain.log
   nohup "$PY" -u -m brain.main >> brain/brain.log 2>&1 &
   echo $! > "$RUN/brain.pid"
   for _ in $(seq 1 40); do
@@ -55,6 +65,7 @@ start_brain() {
 
 start_face() {
   command -v "$GODOT" >/dev/null 2>&1 || { echo "can't find '$GODOT' — set GODOT_BIN=/path/to/godot"; return 1; }
+  rotate_log godot/godot.log
   local pre=()
   [ "${REMIX_X11:-0}" = 1 ] && pre=(env -u WAYLAND_DISPLAY)
   nohup "${pre[@]}" "$GODOT" --path "$ROOT/godot" >> godot/godot.log 2>&1 &

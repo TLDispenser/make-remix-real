@@ -8,7 +8,10 @@ import unittest
 import wave
 from unittest import mock
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
@@ -169,6 +172,7 @@ class MarkupTests(unittest.TestCase):
         self.assertNotIn("*", tts.speakable("*shit*"))
 
 
+@unittest.skipUnless(np is not None, "numpy not installed")
 class FxTests(unittest.TestCase):
     sr = 22050
 
@@ -227,7 +231,7 @@ class FxTests(unittest.TestCase):
         self.assertLessEqual(float(np.max(np.abs(back))), 1.0)
 
 
-@unittest.skipUnless(tts.available(), "espeak-ng not installed")
+@unittest.skipUnless(np is not None and tts.available(), "numpy or espeak-ng not installed")
 class SoundTests(unittest.TestCase):
     """Real espeak-ng: do the moods actually come out different?"""
     T = ["I told you the fan was dying.", "Nobody listens to me."]

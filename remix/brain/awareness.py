@@ -393,7 +393,13 @@ def describe_around(a: dict | None = None) -> list:
 
 # ------------------------------------------------------------- redaction
 
-_URL = re.compile(r"(?:https?://|www\.)\S+|[a-z0-9.-]+\.(?:com|org|net|io|dev|edu|gov|co|uk)\S*", re.I)
+_URL = re.compile(
+    r"(?:https?://|www\.)\S+|[a-z0-9.-]+\.(?:com|org|net|io|dev|edu|gov|co|"
+    r"ai|app|me|sh|gg|xyz|tech|cloud|page|site|online|info|biz|uk|ca|de|fr|"
+    r"jp|au|ru|in|ly|to|cc|tv|fm|so|is|it|nl|se|no|ch|at|eu|us|live|club|"
+    r"news|blog)(?=[/\s:?#]|$)\S*",
+    re.I,
+)
 _EMAIL = re.compile(r"\S+@\S+")
 _IP = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 _PATH = re.compile(r"(?:/[\w.-]+){2,}|~/?\w*(?:/[\w.-]+)+|[A-Za-z]:\\(?:[\w.-]+\\?)+")
@@ -734,13 +740,12 @@ async def events_loop() -> None:
             raise
         except Exception as e:
             print(f"remix-brain: hyprland socket2 hiccup ({e!r})")
-            await asyncio.sleep(2.0)
         finally:
             try:
                 writer.close()
             except Exception:
                 pass
-            await asyncio.sleep(2.0)
+        await asyncio.sleep(2.0)
 
 
 def describe(aware: dict | None = None) -> str:

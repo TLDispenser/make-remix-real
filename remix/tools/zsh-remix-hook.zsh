@@ -1,4 +1,4 @@
-# zsh-remix-hook — the Phase 6 shell hook (Remix_Upgrade_Plan_V2.md, Part 4).
+# zsh-remix-hook — the Phase 6 shell hook (docs/history/Remix_Upgrade_Plan_V2.md, Part 4).
 #
 # She IS the laptop, so she notices what you do in the shell — but only the
 # things worth noticing: commands that ran >= 5 seconds (builds, jobs, long
@@ -18,10 +18,23 @@
 
 typeset -g _REMIX_SOCK="${XDG_RUNTIME_DIR:-/run/user/$UID}/remix/shell.sock"
 typeset -g _REMIX_T0="" _REMIX_CMD=""
+zmodload -F zsh/net/socket b:zsocket 2>/dev/null || true
 
 _remix_preexec() {
     _REMIX_T0=$SECONDS
     _REMIX_CMD="$1"
+}
+
+_remix_send_sock() {
+    local sock="$1" payload="$2"
+    if (( $+builtins[zsocket] )); then
+        local REPLY
+        zsocket "$sock" 2>/dev/null || return 0
+        print -r -u "$REPLY" -- "$payload" 2>/dev/null || true
+        exec {REPLY}>&-
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.connect(sys.argv[1]); s.sendall((sys.argv[2]+"\n").encode())' "$sock" "$payload" 2>/dev/null || true
+    fi
 }
 
 _remix_precmd() {
@@ -32,7 +45,9 @@ _remix_precmd() {
     local dur=$(( SECONDS - t0 ))
     (( dur >= 5 )) || return       # matches REMIX_SHELL_MIN_S default
     [[ -S "$_REMIX_SOCK" ]] || return
-    printf '%s\t%s\t%s\n' "$_REMIX_CMD" "$rc" "$dur" > "$_REMIX_SOCK" 2>/dev/null &
+    local clean_cmd="${_REMIX_CMD//[$'\t\r\n']/ }"
+    local payload="${clean_cmd}"$'\t'"${rc}"$'\t'"${dur}"
+    _remix_send_sock "$_REMIX_SOCK" "$payload" &!
 }
 
 preexec_functions=(_remix_preexec $preexec_functions)

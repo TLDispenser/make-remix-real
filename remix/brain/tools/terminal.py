@@ -13,16 +13,20 @@ or captions when she has no voice) AND prints here as `remix: ...`.
 """
 import asyncio
 import json
+import os
 import sys
 
 from websockets.asyncio.client import connect
 
-URL = "ws://127.0.0.1:8765"
+_HOST = os.environ.get("REMIX_WS_HOST") or os.environ.get("CORE_WS_HOST") or "127.0.0.1"
+_PORT = os.environ.get("REMIX_WS_PORT") or os.environ.get("CORE_WS_PORT") or "8765"
+URL = f"ws://{_HOST}:{_PORT}"
 
 
 async def run() -> int:
     argv_in = [a for a in sys.argv[1:] if not a.startswith("-")]
     one_shot = bool(argv_in)
+    done_ev = asyncio.Event()
     async with connect(URL) as ws:
 
         async def reader() -> None:
@@ -33,22 +37,36 @@ async def run() -> int:
                     continue
                 kind = m.get("type")
                 if kind == "say":
-                    print(f"\rremix: {m.get('text', '')}\nyou> ", end="", flush=True)
+                    if not m.get("final", True):
+                        continue
+                    if one_shot:
+                        print(f"remix: {m.get('text', '')}", flush=True)
+                        done_ev.set()
+                    else:
+                        print(f"\rremix: {m.get('text', '')}\nyou> ", end="", flush=True)
                 elif kind == "transcript":
-                    print(f"\rheard: {m.get('text', '')}\nyou> ", end="", flush=True)
+                    if not one_shot:
+                        print(f"\rheard: {m.get('text', '')}\nyou> ", end="", flush=True)
                 elif kind == "notice":
                     t = str(m.get("text", ""))
                     if t.startswith("//") and "one sec" not in t:   # system notices only
-                        print(f"\r{t}\nyou> ", end="", flush=True)
+                        if one_shot:
+                            print(t, flush=True)
+                            done_ev.set()
+                        else:
+                            print(f"\r{t}\nyou> ", end="", flush=True)
                 # everything else (pose/look/perform/...) is face business; stay quiet
 
         task = asyncio.create_task(reader())
         if one_shot:
-            for text in argv_in:
-                await ws.send(json.dumps({"v": 2, "type": "user_text",
-                                          "text": text}))
-                print(f"you: {text}")
-            await asyncio.sleep(90)  # let reply + perform land (429 backoff)
+            text = " ".join(argv_in)
+            await ws.send(json.dumps({"v": 2, "type": "user_text", "text": text}))
+            print(f"you: {text}", flush=True)
+            try:
+                await asyncio.wait_for(done_ev.wait(), timeout=90.0)
+                await asyncio.sleep(0.25)
+            except TimeoutError:
+                pass
             task.cancel()
             return 0
         while True:

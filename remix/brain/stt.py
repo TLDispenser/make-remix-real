@@ -5,6 +5,7 @@
 #   * transcription is 100% local (faster-whisper); only the final text
 #     continues into the normal user_text pipeline
 #   * no wake word, no continuous listening, ever
+from array import array
 import asyncio
 import os
 import shlex
@@ -12,6 +13,11 @@ import shutil
 import threading
 import time
 from typing import Callable, NamedTuple
+
+try:
+    import numpy as _np
+except ImportError:
+    _np = None
 
 from . import config
 
@@ -118,6 +124,9 @@ class PushToTalk:
         self._warming = False
         self._status = "warming"   # warming | ready | error
         self._closed = asyncio.Event()
+        self._finalize_lock = asyncio.Lock()
+        self._warm_lock = threading.Lock()
+        self._finalized_res: HoldResult | None = None
 
     # ------------------------------------------------------------ properties
 
@@ -138,6 +147,7 @@ class PushToTalk:
         self._closed.clear()
         self._pcm.clear()
         self._last = None
+        self._finalized_res = None
         cmd = recorder_cmd()
         if not cmd:
             self._status = "no_mic"
@@ -184,9 +194,8 @@ class PushToTalk:
         raw = raw[: len(raw) // 2 * 2]                 # whole samples only
         if len(raw) < config.LISTEN_STT_MIN_S * 32000:  # 16 kHz s16le mono
             return ""
-        import numpy as np
-        pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-        if float(np.abs(pcm).max(initial=0.0)) < config.PTT_MIN_PEAK:
+        pcm, peak = _pcm_to_float_and_peak(raw)
+        if peak < config.PTT_MIN_PEAK:
             return ""
         model = self._model
 
@@ -224,7 +233,7 @@ class PushToTalk:
             pass
         print("remix-brain: ptt key-up missed - watchdog closes the mic")
         self._hold_task = None  # it's ME; don't self-cancel in _finalize
-        await self._finalize()
+        self._last = await self._finalize()
         if self.on_timeout:
             try:
                 self.on_timeout()
@@ -232,7 +241,7 @@ class PushToTalk:
                 pass
 
     async def stop(self) -> HoldResult:
-        if self.listening:
+        if self.listening or self._finalize_lock.locked():
             self._last = await self._finalize()
         return self._last or HoldResult("", "no_mic")
 
@@ -250,6 +259,14 @@ class PushToTalk:
         self._closed.set()
 
     async def _finalize(self) -> HoldResult:
+        async with self._finalize_lock:
+            if self._finalized_res is not None:
+                return self._finalized_res
+            res = await self._finalize_locked()
+            self._finalized_res = res
+            return res
+
+    async def _finalize_locked(self) -> HoldResult:
         me = asyncio.current_task()
         self._stop_partials()
         if self._hold_task is not None and self._hold_task is not me:
@@ -277,23 +294,26 @@ class PushToTalk:
         if not chunks:
             return HoldResult("", "silence")
 
-        import numpy as np
-        pcm = np.frombuffer(chunks, dtype=np.int16).astype(np.float32) / 32768.0
-        if float(np.abs(pcm).max(initial=0.0)) < config.PTT_MIN_PEAK:
+        pcm, peak = _pcm_to_float_and_peak(chunks)
+        if peak < config.PTT_MIN_PEAK:
             print("remix-brain: ptt: peak below floor - silence, model skipped")
             return HoldResult("", "silence")
 
         if self._model is None:
-            self._warm_sync()  # user spoke while warmup was still pending
+            await asyncio.to_thread(self._warm_sync)  # user spoke while warmup pending
         t0 = time.monotonic()
-        try:
+
+        def _transcribe() -> str:
             segments, _info = self._model.transcribe(
                 pcm,
                 language=config.PTT_LANGUAGE or "en",
                 vad_filter=True,
                 condition_on_previous_text=False,
             )
-            text = await asyncio.to_thread(_consume, segments)
+            return _consume(segments)
+
+        try:
+            text = await asyncio.to_thread(_transcribe)
         except Exception as e:
             print(f"remix-brain: whisper failed ({e!r})")
             return HoldResult("", "error")
@@ -329,14 +349,35 @@ class PushToTalk:
                 self.on_status("error")
 
     def _warm_sync(self) -> None:
-        if self._model is not None:
-            return
-        t0 = time.monotonic()
-        from faster_whisper import WhisperModel
-        self._model = WhisperModel(config.PTT_MODEL, device="cpu",
-                                   compute_type="int8")
-        print(f"remix-brain: whisper {config.PTT_MODEL!r} warm in "
-              f"{time.monotonic() - t0:.1f}s (local, no API)")
+        with self._warm_lock:
+            if self._model is not None:
+                return
+            t0 = time.monotonic()
+            from faster_whisper import WhisperModel
+            self._model = WhisperModel(config.PTT_MODEL, device="cpu",
+                                       compute_type="int8")
+            print(f"remix-brain: whisper {config.PTT_MODEL!r} warm in "
+                  f"{time.monotonic() - t0:.1f}s (local, no API)")
+
+
+def _pcm_to_float_and_peak(raw: bytes):
+    """Convert raw 16-bit signed LE PCM bytes into normalized samples + peak."""
+    if _np is not None:
+        pcm = _np.frombuffer(raw, dtype=_np.int16).astype(_np.float32) / 32768.0
+        peak = float(_np.abs(pcm).max(initial=0.0))
+        return pcm, peak
+    samples = array("h")
+    samples.frombytes(raw)
+    if sys_byteorder_is_big():
+        samples.byteswap()
+    pcm = [s / 32768.0 for s in samples]
+    peak = max((abs(s) for s in pcm), default=0.0)
+    return pcm, peak
+
+
+def sys_byteorder_is_big() -> bool:
+    import sys
+    return sys.byteorder == "big"
 
 
 def _consume(segments) -> str:
